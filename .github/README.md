@@ -1,6 +1,6 @@
 # Questdon
 
-Quest helper for World of Warcraft: Forever. Download it on CurseForge (search for "Questdon").
+Quest helper for World of Warcraft: Forever. Download: https://www.curseforge.com/wow/addons/questdon
 The full description (German) is in [README.md](../README.md).
 
 **Help with quest data:** open a new issue with the form **Quest data** and paste the text of
