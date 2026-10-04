@@ -157,6 +157,7 @@ local function GiverQuests(npcID)
   end
   return list
 end
+ns.GiverQuests = GiverQuests
 
 -- (1.26) Greeting dialogs may give titles without quest IDs: match the title
 -- against the data quests of this NPC. Localised titles only: the client's
@@ -205,7 +206,10 @@ local finishNpc       -- creature ID of the last QUEST_PROGRESS / QUEST_COMPLETE
 -- turnInOpen: the dialog lists a quest ready to turn in (or unreadable).
 local function Judge(npcID, offered, complete, turnInOpen)
   local level = ns.PlayerLevel()
-  for id in pairs(offered) do Confirm(id, level) end
+  for id in pairs(offered) do
+    Confirm(id, level)
+    if ns.NoteOfferedHere then ns.NoteOfferedHere(id, npcID) end -- (1.1) it exists
+  end
   if not (complete and npcID and level) then return end
   -- (1.26) before a turn-in (or right after one) the follow-up is not there
   -- yet: confirm only
@@ -229,6 +233,8 @@ local function Judge(npcID, offered, complete, turnInOpen)
     -- (1.26) several givers in the data: another one may offer it
     if GiverCount(id) > 1 then stats.multiGiver = stats.multiGiver + 1 return end
     if c.notOffered[id] ~= level then stats.notOffered = stats.notOffered + 1 end
+    -- (1.1) account wide: after 3 different levels it is hidden (NotHere.lua)
+    if ns.NoteNotOffered then ns.NoteNotOffered(id, npcID, level) end
     c.notOffered[id] = level
     c.notOfferedInfo[id] = { t = now, npc = npcID, map = m, x = x, y = y }
     c.offered[id] = nil
@@ -324,6 +330,7 @@ ns.On("QUEST_DETAIL", function(_, questStartItemID)
   local auto = type(QuestGetAutoAccept) == "function" and ns.True(ns.Value(QuestGetAutoAccept))
   if kind == "npc" or kind == "object" or (kind == "none" and ((item and item > 0) or auto)) then
     Confirm(id, ns.PlayerLevel())
+    if ns.NoteOfferedHere then ns.NoteOfferedHere(id, kind == "npc" and select(2, Source()) or nil) end -- (1.1)
   end
 end)
 
@@ -354,6 +361,7 @@ ns.On("QUEST_TURNED_IN", function(_, questID)
   npcID = (kind == "npc" and npcID) or finishNpc
   finishNpc = nil
   if npcID then turnedInAt[npcID] = Clock() end
+  if npcID and ns.NotHereTurnIn then ns.NotHereTurnIn(npcID) end -- (1.1) count the levels again
   local follow = {}
   if questID and ns.FollowUpQuests then
     for _, id in ipairs(ns.FollowUpQuests(questID)) do follow[id] = true end

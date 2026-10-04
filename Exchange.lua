@@ -12,7 +12,7 @@ local L = ns.L
 -- really are two players and there are no echo loops.
 --
 --   message  "D1:<seq>:<line>;<line>;..."  (at most MAX_MSG characters)
---   lines    S G I T O F K D A X as in Export.lua, only numbers
+--   lines    S G I T O F K D A X N as in Export.lua, only numbers
 --
 -- Sending: option shareLearned (on), to the guild and the own group (not to
 -- the group when all members are in the guild: the guild message reaches
@@ -162,6 +162,12 @@ local PARSE = {
     local q = l:match("^X (%d+)$")
     if not Int(q, 1e6) then return nil end
     return "X " .. q, { v = "1" }
+  end,
+  -- (1.1) the quest giver never offers this quest (NotHere.lua)
+  N = function(l)
+    local q, npc = l:match("^N (%d+) (%d+) [ma]$")
+    if not (Int(q, 1e6) and Int(npc, 1e7)) then return nil end
+    return "N " .. q, { v = "1" }
   end,
 }
 
@@ -473,6 +479,22 @@ function ns.ObjectiveSpots(questID)
     end
   end
   return merged
+end
+
+-- (1.1) Two or more other players found that the quest giver never offers it.
+function ns.SharedNotHere(questID)
+  return Best(ns.db and ns.db.shared and ns.db.shared["N " .. tostring(questID)]) ~= nil
+end
+function ns.SharedNotHereCount()
+  local n = 0
+  for key, e in pairs(ns.db and ns.db.shared or {}) do
+    if type(key) == "string" and key:sub(1, 2) == "N " and Best(e) then
+      local id = tonumber(key:sub(3))
+      local hidden, why = ns.NeverOffered(id)
+      if hidden and why == "shared" then n = n + 1 end
+    end
+  end
+  return n
 end
 
 function ns.SharedVersion() return version end

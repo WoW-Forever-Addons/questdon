@@ -59,6 +59,7 @@ ns.defaults = {
   learnedCredit = {}, -- (1.0.1) [questID] = { [index] = { c|o|i = { [id] = n } } } what gave objective credit (Learn.lua)
   learnedDrops = {}, -- (1.0.1) [itemID] = { ["c123"] = { n, map, x, y } } where a quest item dropped
   learnedItemStarts = {}, -- (1.0.1) [itemID] = questID started by a looted item
+  notHere = {}, -- (1.1) [questID] = { lv, man, ok, npc }: quests a quest giver never offers (NotHere.lua)
   shareLearned = true, -- (1.0.1) send own learned data to guild and group (Exchange.lua)
   shared = {}, -- (1.0.1) what other players reported: [key] = { v = { variants }, c, t }
   shareSent = {}, -- (1.0.1) [key] = what was last sent
@@ -508,7 +509,7 @@ end
 
 SLASH_QUESTDON1 = "/qd"
 SLASH_QUESTDON2 = "/questdon"
-ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd reset (reset button position)"]
+ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd reset (reset button position)"]
 SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
   msg = strtrim and strtrim(msg or ""):lower() or (msg or "")
   if msg == "reset" then
@@ -537,6 +538,12 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
     if ns.OpenDungeons then ns.OpenDungeons() end
   elseif msg == "group" or msg == "party" then
     if ns.PrintParty then ns.PrintParty() end
+  elseif msg == "nothere" then
+    if ns.ReportTarget then ns.ReportTarget() end
+  elseif msg == "nothere undo" then
+    if ns.UndoNotHere then ns.UndoNotHere() end
+  elseif msg == "nothere list" then
+    if ns.PrintNotHere then ns.PrintNotHere() end
   elseif msg == "nettest" then
     if ns.NetTest then ns.NetTest() end
   elseif msg == "help" then

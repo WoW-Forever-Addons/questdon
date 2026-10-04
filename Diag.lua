@@ -259,6 +259,7 @@ function ns.BuildDiag()
   Probe(out, "group progress", function() return ns.PartyDiag() end)
   Probe(out, "net test", function() return ns.NetDiag and ns.NetDiag() or "nil" end)
   Probe(out, "sharing", function() return ns.ShareDiag and ns.ShareDiag() or "nil" end)
+  Probe(out, "not offered here", function() return ns.NotHereDiag and ns.NotHereDiag() or "nil" end) -- (1.1)
   out[#out + 1] = "# Blizzard quest POIs"
   Probe(out, "POI APIs", function() return (ns.POIDiag()) end)
   Probe(out, "POI points", function() return select(2, ns.POIDiag()) end)

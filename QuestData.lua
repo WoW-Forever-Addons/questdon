@@ -211,12 +211,17 @@ function DataCanTake(questID, player, above)
   if q[SKILL] then return false end -- profession quests: too noisy without a skill check
   if q[LEVEL] and player.level and q[LEVEL] > player.level + (tonumber(above) or 0) then return false end
   if not PrereqsDone(questID, q, player) then return false end
+  -- (1.1) helper quests that only exist while another quest is in the log (Data/Extra_Quests.lua)
+  local active = ns.EXTRA_ACTIVE and ns.EXTRA_ACTIVE[questID]
+  if active and not ns.InQuestLog(active) then return false end
   if BreadcrumbObsolete(questID) then return false end
   return true
 end
 function CanTake(questID, player, above)
   player = player or Player()
   if not DataCanTake(questID, player, above) then return false end
+  -- (1.1) the quest giver never offers it (NotHere.lua): also not as a dimmed pin
+  if ns.NeverOffered and ns.NeverOffered(questID) then return false end
   if not (tonumber(above) and tonumber(above) > 0) then
     if ns.NotOfferedLevel and ns.NotOfferedLevel(questID, player.level) then return false end
     if ns.ClientAvailability and ns.ClientAvailability(questID, Q[questID][MAP]) == false then return false end
@@ -494,6 +499,7 @@ function AvailableOnMap(mapID, upcoming)
         local fac = e.faction == "Alliance" and "A" or e.faction == "Horde" and "H"
         ok = fac == player.faction and not ns.IsQuestDone(id) and not ns.InQuestLog(id)
           and not ns.QuestKnownMissing(id) and not ns.NotOfferedLevel(id, player.level)
+          and not (ns.NeverOffered and ns.NeverOffered(id)) -- (1.1)
           and (Listed(id) or ns.ClientAvailability(id, mapID) ~= false)
           and (Listed(id) or ns.OfferConfirmed(id, player.level) or not ns.db.confirmedOnly)
         if ok then ns.CheckQuestExists(id) end

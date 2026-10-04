@@ -156,9 +156,14 @@ local function BuildLines()
           if src and ns.AVAILABLE_SHORT then
             lines[#lines + 1] = { L["Available"], ns.AVAILABLE_SHORT[src], src == "database" and "textHint" or "good" }
           end
-          return ns.QuestTitle(n.questID), lines, L["Click: point the arrow here"]
+          return ns.QuestTitle(n.questID), lines, ns.QuestPinHint and ns.QuestPinHint({ questID = n.questID }) or L["Click: point the arrow here"]
         end,
         onClick = function()
+          -- (1.1) Alt-click: "no quest here" (NotHere.lua)
+          if ns.True(ns.Value(IsAltKeyDown)) and ns.ReportNotHere then
+            ns.ReportNotHere({ n.questID })
+            return
+          end
           if ns.SetArrowTarget then
             ns.db.arrow = true
             if ns.ApplyArrow then ns.ApplyArrow() end

@@ -161,6 +161,13 @@ local TOOLS = {
       if ns.ResetXPSession then ns.ResetXPSession() end
       UpdatePanel()
     end, "Starts XP per hour from zero." },
+  -- (1.1) quests hidden as "not offered here" (NotHere.lua)
+  { "Quests hidden as not offered", "Show again", function()
+      if ns.Confirm("nothere", L["Click again within 5 seconds to show all quests again that were hidden as not offered."]) then
+        if ns.ResetNotHere then ns.ResetNotHere() end
+        ns.Print(L["All quests hidden as not offered are shown again."])
+      end
+    end, "Questdon hides a quest when its quest giver did not offer it at 3 different levels, or when you reported it (Alt-click on the !, or /qd nothere with the NPC targeted). This shows them all again. /qd nothere list shows them, /qd nothere undo takes back the last report." },
   { "Export learned data", "Export", function()
       if ns.OpenExport then ns.OpenExport(false) end
     end, "Shows what Questdon learned and the bundled data does not have yet, as text to copy into a GitHub issue. Helps to improve the quest data for everyone. Only numbers, no names. /qd export (or /qd export all for everything)." },
@@ -178,7 +185,7 @@ local TOOLS = {
         wipe(ns.db.learned)
         if ns.db.learnedObj then wipe(ns.db.learnedObj) end
         if ns.db.learnedItems then wipe(ns.db.learnedItems) end
-        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "shared", "shareSent" }) do
+        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "shared", "shareSent", "notHere" }) do
           if type(ns.db[k]) == "table" then wipe(ns.db[k]) end
         end
         if ns.db.guessedItems then wipe(ns.db.guessedItems) end

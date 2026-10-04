@@ -23,6 +23,7 @@ Data\ATT_Quests.lua
 Data\Extra_Quests.lua
 Learn.lua
 Offers.lua
+NotHere.lua
 QuestData.lua
 Dungeons.lua
 POI.lua

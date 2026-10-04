@@ -24,6 +24,10 @@ local L = ns.L
 --                                                      the quest was offered at
 --   X <questID>                                        the server does not know
 --                                                      this quest (1.13, Exists.lua)
+--   N <questID> <npcID or 0> <m|a>                     (1.1) the quest giver never
+--                                                      offers it: m = reported by
+--                                                      the player, a = not offered
+--                                                      at 3 levels (NotHere.lua)
 --   # comments (count, truncation)
 --
 -- Coordinates 0-100 with one decimal. Only numbers: no character, realm,
@@ -244,6 +248,9 @@ function ns.ExportRecords(all)
   for _, id in ipairs(ns.MissingQuestIDs and ns.MissingQuestIDs() or {}) do
     if Int(id) and id > 0 then records[#records + 1] = ("X %d"):format(id) end
   end
+
+  -- (1.1) quests a quest giver never offers
+  for _, line in ipairs(ns.NotHereRecords and ns.NotHereRecords(all) or {}) do records[#records + 1] = line end
 
   return records
 end

@@ -330,6 +330,21 @@ function ns.QuestPinDescription(pin)
   return desc
 end
 
+-- (1.1) Hint of a quest pin: Alt-click reports "no quest here" (not for turn-ins).
+function ns.QuestPinHint(pin)
+  if pin and pin.kind ~= "turnin" and ns.ReportPin then
+    return L["Click: point the arrow here"] .. "\n" .. L["Alt-click: no quest here (hide it)"]
+  end
+  return L["Click: point the arrow here"]
+end
+
+-- (1.1) "level 5, 6 (hidden after 3)"
+function ns.NotHereLevelText(levels)
+  local parts = {}
+  for _, lv in ipairs(levels) do parts[#parts + 1] = tostring(lv) end
+  return L["level %s (hidden after %d)"]:format(table.concat(parts, ", "), ns.NOT_HERE_LEVELS or 3)
+end
+
 -- (1.19) Quest pin tooltip in the family structure: title, key/value lines,
 -- hint last (rendered with Style.Tooltip). Returns title, lines, hint.
 local SOURCE_SHORT = {
@@ -383,7 +398,10 @@ function ns.QuestPinTooltip(pin)
     local src = ns.AvailabilitySource(pin.questID)
     KV(L["Available"], AVAILABLE_SHORT[src], src == "database" and "textHint" or "good")
   end
-  return ns.QuestTitle(pin.questID), lines, L["Click: point the arrow here"]
+  -- (1.1) levels at which the quest giver did not offer it (hidden after 3)
+  local refused = pin.kind ~= "turnin" and ns.NotHereLevels and ns.NotHereLevels(pin.questID)
+  if refused then KV(L["Not offered at"], ns.NotHereLevelText(refused), "textHint") end
+  return ns.QuestTitle(pin.questID), lines, ns.QuestPinHint(pin)
 end
 
 -- (1.21) Tooltip of a grouped quest giver pin: one line per quest (title,
@@ -415,7 +433,7 @@ function ns.QuestGroupTooltip(pin)
     local who = ns.PartyMembersWithQuest and ns.PartyMembersWithQuest(p.questID) or {}
     if #who > 0 then lines[#lines + 1] = { "   " .. L["Your group has it"], table.concat(who, ", "), "good" } end
   end
-  return GroupTitle(pin), lines, L["Click: point the arrow here"]
+  return GroupTitle(pin), lines, ns.QuestPinHint(pin)
 end
 
 -- Small square in the quest's dot colour (texture escape with vertex colour).
@@ -510,6 +528,11 @@ function Setup()
   end
   -- Left click: point the arrow there.
   function QuestPin:OnMouseClickAction(button)
+    -- (1.1) Alt-click: "no quest here" (NotHere.lua)
+    if button == "LeftButton" and self.qdPin and ns.True(ns.Value(IsAltKeyDown)) and ns.ReportPin then
+      ns.ReportPin(self.qdPin)
+      return
+    end
     if button == "LeftButton" and self.qdPin and ns.SetArrowTarget then
       local label = self.qdPin.group and ns.QuestGroupTitle(self.qdPin) or ns.QuestTitle(self.qdPin.questID)
       ns.SetArrowTarget(self:GetMap():GetMapID(), self.qdPin.x, self.qdPin.y, label)

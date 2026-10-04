@@ -166,6 +166,11 @@ end
 
 local function PinClick(self, button)
   local pin = self.pin
+  -- (1.1) Alt-click: "no quest here" (NotHere.lua)
+  if button == "LeftButton" and pin and ns.True(ns.Value(IsAltKeyDown)) and ns.ReportPin then
+    if pin.kind ~= "turnin" and pin.kind ~= "objective" then ns.ReportPin(pin) end
+    return
+  end
   if button ~= "LeftButton" or not pin or not curMap or not ns.SetArrowTarget then return end
   local label = pin.group and ns.QuestGroupTitle(pin) or ns.QuestTitle(pin.questID)
   ns.SetArrowTarget(curMap, pin.x, pin.y, label)
