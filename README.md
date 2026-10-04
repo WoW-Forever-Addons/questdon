@@ -20,7 +20,7 @@ Esc > "AddOns" ist nur die Liste zum Ein- und Ausschalten der Addons.
 
 ### Händler und Beute
 - Graue Gegenstände beim Händler verkaufen, automatisch reparieren (optional zuerst Gildenbank). Reicht das Gold nicht, wird erst der Schrott verkauft und dann erneut repariert.
-- Schnelles Plündern, wenn Autoplündern greift.
+- Schnelles Plündern, wenn Autoplündern greift. Gegenstände, die beim Aufheben gebunden werden, und Questgegenstände (z. B. "Nibbled-On Book") überlässt Questdon dem Autoplündern des Spiels: Plündert ein Addon sie selbst, läuft die Bestätigung des Spiels in dessen Aufruf, und Blizzards Oberfläche (Edit Mode, Gruppenfenster, Aktionsleisten im Kampf) kann Fehler werfen.
 
 ### Verfügbare Quests und ihre Beurteilung
 "Verfügbar" heißt: so gut, wie es das Spiel selbst weiß. Die Quellen, in dieser Reihenfolge:

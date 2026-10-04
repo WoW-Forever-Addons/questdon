@@ -112,7 +112,7 @@ local PAGES = {
     { key = "autoRepair", name = "Auto repair", tip = "Repairs all items at merchants that can repair." },
     { key = "useGuildRepair", name = "Use guild bank for repairs", tip = "Tries the guild bank first, then your own gold.", parent = "autoRepair" },
     { header = "Loot and items" },
-    { key = "fastLoot", name = "Fast loot", tip = "Loots everything instantly when auto loot applies." },
+    { key = "fastLoot", name = "Fast loot", tip = "Loots everything instantly when auto loot applies. Items that bind on pickup and quest items are left to the game's own auto loot." },
     { key = "questItemButton", name = "Quest item button", tip = "Shows a button for the usable item of your tracked quest. Shift-drag to move. Key binding under Key Bindings > AddOns.", blockedBy = QuestieBlocks("questItemButton"), onChange = RefreshItemButton },
     { key = "itemButtonScale", kind = "slider", name = "Quest item button size", tip = "Size of the quest item button (changes after combat).", min = 0.6, max = 2, step = 0.05, parent = "questItemButton", onChange = RefreshItemButton },
     { header = "Targeting and waypoints" },

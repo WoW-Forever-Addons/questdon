@@ -108,11 +108,53 @@ end)
 ---------------------------------------------------------------------------
 -- Fast loot
 ---------------------------------------------------------------------------
+-- (1.1) Items the game asks about before looting (bind on pickup, quest items
+-- such as "Nibbled-On Book") are left to Blizzard's own auto loot: when an
+-- addon loots them, the confirmation runs inside the addon's call and taints
+-- Blizzard's UI (Edit Mode, party frames, action bars in combat: "secret value
+-- while execution tainted by Questdon"). Then the whole window is left to the
+-- game. Unknown answers (item not cached yet, secret value) count as "asks".
+local BIND_ON_PICKUP, BIND_QUEST = 1, 4
+local lootStats = { windows = 0, fast = 0, leftToGame = 0 }
+function ns.FastLootStats() return lootStats end
+
+local function NeedsConfirm(slot)
+  local slotType = ns.Num(ns.Value(GetLootSlotType, slot))
+  if slotType and slotType ~= 1 then return false end -- money, currency
+  if type(GetLootSlotInfo) ~= "function" then return true end
+  local ok, _, _, _, _, _, locked, isQuestItem, questID = pcall(GetLootSlotInfo, slot)
+  if not ok then return true end
+  if locked ~= nil and (not ns.Usable(locked) or locked == true) then return true end
+  if isQuestItem ~= nil and (not ns.Usable(isQuestItem) or isQuestItem == true) then return true end
+  if questID ~= nil and (not ns.Usable(questID) or (ns.Num(questID) or 0) > 0) then return true end
+  local link = ns.Value(GetLootSlotLink, slot)
+  if type(link) ~= "string" then return true end
+  local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+  if type(info) ~= "function" then return true end
+  local got, bind = false, nil
+  local r = { pcall(info, link) }
+  if r[1] then got, bind = r[2] ~= nil, r[15] end
+  if not got then return true end -- not cached: cannot tell
+  bind = ns.Num(bind)
+  if not bind then return true end
+  return bind == BIND_ON_PICKUP or bind == BIND_QUEST
+end
+ns.LootSlotNeedsConfirm = NeedsConfirm
+
 ns.On("LOOT_READY", function()
   if not ns.db.fastLoot then return end
   -- Same rule as Blizzard auto loot: CVar xor the auto loot modifier key.
   if GetCVarBool("autoLootDefault") == IsModifiedClick("AUTOLOOTTOGGLE") then return end
-  for i = GetNumLootItems(), 1, -1 do
+  lootStats.windows = lootStats.windows + 1
+  local n = ns.Num(ns.Value(GetNumLootItems)) or 0
+  for i = 1, n do
+    if NeedsConfirm(i) then
+      lootStats.leftToGame = lootStats.leftToGame + 1
+      return -- the game loots this window itself
+    end
+  end
+  for i = n, 1, -1 do
     LootSlot(i)
   end
+  lootStats.fast = lootStats.fast + 1
 end)
