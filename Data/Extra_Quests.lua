@@ -431,6 +431,12 @@ ns.LEARNED_OBJECTIVES = {
 [97225]={[1]={{},{},{1411,67,84}}},
 [97279]={[1]={{},{},{1411,43,71,1411,44,67,1411,46,65}}},
 }
+-- [questID] = quest that must be in the log (helper quests of a chain)
+ns.EXTRA_ACTIVE = {[308]=310,[403]=310,}
+-- (1.1) [questID] = true: the quest giver never offers it (players reported it, /qd export line N)
+ns.EXTRA_NOT_HERE = {
+}
+ns.EXTRA_NOT_HERE_COUNT = 0
 ns.ATT_QUESTS = ns.ATT_QUESTS or {}
 ns.ATT_OBJECTIVES = ns.ATT_OBJECTIVES or {}
 for id, q in pairs(ns.EXTRA_QUESTS) do if ns.ATT_QUESTS[id] == nil then ns.ATT_QUESTS[id] = q end end
