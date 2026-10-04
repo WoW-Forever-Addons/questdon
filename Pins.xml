@@ -1,0 +1,21 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<!-- Mixins are defined in MapPins.lua. -->
+	<Frame name="QuestdonQuestPinTemplate" inherits="BaseHighlightableMapPoiPinTemplate" enableMouseClicks="true" mixin="QuestdonQuestPinMixin" virtual="true">
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
+	<!-- No OnEnter/OnLeave scripts here: the map canvas asserts on them and calls the
+	     mixin's OnMouseEnter/OnMouseLeave itself. -->
+	<Frame name="QuestdonObjectivePinTemplate" mixin="QuestdonObjectivePinMixin" enableMouse="true" virtual="true">
+		<Size x="12" y="12"/>
+		<Layers>
+			<Layer level="OVERLAY">
+				<Texture parentKey="Dot" file="Interface\COMMON\Indicator-Yellow" setAllPoints="true"/>
+			</Layer>
+		</Layers>
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
+</Ui>
