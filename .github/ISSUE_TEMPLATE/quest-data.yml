@@ -1,0 +1,26 @@
+name: Quest data
+description: Paste what Questdon learned while you played (/qd export). Only numbers, no names.
+title: "Quest data: "
+labels: ["quest data"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping! In game type **/qd export** (or Options > Tools > "Export learned data"),
+        press Ctrl+A and Ctrl+C in the window and paste it below.
+        Tip: the Forever beta forgets saved addon data at relog, so export **before you log out**.
+  - type: textarea
+    id: export
+    attributes:
+      label: Export
+      description: The whole text, starting with QDX2 (or QDX1) and ending with "# records N".
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: zone
+    attributes:
+      label: Zones (optional)
+      description: Where you played, e.g. "Durotar, Barrens".
+    validations:
+      required: false
