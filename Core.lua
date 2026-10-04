@@ -60,7 +60,8 @@ ns.defaults = {
   learnedDrops = {}, -- (1.0.1) [itemID] = { ["c123"] = { n, map, x, y } } where a quest item dropped
   learnedItemStarts = {}, -- (1.0.1) [itemID] = questID started by a looted item
   notHere = {}, -- (1.1) [questID] = { lv, man, ok, npc }: quests a quest giver never offers (NotHere.lua)
-  shareLearned = true, -- (1.0.1) send own learned data to guild and group (Exchange.lua)
+  shareLearned = true,
+  shareChannel = true, -- (1.1) also through the open channel QuestdonNet (all Questdon players) -- (1.0.1) send own learned data to guild and group (Exchange.lua)
   shared = {}, -- (1.0.1) what other players reported: [key] = { v = { variants }, c, t }
   shareSent = {}, -- (1.0.1) [key] = what was last sent
   showPanel = true,

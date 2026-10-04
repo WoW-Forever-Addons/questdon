@@ -11,7 +11,8 @@ local L = ns.L
 -- what a client only knows from others it never sends, so "two reporters"
 -- really are two players and there are no echo loops.
 --
---   message  "D1:<seq>:<line>;<line>;..."  (at most MAX_MSG characters)
+--   message  "D2:<seq>:<account token>:<line>;<line>;..."  (at most MAX_MSG
+--            characters; "D1:<seq>:..." from Questdon before 1.1 is still read)
 --   lines    S G I T O F K D A X N as in Export.lua, only numbers
 --
 -- Sending: option shareLearned (on), to the guild and the own group (not to
@@ -22,6 +23,9 @@ local L = ns.L
 -- at the next step (1, 5, 25, 100); facts KNOWN others already reported the
 -- same way and spots beyond SPOTS_PER_OBJECTIVE per objective are not sent.
 -- Receiving is always on (decision 2026-10-04: everybody may use shared data).
+-- (1.1) Also through the open channel "QuestdonNet" (option shareChannel, on):
+-- every Questdon player, so facts from there need three reporters unless two
+-- came through guild or group.
 --
 -- Checks on receipt: exact line shapes, number ranges, own echoes ignored,
 -- at most PER_SENDER facts per sender and hour, at most MAX_SHARED facts.
@@ -42,9 +46,18 @@ local MAX_VARIANTS = 3      -- differing reports per fact
 local MAX_REPORTERS = 8     -- reporters kept per variant
 local PER_SENDER = 200      -- facts per sender and hour
 local CONFIRM = 2           -- reporters needed before a fact is used
+-- (1.1) The open channel: every Questdon player (option shareChannel, on).
+-- Anybody can join a channel, so a fact needs CONFIRM_OPEN reporters when
+-- not CONFIRM of them came through guild or group. If the first name is
+-- taken (a password, a ban), the next one is tried.
+local CHANNEL_NAMES = { "QuestdonNet", "QuestdonNet2", "QuestdonNet3" }
+local CONFIRM_OPEN = 3
+local JOIN_DELAY, JOIN_CHECK = 10, 3 -- seconds after login; seconds until a join is checked
+local SENDS_PER_FLUSH = 9   -- addon messages per prefix: 10 at once, then 1 per second
 local NEAR = 2              -- map units: two spots this close are the same
 
-local stats = { saved = 0, sentMsgs = 0, sentFacts = 0, recvMsgs = 0, recvLines = 0, bad = 0, own = 0, limited = 0, blocked = 0, pruned = 0 }
+local stats = { saved = 0, sentMsgs = 0, sentFacts = 0, recvMsgs = 0, recvLines = 0, bad = 0, own = 0, limited = 0, blocked = 0, pruned = 0,
+  recvChannel = 0 }
 ns.shareStats = stats
 local registered = false
 local seq = 0
@@ -58,8 +71,31 @@ local function DB()
   local db = ns.db
   if type(db.shared) ~= "table" then db.shared = {} end
   if type(db.shareSent) ~= "table" then db.shareSent = {} end
+  -- (1.1) shared data of the test builds counted the own echo as a player: start clean once
+  if db.sharedVersion ~= 2 then
+    wipe(db.shared)
+    db.sharedVersion = 2
+  end
   return db
 end
+
+-- (1.1) Account token: 8 hex digits, made once per account and kept in the
+-- saved data. Messages carry it ("D2:<seq>:<token>:..."), so one account
+-- counts as ONE reporter whatever character sends, and the own echo is
+-- recognised even when the client spells the own name differently (Daniel's
+-- group test 04.10.: the own echo counted as a second player). A sender name
+-- may use one token per session; older clients send "D1" (reporter = name).
+local tokenOf = {}
+local function MyToken()
+  local db = DB()
+  local t = db.shareToken
+  if type(t) ~= "string" or not t:match("^%x%x%x%x%x%x%x%x$") then
+    t = ("%04x%04x"):format(math.random(0, 65535), math.random(0, 65535))
+    db.shareToken = t
+  end
+  return t
+end
+
 
 local function Locked()
   local fn = C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
@@ -215,7 +251,7 @@ local function Prune()
   sharedCount = nil
 end
 
-local function Store(key, value, count, reporter)
+local function Store(key, value, count, reporter, open)
   local shared = DB().shared
   local e = shared[key]
   if not e then
@@ -226,29 +262,43 @@ local function Store(key, value, count, reporter)
   end
   e.t = Clock()
   if count and count > (ns.Num(e.c) or 0) then e.c = math.min(count, 9999) end
+  -- (1.1) reporters through the open channel are kept as "o" (o = how many)
   for _, v in ipairs(e.v) do
     if Same(v, value) then
-      if not v.r[reporter] and v.n < MAX_REPORTERS then
-        v.r[reporter] = true
+      local had = v.r[reporter]
+      if not had and v.n < MAX_REPORTERS then
+        v.r[reporter] = open and "o" or true
         v.n = v.n + 1
+        if open then v.o = (ns.Num(v.o) or 0) + 1 end
+        version = version + 1
+      elseif had == "o" and not open then
+        v.r[reporter] = true -- the same player through guild or group
+        v.o = math.max((ns.Num(v.o) or 1) - 1, 0)
         version = version + 1
       end
       return
     end
   end
   if #e.v < MAX_VARIANTS then
-    value.r, value.n = { [reporter] = true }, 1
+    value.r, value.n = { [reporter] = open and "o" or true }, 1
+    if open then value.o = 1 end
     e.v[#e.v + 1] = value
     version = version + 1
   end
 end
 
--- The variant most players reported, if CONFIRM or more did.
+-- The variant most players reported, if CONFIRM or more did through guild
+-- or group, or CONFIRM_OPEN or more in all (1.1: open channel).
+local function Confirmed(v)
+  local n = ns.Num(v.n) or 0
+  local trusted = n - (ns.Num(v.o) or 0)
+  return trusted >= CONFIRM or n >= CONFIRM_OPEN
+end
 local function Best(e)
   if type(e) ~= "table" or type(e.v) ~= "table" then return nil end
   local best
   for _, v in ipairs(e.v) do
-    if type(v) == "table" and (ns.Num(v.n) or 0) >= CONFIRM and (not best or v.n > best.n) then best = v end
+    if type(v) == "table" and Confirmed(v) and (not best or v.n > best.n) then best = v end
   end
   return best
 end
@@ -271,17 +321,28 @@ local function OnMessage(_, prefix, text, chatType, sender)
   local full = FullSender(sender)
   if not full then return end
   if full == MyFullName() then stats.own = stats.own + 1 return end
-  local payload = text:match("^D1:%d+:(.+)$")
+  local reporter
+  local token, payload = text:match("^D2:%d+:(%x%x%x%x%x%x%x%x):(.+)$")
+  if token then
+    if token == MyToken() then stats.own = stats.own + 1 return end
+    if tokenOf[full] and tokenOf[full] ~= token then stats.bad = stats.bad + 1 return end
+    tokenOf[full] = token
+    reporter = "a" .. token
+  else
+    payload = text:match("^D1:%d+:(.+)$") -- Questdon before 1.1
+    reporter = Hash(full)
+  end
   if not payload then stats.bad = stats.bad + 1 return end
   stats.recvMsgs = stats.recvMsgs + 1
-  local reporter = Hash(full)
+  local open = chatType == "CHANNEL" -- (1.1) anybody can be in the channel
+  if open then stats.recvChannel = stats.recvChannel + 1 end
   local lines = {}
   for line in payload:gmatch("[^;]+") do lines[#lines + 1] = line end
   if not Allowed(reporter, #lines) then stats.limited = stats.limited + #lines return end
   for _, line in ipairs(lines) do
     local key, value, count = Parse(line)
     if key then
-      Store(key, value, count, reporter)
+      Store(key, value, count, reporter, open)
       stats.recvLines = stats.recvLines + 1
     else
       stats.bad = stats.bad + 1
@@ -323,14 +384,85 @@ local function GroupInGuild()
   return true
 end
 
+---------------------------------------------------------------------------
+-- (1.1) The open channel. Joined as a temporary channel (the client leaves
+-- it at logout). Questdon never touches the chat windows (that would taint
+-- Blizzard's chat code): addon messages are invisible anyway; the client
+-- may show one "joined channel" line and lists the channel in /chatlist.
+---------------------------------------------------------------------------
+local chan = { name = nil, index = 1, pending = nil, at = 0, state = "off", joins = 0 }
+
+local function ChannelID(name)
+  if type(GetChannelName) ~= "function" or not name then return nil end
+  local ok, id = pcall(GetChannelName, name)
+  id = ok and ns.Num(id) or nil
+  return id and id > 0 and id or nil
+end
+
+local function ChannelWanted()
+  return ns.db and ns.db.shareChannel and ns.db.shareLearned and ns.db.learnQuests and true or false
+end
+
+-- Called by the ticker and after login: join, check a join, try the next name.
+function ns.ShareChannelTick()
+  if not ChannelWanted() then
+    chan.state = "off"
+    return nil
+  end
+  if chan.name and ChannelID(chan.name) then chan.state = "joined" return chan.name end
+  -- already in one of the names (e.g. after /reload)
+  for i, name in ipairs(CHANNEL_NAMES) do
+    if ChannelID(name) then chan.name, chan.index, chan.pending, chan.state = name, i, nil, "joined" return name end
+  end
+  chan.name = nil
+  local now = Now()
+  if chan.pending then
+    if now - chan.at < JOIN_CHECK then return nil end
+    chan.pending = nil
+    chan.index = chan.index + 1 -- not in it after the wait: next name
+  end
+  local name = CHANNEL_NAMES[chan.index]
+  if not name then chan.state = "failed" return nil end
+  if Locked() or ns.True(ns.Value(InCombatLockdown)) then return nil end
+  local join = JoinTemporaryChannel or JoinChannelByName
+  if type(join) ~= "function" then chan.state = "no API" return nil end
+  if pcall(join, name) then
+    chan.pending, chan.at, chan.state = name, now, "joining"
+    chan.joins = chan.joins + 1
+  else
+    chan.index = chan.index + 1
+  end
+  return nil
+end
+
+-- Option switched off: leave the channel (on: join with the next tick).
+function ns.ApplyShareChannel()
+  if not ChannelWanted() then
+    local name = chan.name
+    if name and ChannelID(name) and type(LeaveChannelByName) == "function" then pcall(LeaveChannelByName, name) end
+    chan.name, chan.pending, chan.index, chan.state = nil, nil, 1, "off"
+  else
+    chan.index = 1
+    ns.ShareChannelTick()
+  end
+end
+
+function ns.ShareChannelState()
+  local id = chan.name and ChannelID(chan.name)
+  return chan.state, chan.name, id, chan.joins
+end
+
+-- Where to send: { {chatType, target}, ... }
 local function Channels()
   local list = {}
   local guild = ns.True(ns.Value(IsInGuild))
-  if guild then list[#list + 1] = "GUILD" end
+  if guild then list[#list + 1] = { "GUILD" } end
   if ns.True(ns.Value(IsInGroup)) and not (guild and GroupInGuild()) then
     local instance = LE_PARTY_CATEGORY_INSTANCE and ns.True(ns.Value(IsInGroup, LE_PARTY_CATEGORY_INSTANCE))
-    list[#list + 1] = instance and "INSTANCE_CHAT" or (ns.True(ns.Value(IsInRaid)) and "RAID" or "PARTY")
+    list[#list + 1] = { instance and "INSTANCE_CHAT" or (ns.True(ns.Value(IsInRaid)) and "RAID" or "PARTY") }
   end
+  local id = ChannelWanted() and chan.name and ChannelID(chan.name)
+  if id then list[#list + 1] = { "CHANNEL", tostring(id) } end
   return list
 end
 
@@ -346,7 +478,7 @@ end
 local function SendTo(msg, channels)
   local any = false
   for _, ch in ipairs(channels) do
-    local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, ch)
+    local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, ch[1], ch[2])
     if ok and (result == nil or result == true or result == 0) then any = true else stats.blocked = stats.blocked + 1 end
   end
   return any
@@ -398,14 +530,15 @@ function ns.ShareFlush()
   if Locked() or ns.True(ns.Value(InCombatLockdown)) then stats.blocked = stats.blocked + 1 return 0 end
   local channels = Channels()
   if #channels == 0 or not Register() then return 0 end
-  local budget = math.min(MAX_PER_FLUSH, HourBudget())
+  -- (1.1) every message goes to each way: stay within the client's burst
+  local budget = math.min(MAX_PER_FLUSH, HourBudget(), math.floor(SENDS_PER_FLUSH / #channels))
   if budget <= 0 then return 0 end
   local pending = Pending()
   local sent = DB().shareSent
   local msgs, i = 0, 1
   while i <= #pending and msgs < budget do
     seq = (seq + 1) % 1000
-    local head = ("D1:%d:"):format(seq)
+    local head = ("D2:%d:%s:"):format(seq, MyToken())
     local parts, used, size = {}, {}, #head
     while i <= #pending and size + #pending[i][3] + (#parts > 0 and 1 or 0) <= MAX_MSG do
       parts[#parts + 1] = pending[i][3]
@@ -509,8 +642,10 @@ function ns.ShareDiag()
     facts = facts + 1
     if Best(e) then confirmed = confirmed + 1 end
   end
-  return ("%s, sent %d facts in %d messages (left out as known %d), received %d lines in %d messages (bad %d, limited %d, own %d), blocked %d, shared %d facts (confirmed %d), pruned %d"):format(
-    ns.db and ns.db.shareLearned and "on" or "off", stats.sentFacts, stats.sentMsgs, stats.saved, stats.recvLines, stats.recvMsgs,
+  local state, name, id, joins = ns.ShareChannelState()
+  return ("%s, channel %s%s, sent %d facts in %d messages (left out as known %d), received %d lines in %d messages (via channel %d; bad %d, limited %d, own %d), blocked %d, shared %d facts (confirmed %d), pruned %d"):format(
+    ns.db and ns.db.shareLearned and "on" or "off", tostring(state), name and (" " .. name .. " #" .. tostring(id or "?") .. ", joins " .. joins) or "",
+    stats.sentFacts, stats.sentMsgs, stats.saved, stats.recvLines, stats.recvMsgs, stats.recvChannel,
     stats.bad, stats.limited, stats.own, stats.blocked, facts, confirmed, stats.pruned)
 end
 
@@ -530,6 +665,14 @@ ns.OnInit(function()
   Register()
   -- every FLUSH_GAP seconds for the whole session (C_Timer.NewTicker repeats)
   if not ticker and C_Timer and type(C_Timer.NewTicker) == "function" then
-    ticker = C_Timer.NewTicker(FLUSH_GAP, function() ns.SafeCall("share", ns.ShareFlush) end)
+    ticker = C_Timer.NewTicker(FLUSH_GAP, function()
+      ns.SafeCall("share channel", ns.ShareChannelTick)
+      ns.SafeCall("share", ns.ShareFlush)
+    end)
+  end
+  -- (1.1) the open channel: shortly after login, then the join is checked
+  if C_Timer and type(C_Timer.After) == "function" then
+    C_Timer.After(JOIN_DELAY, function() ns.SafeCall("share channel", ns.ShareChannelTick) end)
+    C_Timer.After(JOIN_DELAY + JOIN_CHECK + 1, function() ns.SafeCall("share channel", ns.ShareChannelTick) end)
   end
 end)
