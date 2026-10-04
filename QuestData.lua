@@ -365,7 +365,8 @@ function ns.QuestStart(questID)
 end
 
 -- Best guess where to turn a quest in: mapID, x, y (0-1), source
--- ("blizzard", "learned", "data" = known turn-in NPC, "followup" = giver of the next quest, "giver" = same NPC).
+-- ("blizzard", "learned", "shared" = reported by other players (1.0.1), "data" = known turn-in NPC,
+-- "followup" = giver of the next quest, "giver" = same NPC).
 -- giver: also guess the quest giver itself (wrong for delivery quests). Never
 -- for quests started by an item (1.15): their "start" is where the item drops.
 function ns.TurnInPoint(questID, giver)
@@ -375,6 +376,11 @@ function ns.TurnInPoint(questID, giver)
   end
   local e = ns.db.learned[questID]
   if e and e.finish then return e.finish.map, e.finish.x, e.finish.y, "learned" end
+  -- (1.0.1) reported by two or more other players (Exchange.lua)
+  if ns.SharedTurnIn then
+    local sm, sx, sy = ns.SharedTurnIn(questID)
+    if sm then return sm, sx, sy, "shared" end
+  end
   -- (1.0) known turn-in NPC (Data/Extra_Quests.lua)
   local fin = ns.QUEST_ENDS and ns.QUEST_ENDS[questID]
   if fin and fin[1] and fin[2] then return fin[1], fin[2] / 100, fin[3] / 100, "data" end
@@ -687,7 +693,7 @@ end
 -- Sorted indices of the open objectives with data (ATT or learned).
 local function OpenIndices(questID, client)
   local objs = OBJ[questID] or {}
-  local learned = (ns.db.learnedObj or {})[questID] or {}
+  local learned = (ns.ObjectiveSpots and ns.ObjectiveSpots(questID) or (ns.db.learnedObj or {})[questID]) or {} -- (1.0.1) own + shared
   local indices = {}
   for index in pairs(objs) do indices[#indices + 1] = index end
   for index in pairs(learned) do if not objs[index] then indices[#indices + 1] = index end end
@@ -709,7 +715,7 @@ function ns.ObjectivePointsOnMap(mapID)
   for _, info in ipairs(ns.QuestLogEntries()) do
     local id = info.questID
     local tracked = not ns.db.objectivePinsTrackedOnly or ns.IsQuestTracked(id)
-    if tracked and (OBJ[id] or learnedObj[id]) and not ns.IsQuestComplete(id) and not ns.IsQuestFailed(id)
+    if tracked and (OBJ[id] or learnedObj[id] or (ns.SharedSpots and ns.SharedSpots(id))) and not ns.IsQuestComplete(id) and not ns.IsQuestFailed(id)
         and not DrawnElsewhere(id, "objective") then
       local client = ClientObjectives(id)
       local open, objs, learned = OpenIndices(id, client)
@@ -760,7 +766,7 @@ end
 
 -- Does an objective of the quest have data (ATT or learned)?
 function ns.HasObjectiveData(questID)
-  return OBJ[questID] ~= nil or (ns.db.learnedObj or {})[questID] ~= nil
+  return OBJ[questID] ~= nil or (ns.db.learnedObj or {})[questID] ~= nil or (ns.SharedSpots and ns.SharedSpots(questID)) ~= nil
 end
 
 -- Is this ATT objective a "use an item at a place" objective?

@@ -195,7 +195,7 @@ function Learn()
       if m and level == "zone" and total > 0 and open == 1 and index and not types.event
           and not ns.IsUseObjective(id, index) then
         local o = ns.ATT_OBJECTIVES and ns.ATT_OBJECTIVES[id] and ns.ATT_OBJECTIVES[id][index]
-        local spots = ((ns.db.learnedObj or {})[id] or {})[index]
+        local spots = ((ns.ObjectiveSpots and ns.ObjectiveSpots(id) or (ns.db.learnedObj or {})[id]) or {})[index]
         local known = false
         for _, p in ipairs(ns.ObjectiveTargets(id, index, o, spots)) do
           if Near(p, m, x, y) then known = true break end

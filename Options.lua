@@ -66,6 +66,7 @@ local PAGES = {
     { key = "nameplateIcons", name = "Quest icons on nameplates", tip = "A small mark above the nameplate: a dot in the quest's colour for mobs of your open objectives, a yellow ! for NPCs with a quest you can pick up now, a ? where a finished quest is turned in (learned NPC). Nameplates must be switched on in the game. If the game hides who a nameplate belongs to (Midnight rules), that nameplate gets no icon.", onChange = function() if ns.RefreshNameplates then ns.RefreshNameplates() end end },
     { header = "Learning" },
     { key = "learnQuests", name = "Learn quest locations", tip = "Remembers where you accept and turn in quests and where your objective counters went up (account wide), so your other characters see them on the map too." },
+    { key = "shareLearned", name = "Share learned data with guild and group", tip = "Sends what you learned and the data does not have yet (only numbers: quest, NPC, map and item numbers, coordinates) to Questdon players in your guild and group. What two or more players reported is used by everyone, also when this is off.", parent = "learnQuests" },
     { key = "learnPins", name = "Show learned turn-in points on the map", tip = "Shows where you turned in a quest before (also on other characters), once that quest is finished.", onChange = RefreshPins },
     { key = "pinsOnlyUnknown", name = "Only quests Questie does not know", tip = "Hides learned pins for quests that Questie already shows.", parent = "learnPins", onChange = RefreshPins },
   } },
@@ -177,7 +178,7 @@ local TOOLS = {
         wipe(ns.db.learned)
         if ns.db.learnedObj then wipe(ns.db.learnedObj) end
         if ns.db.learnedItems then wipe(ns.db.learnedItems) end
-        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts" }) do
+        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "shared", "shareSent" }) do
           if type(ns.db[k]) == "table" then wipe(ns.db[k]) end
         end
         if ns.db.guessedItems then wipe(ns.db.guessedItems) end

@@ -131,7 +131,7 @@ local function QuestPoints(questID)
     -- chain, or (if the quest had objectives, so no delivery) its own giver.
     local m, x, y, source = ns.TurnInPoint(questID, total > 0)
     if m and x then
-      pts[#pts + 1] = { mapID = m, x = x, y = y, kind = (source == "learned" or source == "blizzard") and "turnin" or "guess" }
+      pts[#pts + 1] = { mapID = m, x = x, y = y, kind = (source == "learned" or source == "blizzard" or source == "shared") and "turnin" or "guess" }
     end
     return pts
   end

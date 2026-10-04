@@ -128,9 +128,9 @@ function ns.Today()
   return type(d) == "string" and d:match("^%d%d%d%d%-%d%d%-%d%d$") or "0000-00-00"
 end
 
--- Returns text, number of records, truncated (number of records left out).
--- all: everything learned, without comparing with ATT.
-function ns.BuildExport(all)
+-- (1.0.1) The export records (lines without header), also what Questdon
+-- shares with guild and group (Exchange.lua). all: without comparing with the data.
+function ns.ExportRecords(all)
   local records = {}
   local learned = ns.db.learned or {}
   local learnedObj = ns.db.learnedObj or {}
@@ -245,6 +245,13 @@ function ns.BuildExport(all)
     if Int(id) and id > 0 then records[#records + 1] = ("X %d"):format(id) end
   end
 
+  return records
+end
+
+-- Returns text, number of records, truncated (number of records left out).
+-- all: everything learned, without comparing with ATT.
+function ns.BuildExport(all)
+  local records = ns.ExportRecords(all)
   local lines = { ("QDX2 %s %s %s %s"):format(ns.Version(), Locale(), ns.Today(), all and "all" or "new") }
   local n = math.min(#records, MAX_LINES)
   for i = 1, n do lines[#lines + 1] = records[i] end
