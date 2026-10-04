@@ -1,0 +1,6 @@
+<Bindings>
+	<Binding name="CLICK QuestdonItemButton:LeftButton" header="QUESTDON" category="ADDONS">
+	</Binding>
+	<Binding name="CLICK QuestdonTargetButton:LeftButton" category="ADDONS">
+	</Binding>
+</Bindings>
