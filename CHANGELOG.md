@@ -1,5 +1,12 @@
 # Changes
 
+## 1.2.2
+
+- **Spawn points for the Horde start zones:** Durotar (with the Valley of Trials), Mulgore (with Red Cloud Mesa), Tirisfal Glades (with Deathknell) and The Barrens now bring every spawn point of quest mobs and quest objects from the Wowhead Forever quest maps too. Together with 1.2.1 this covers both factions up to roughly level 30.
+- **Spawn points up to level 60:** Desolace, Thousand Needles, Dustwallow Marsh, Alterac Mountains, Stranglethorn Vale, Swamp of Sorrows, Badlands, Feralas, Tanaris, The Hinterlands, Searing Gorge, Azshara, Blasted Lands, Un'Goro Crater, Felwood, Burning Steppes, Western and Eastern Plaguelands, Winterspring and Silithus too. Every leveling zone of Kalimdor and the Eastern Kingdoms now has them.
+- **Learned in the game:** turn-ins, follow-up quests and objective spots from players' /qd export are bundled (for example, "Kobold Camp Cleanup" only shows after "A Threat Within", and "The Adventurer" in Tirisfal only after the start zone chain).
+- **New Forever mobs and quests:** new Forever variants that drop quest items (Vile Fin in Tirisfal, Razormane and Oasis Snapjaws in The Barrens and more) count as quest mobs, and the new Forsaken paladin quests show their targets.
+
 ## 1.2.1
 
 - **Spawn points for 14 zones:** every spawn point of quest mobs and quest objects from the Wowhead Forever quest maps, for Elwynn Forest (with Northshire), Dun Morogh (with Coldridge Valley), Teldrassil (with Shadowglen), Westfall, Loch Modan, Darkshore, Redridge Mountains, Wetlands, Duskwood, Ashenvale, Silverpine Forest, Hillsbrad Foothills, Arathi Highlands and Stonetalon Mountains. That is roughly level 1 to 30, mostly the Alliance side; the Horde quests of these zones are included. The Horde start zones and The Barrens follow in a later version.
