@@ -24,7 +24,7 @@ local _, ns = ...
 -- map use the zone around them.
 ---------------------------------------------------------------------------
 local UPDATE_INTERVAL = 0.1 -- seconds between position updates
-local MAX_SHOWN = 60        -- pins shown at the same time (available quests first)
+local MAX_SHOWN = 100       -- pins shown at the same time (available quests first; 1.2: was 60, more spawn dots)
 local QUEST_SIZE, DOT_SIZE = 14, 9
 
 -- Minimap view in yards (diameter) per zoom level 0-5, used only when the
@@ -168,12 +168,12 @@ local function PinClick(self, button)
   local pin = self.pin
   -- (1.1) Alt-click: "no quest here" (NotHere.lua)
   if button == "LeftButton" and pin and ns.True(ns.Value(IsAltKeyDown)) and ns.ReportPin then
-    if pin.kind ~= "turnin" and pin.kind ~= "objective" then ns.ReportPin(pin) end
+    if pin.kind ~= "turnin" and pin.kind ~= "objective" and pin.kind ~= "focus" then ns.ReportPin(pin) end
     return
   end
-  if button ~= "LeftButton" or not pin or not curMap or not ns.SetArrowTarget then return end
+  if button ~= "LeftButton" or not pin or not curMap then return end
   local label = pin.group and ns.QuestGroupTitle(pin) or ns.QuestTitle(pin.questID)
-  ns.SetArrowTarget(curMap, pin.x, pin.y, label)
+  ns.PointArrowFromPin(curMap, pin.x, pin.y, label) -- (1.2) also switches the arrow on
 end
 
 local function SetQuestIcon(tex, kind)
@@ -216,12 +216,13 @@ local function Look(b, pin)
   b.pin = pin
   stats.dressed = stats.dressed + 1
   if pin.kind == "objective" then
-    b:SetSize(DOT_SIZE, DOT_SIZE)
+    local d = pin.small and math.max(5, math.floor(DOT_SIZE * 0.75 + 0.5)) or DOT_SIZE -- (1.2) many spawns: smaller dots
+    b:SetSize(d, d)
     b.icon:SetTexture("Interface\\COMMON\\Indicator-Yellow")
     b.icon:SetVertexColor(ns.QuestColor(pin.questID))
   else
     b:SetSize(QUEST_SIZE, QUEST_SIZE)
-    SetQuestIcon(b.icon, pin.kind)
+    SetQuestIcon(b.icon, pin.iconKind or pin.kind) -- (1.2) the picked quest of the zone list
   end
   b:SetAlpha(pin.dimmed and 0.35 or 1)
   b.kind = pin.kind
@@ -252,7 +253,7 @@ local function Rebuild(force)
   for _, e in ipairs(entries) do Give(e) end
   entries = {}
   -- available quests first (they are what you look for), then turn-ins, then dots
-  local order = { available = 1, turnin = 2, objective = 3 }
+  local order = { focus = 0, available = 1, turnin = 2, objective = 3 }
   local display = ns.DisplayQuestPins(pins) -- (1.25) no second "!" where the game draws one
   table.sort(display, function(a, b)
     local oa, ob = order[a.kind] or 4, order[b.kind] or 4

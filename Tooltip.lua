@@ -29,12 +29,38 @@ local function Index()
       end
     end
   end
+  -- (1.2) mobs Questdon saw give credit (the data names none for many new
+  -- Forever quests): the same entries
+  for questID, objs in pairs(type(ns.db.learnedCredit) == "table" and ns.db.learnedCredit or {}) do
+    if type(questID) == "number" and type(objs) == "table" then
+      for index in pairs(objs) do
+        if type(index) == "number" and index >= 1 and index < SLOTS then
+          local o = OBJ[questID] and OBJ[questID][index]
+          local known = {}
+          for _, cr in ipairs(o and o[1] or {}) do known[cr] = true end
+          for _, cr in ipairs(ns.LearnedObjectiveCreatures and ns.LearnedObjectiveCreatures(questID, index, o and #(o[1] or {}) > 0) or {}) do
+            if not known[cr] then
+              local list = byCreature[cr]
+              if not list then list = {} byCreature[cr] = list end
+              list[#list + 1] = questID * SLOTS + index
+            end
+          end
+        end
+      end
+    end
+  end
   for questID, q in pairs(Q) do
     for _, npc in ipairs(q[GIVERS] or {}) do
       byGiver[npc] = byGiver[npc] or {}
       table.insert(byGiver[npc], questID)
     end
   end
+end
+
+-- (1.2) Learned credit changed: build the index again when next needed.
+function ns.ResetCreatureIndex()
+  byCreature, byGiver = nil, nil
+  if ns.RefreshNameplates then ns.QueueRefresh("nameplates") end
 end
 
 -- (1.22) Index entries of one creature (nameplate icons): objectives
@@ -116,6 +142,31 @@ local function OnUnitTooltip(tooltip, data)
   if not id then return end
   local lines = ns.TooltipLinesForCreature(id)
   if #lines == 0 then return end
+  -- (1.2) quests the game's tooltip already names with their progress (the
+  -- modern client does that for your quests): no second line from us
+  local shown = {}
+  if type(data) == "table" and type(data.lines) == "table" then
+    for _, l in ipairs(data.lines) do
+      local t = type(l) == "table" and l.leftText
+      if type(t) == "string" and ns.Usable(t) then shown[t] = true end
+    end
+  end
+  if next(shown) == nil and tooltip.NumLines then
+    local n = ns.Num(ns.Value(tooltip.NumLines, tooltip)) or 0
+    for i = 1, math.min(n, 30) do
+      local fs = _G["GameTooltipTextLeft" .. i]
+      local t = fs and fs.GetText and ns.Value(fs.GetText, fs)
+      if type(t) == "string" and ns.Usable(t) then shown[t] = true end
+    end
+  end
+  if next(shown) ~= nil then
+    local keep = {}
+    for _, l in ipairs(lines) do
+      if not (l.kind == "objective" and shown[l[1]]) then keep[#keep + 1] = l end
+    end
+    lines = keep
+    if #lines == 0 then return end
+  end
   -- (1.19) family structure inside Blizzard's unit tooltip: a spacer, then
   -- key/value lines (quest in the secondary colour, progress in the primary
   -- colour); quests to pick up with the yellow "!" and Blizzard's level colour.

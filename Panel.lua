@@ -101,8 +101,9 @@ local function BuildLines()
   local out = {}
   local function Add(e) out[#out + 1] = e return e end
 
-  -- Experience
-  if not ns.AtMaxLevel() then
+  -- Experience (1.2: only while the XP bar is off; the bar shows the same
+  -- numbers, the window would repeat them with a different XP/h refresh)
+  if not ns.AtMaxLevel() and not ns.db.xpBar then
     local xp, count, unknown = ns.CompletedQuestXP()
     Add({ section = "xp", kind = "finished", label = L["Finished quests (%d)"]:format(count),
       value = L["+%s XP"]:format(Style.Number(xp)) .. (unknown > 0 and Style.Colorize(" ?", "textHint") or ""),
@@ -490,12 +491,26 @@ function ns.TogglePanel()
   end
 end
 
+-- (1.2) icon of the zone quest list button: added to this addon's copy of the
+-- kit's icon table (Style.lua itself stays the shared file)
+Style.ICONS.qdZoneList = Style.ICONS.qdZoneList or {
+  atlas = { "questlog-icon-ticksquare", "questlog-icon-checkmark-yellow" },
+  file = "Interface\\Buttons\\UI-GuildButton-PublicNote-Up",
+}
+
 local function Create()
   panel = Style.Panel("QuestdonPanel", UIParent, {
     title = Style.Wordmark("Quest", "don"),
     width = PanelWidth(),
     close = true, collapse = true,
     closeTooltip = L["Hide window"],
+    -- (1.2) options and the quest list of the zone, right in the title bar
+    buttons = {
+      { key = "options", kind = "options", tooltip = { L["Options"], nil, L["/qd opens them too."] },
+        onClick = function() if ns.OpenOptions then ns.OpenOptions() end end },
+      { key = "zone", kind = "qdZoneList", tooltip = { L["Quests of the zone"], nil, L["All quests of the zone: done, in your log, available and later. /qd zone"] },
+        onClick = function() if ns.ToggleZoneQuests then ns.ToggleZoneQuests() end end },
+    },
     collapseTooltip = { L["Collapse or expand"], nil, L["Collapsed, one line stays: the next quest, a nearly full quest log or the XP of finished quests."] },
     get = Get, set = Set,
     defaultPoint = { "TOPRIGHT", "TOPRIGHT", -240, -220 },

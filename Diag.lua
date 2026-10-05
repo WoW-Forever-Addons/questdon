@@ -143,6 +143,13 @@ function ns.BuildDiag()
   Probe(out, "map pins", function() return ns.MapPinsState and ns.MapPinsState() or "?" end)
   Probe(out, "minimap pins", function() return ns.MinimapPinsState and ns.MinimapPinsState() or "?" end)
   Probe(out, "nameplate icons", function() return ns.NameplateState and ns.NameplateState() or "?" end)
+  -- (1.2) where quest mobs were seen close by, and the bundled spawn points
+  Probe(out, "sightings", function()
+    local st = ns.SightingStats and ns.SightingStats() or {}
+    local n = 0
+    for _ in pairs(ns.SPAWNS or {}) do n = n + 1 end
+    return ("quest mobs seen %d, spots added %d, too far %d; spawn data for %d creatures"):format(st.seen or 0, st.added or 0, st.far or 0, n)
+  end)
   -- (1.25) one ! per quest giver: merged by giver, left to the game
   Probe(out, "duplicate givers", function()
     local d = ns.DuplicatePinStats and ns.DuplicatePinStats() or {}

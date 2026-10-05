@@ -231,6 +231,11 @@ function ns.NameplateIcon(unit) return units[unit] or nil end
 registered = ns.On("NAME_PLATE_UNIT_ADDED", function(_, unit)
   if type(unit) ~= "string" or not ns.Usable(unit) then return end
   stats.plates = stats.plates + 1
+  -- (1.2) learn where quest mobs are (Learn.lua), also with the icons off
+  if ns.NoteSighting then
+    local guid = ns.Value(UnitGUID, unit)
+    if guid ~= nil then ns.SafeCall("sighting", ns.NoteSighting, unit, ns.CreatureIDFromGUID(guid)) end
+  end
   if not Enabled() then units[unit] = false return end
   Apply(unit)
 end) and true or false

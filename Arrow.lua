@@ -344,8 +344,15 @@ function ns.UpdateArrowTarget()
   end
 end
 
+-- (1.2) The quest you track (super-tracked) when a target was clicked: picking
+-- another quest in the log or the tracker afterwards drops the clicked target,
+-- so the arrow follows your choice again.
+local function Tracked()
+  local id = C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
+  return id or 0
+end
 function ns.SetArrowTarget(mapID, x, y, label)
-  manual = { mapID = mapID, x = x, y = y, label = label }
+  manual = { mapID = mapID, x = x, y = y, label = label, tracked = Tracked() }
   if arrow and ns.db.arrow then arrow:Show() end
 end
 
@@ -359,8 +366,38 @@ function ns.SetExternalArrowTarget(target)
   if target and arrow and ns.db.arrow then arrow:Show() end
 end
 
+-- (1.2) Dead and released (a ghost): the arrow leads back to your corpse.
+-- The game's corpse position for the map you died on, else where you died.
+local corpse         -- { mapID, x, y } where you died (PLAYER_DEAD)
+local corpseTarget   -- target table, rebuilt at most once a second
+local corpseAt = -1
+local function Now2() return ns.Num(ns.Value(GetTime)) or 0 end
+local function CorpseTarget()
+  if not (ns.db.arrowCorpse and ns.True(ns.Value(UnitIsGhost, "player"))) then corpseTarget = nil return nil end
+  local now = Now2()
+  if corpseTarget and now - corpseAt < 1 then return corpseTarget end
+  corpseAt = now
+  local mapID = corpse and corpse.mapID or ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
+  local x, y
+  if mapID and C_DeathInfo and C_DeathInfo.GetCorpseMapPosition then
+    local pos = ns.Value(C_DeathInfo.GetCorpseMapPosition, mapID)
+    if type(pos) == "table" then
+      local ok, px, py = pcall(function() return pos:GetXY() end)
+      if ok then x, y = ns.Num(px), ns.Num(py) end
+      if not x then x, y = ns.Num(pos.x), ns.Num(pos.y) end
+      if x and y and x == 0 and y == 0 then x, y = nil, nil end
+    end
+  end
+  if not (x and y) and corpse then mapID, x, y = corpse.mapID, corpse.x, corpse.y end
+  if not (mapID and x and y) then corpseTarget = nil return nil end
+  corpseTarget = { mapID = mapID, x = x, y = y, label = L["Your corpse"], corpse = true }
+  return corpseTarget
+end
+ns.CorpseTarget = CorpseTarget
+
 local function Target()
-  return manual or external or auto
+  if manual and manual.tracked ~= Tracked() then manual = nil end -- (1.2) another quest picked
+  return CorpseTarget() or manual or external or auto
 end
 ns.ArrowTarget = Target
 
@@ -591,6 +628,15 @@ ns.OnInit(function()
   ns.NewTicker(5, ns.UpdateArrowTarget) -- nearest point changes while you move
 end)
 ns.On("SUPER_TRACKING_CHANGED", Queue)
+-- (1.2) where you died; alive again: back to the quest
+ns.On("PLAYER_DEAD", function()
+  local m, x, y = ns.PlayerPosition()
+  corpse = m and x and { mapID = m, x = x, y = y } or nil
+  corpseTarget = nil
+end)
+local function Alive() corpse, corpseTarget = nil, nil end
+ns.On("PLAYER_ALIVE", function() if not ns.True(ns.Value(UnitIsGhost, "player")) then Alive() end end)
+ns.On("PLAYER_UNGHOST", Alive)
 ns.On("QUEST_LOG_UPDATE", Queue)
 ns.On("ZONE_CHANGED_NEW_AREA", Queue)
 ns.On("PLAYER_ENTERING_WORLD", Queue)

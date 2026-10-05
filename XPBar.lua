@@ -66,6 +66,8 @@ local function Text(d)
     .. Fmt(d.cur) .. Style.Colorize(" / ", "textSecondary") .. Fmt(d.max) .. " " .. Style.Colorize("(" .. Style.Percent(d.pct) .. ")", "textSecondary") }
   if d.questXP > 0 then
     local after = d.levelAfter > d.level and L[" -> level %d"]:format(d.levelAfter) or ""
+    -- (1.2) where in that level you land, like the window showed it before
+    if d.fractionAfter then after = after .. " (" .. Style.Percent(d.fractionAfter) .. ")" end
     parts[#parts + 1] = Style.Colorize(L["Quests +%s"]:format(Fmt(d.questXP)) .. after, "warning")
   end
   if d.rested > 0 then
@@ -213,6 +215,7 @@ end
 function ns.ToggleXPBar()
   ns.db.xpBar = not ns.db.xpBar
   ns.UpdateXPBar()
+  if ns.UpdatePanel then ns.UpdatePanel() end -- (1.2) the window shows the XP lines while the bar is off
 end
 
 -- (1.23) Batched with the other quest displays (Core.lua, 0.5 s).

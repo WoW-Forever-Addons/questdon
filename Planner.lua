@@ -94,6 +94,33 @@ ns.On("PLAYER_XP_UPDATE", function()
 end)
 ns.On("PLAYER_LEVEL_UP", function() ns.After(0.5, Snapshot) end)
 
+-- (1.2) The session survives /reload and a quick relog (up to 15 minutes):
+-- saved per character at logout, picked up again at login.
+local KEEP_SECS = 900
+local function Wall() return ns.Num(ns.Value(time)) end
+ns.On("PLAYER_LOGOUT", function()
+  local c, now, wall = ns.charDB, ns.Num(ns.Value(GetTime)), Wall()
+  if not (c and now and wall) then return end
+  if session.start then
+    c.xpSession = { elapsed = now - session.start, gained = session.gained, savedAt = wall }
+  else
+    c.xpSession = nil
+  end
+end)
+ns.OnInit(function()
+  local c = ns.charDB
+  local saved = c and type(c.xpSession) == "table" and c.xpSession
+  if c then c.xpSession = nil end
+  local wall, now = Wall(), ns.Num(ns.Value(GetTime))
+  if not (saved and wall and now) then return end
+  local age = wall - (tonumber(saved.savedAt) or 0)
+  local elapsed, gained = tonumber(saved.elapsed), tonumber(saved.gained)
+  if age >= 0 and age <= KEEP_SECS and elapsed and elapsed > 0 and gained and gained > 0 then
+    -- the time away counts as session time (XP per hour stays honest)
+    session.start, session.gained = now - elapsed - age, gained
+  end
+end)
+
 function ns.XPPerHour()
   if not session.start then return nil end
   local elapsed = (ns.Num(ns.Value(GetTime)) or session.start) - session.start

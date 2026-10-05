@@ -50,6 +50,9 @@ function BuildPins(mapID)
     end
   end
   for _, t in ipairs(LearnedTurnIns(mapID)) do pins[#pins + 1] = t end
+  -- (1.2) the quest picked in the zone quest list (ZoneQuests.lua)
+  local focus = ns.ZoneFocusPin and ns.ZoneFocusPin(mapID)
+  if focus then pins[#pins + 1] = focus end
   if ns.db.objectivePins then
     for _, o in ipairs(ns.ObjectivePointsOnMap(mapID)) do
       o.kind = "objective"
@@ -362,6 +365,15 @@ end
 function ns.QuestPinTooltip(pin)
   local lines = {}
   local function KV(label, value, color) lines[#lines + 1] = { label, value, color } end
+  -- (1.2) the quest picked in the zone quest list: its status there
+  if pin.kind == "focus" then
+    KV(L["Status"], pin.statusText or "")
+    local level = ns.QuestLevel(pin.questID)
+    if level then KV(L["Level"], level, LevelRGB(level)) else KV(L["Level"], L["unknown"], "textHint") end
+    local giver = GiverText(pin)
+    if giver then KV(L["Quest giver"], giver) end
+    return ns.QuestTitle(pin.questID), lines, L["Picked in the quest list of the zone."]
+  end
   if pin.kind == "turnin" then
     lines[#lines + 1] = L["Turn in here"]
     for _, r in ipairs(ns.QuestRewardLines and ns.QuestRewardLines(pin.questID) or {}) do KV(L["Reward"], r) end
@@ -452,9 +464,7 @@ function ns.ObjectivePinTooltip(pin)
   if pin.needsItem then
     lines[#lines + 1] = { L[pin.dimmed and "Use %s here. First get it." or "Get %s here."]:format(ns.ItemName(pin.needsItem)) }
   end
-  for _, line in ipairs(ns.QuestRewardLines and ns.QuestRewardLines(pin.questID) or {}) do
-    lines[#lines + 1] = { L["Reward"], line }
-  end
+  -- (1.2) no rewards here any more: the dot says what to do, the rewards are in the quest log
   return Swatch(pin.questID) .. ns.QuestTitle(pin.questID), lines, L["Click: point the arrow here"]
 end
 
@@ -474,9 +484,9 @@ local function PinKey(p)
   end
   -- (1.23) one string per pin (was a table of 13 strings)
   return ("%s:%s:%s:%.4f:%.4f:%s:%s:%s:%s:%s:%s:%s:%s"):format(tostring(p.kind), tostring(p.questID), tostring(p.index or ""),
-    tonumber(p.x) or 0, tonumber(p.y) or 0, p.dimmed and "d" or "", p.learned and "l" or "",
+    tonumber(p.x) or 0, tonumber(p.y) or 0, (p.dimmed and "d" or "") .. (p.small and "s" or ""), p.learned and "l" or "",
     tostring(p.upcoming or "") .. "/" .. tostring(p.notOffered or "") .. (p.confirmed and "c" or "") .. (p.gameShown and "g" or ""), -- (1.24, 1.25)
-    tostring(p.npc or ""), tostring(p.text or ""), tostring(p.needsItem or ""), tostring(p.creature or ""), extra)
+    tostring(p.npc or ""), tostring(p.text or "") .. tostring(p.statusText or "") .. tostring(p.iconKind or ""), tostring(p.needsItem or ""), tostring(p.creature or ""), extra)
 end
 local function Signature(mapID, pins)
   local keys = {}
@@ -518,26 +528,28 @@ function Setup()
     -- when something asks for it: our own tooltip does not use it
     BaseMapPoiPinMixin.OnAcquired(self, {
       name = title,
-      atlasName = pin.kind == "turnin" and "QuestTurnin" or "QuestNormal",
+      atlasName = (pin.kind == "turnin" or pin.iconKind == "turnin") and "QuestTurnin" or "QuestNormal",
       position = CreateVector2D(pin.x, pin.y),
     })
     self.qdName, self.qdDesc, self.qdPin = title, nil, pin
     -- (1.22) quests of the next levels: dimmed, like on the minimap
     -- (1.24) and quests the quest giver did not offer at your level
-    if self.SetAlpha then pcall(self.SetAlpha, self, (pin.upcoming or pin.notOffered) and 0.5 or 1) end
+    if self.SetAlpha then pcall(self.SetAlpha, self, (pin.upcoming or pin.notOffered or pin.dimmed) and 0.5 or 1) end
   end
   -- Left click: point the arrow there.
   function QuestPin:OnMouseClickAction(button)
     -- (1.1) Alt-click: "no quest here" (NotHere.lua)
-    if button == "LeftButton" and self.qdPin and ns.True(ns.Value(IsAltKeyDown)) and ns.ReportPin then
+    if button == "LeftButton" and self.qdPin and self.qdPin.kind ~= "focus" and ns.True(ns.Value(IsAltKeyDown)) and ns.ReportPin then
       ns.ReportPin(self.qdPin)
       return
     end
-    if button == "LeftButton" and self.qdPin and ns.SetArrowTarget then
+    if button == "LeftButton" and self.qdPin then
       local label = self.qdPin.group and ns.QuestGroupTitle(self.qdPin) or ns.QuestTitle(self.qdPin.questID)
-      ns.SetArrowTarget(self:GetMap():GetMapID(), self.qdPin.x, self.qdPin.y, label)
+      ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.qdPin.x, self.qdPin.y, label)
     end
   end
+  -- (1.2) map canvases that call OnClick instead of OnMouseClickAction
+  QuestPin.OnClick = ns.Guard("map click", function(self, button) self:OnMouseClickAction(button) end)
   function QuestPin.UseTooltip() return true end
   function QuestPin:GetBestNameAndDescription()
     if self.qdDesc == nil and self.qdPin then self.qdDesc = ns.QuestPinDescription(self.qdPin) end
@@ -562,6 +574,7 @@ function Setup()
   function ObjPin:OnAcquired(pin)
     self.pin = pin
     local size = ns.db.objectivePinSize or 12
+    if pin.small then size = math.max(6, math.floor(size * 0.7 + 0.5)) end -- (1.2) many spawns: smaller dots
     self:SetSize(size, size)
     self:SetPosition(pin.x, pin.y)
     if self.Dot then self.Dot:SetVertexColor(QuestColor(pin.questID)) end
@@ -575,10 +588,11 @@ function Setup()
   end)
   function ObjPin:OnMouseLeave() ns.Style.HideTooltip(self) end
   function ObjPin:OnMouseClickAction(button)
-    if button == "LeftButton" and self.pin and ns.SetArrowTarget then
-      ns.SetArrowTarget(self:GetMap():GetMapID(), self.pin.x, self.pin.y, ns.QuestTitle(self.pin.questID))
+    if button == "LeftButton" and self.pin then
+      ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.pin.x, self.pin.y, ns.QuestTitle(self.pin.questID))
     end
   end
+  ObjPin.OnClick = ns.Guard("map click", function(self, button) self:OnMouseClickAction(button) end)
 
   -- The map canvas calls these: protected, so an error here never breaks the map.
   local p = CreateFromMixins(MapCanvasDataProviderMixin)
@@ -628,6 +642,17 @@ function ns.MapPinsState()
   if setupFailed then return "failed (AddDataProvider)" end
   if not WorldMapFrame then return "waiting for the world map" end
   return "not available (map APIs missing)"
+end
+
+-- (1.2) A click on a pin points the arrow there and switches the arrow on if
+-- it was off (before, the click set the target of a hidden arrow).
+function ns.PointArrowFromPin(mapID, x, y, label)
+  if not (mapID and x and y and ns.SetArrowTarget) then return end
+  if not ns.db.arrow then
+    ns.db.arrow = true
+    if ns.ApplyArrow then ns.ApplyArrow() end
+  end
+  ns.SetArrowTarget(mapID, x, y, label)
 end
 
 function ns.RefreshPins()

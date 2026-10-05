@@ -267,7 +267,7 @@ end)
 -- Learning objective spots: where an objective counter went up
 -- (account wide, max 30 spots per objective, at least ~2% of the map apart)
 ---------------------------------------------------------------------------
-local MAX_SPOTS, MIN_DIST = 30, 0.02
+local MAX_SPOTS, MIN_DIST = 60, 0.02 -- (1.2) 60 spots per objective (was 30): sightings add more
 local progress = {} -- [questID] = { [index] = numFulfilled }
 local progressReady = false
 
@@ -295,6 +295,60 @@ end
 
 local function AddSpot(questID, index)
   ns.AddObjectiveSpot(questID, index, ns.PlayerPosition())
+end
+
+---------------------------------------------------------------------------
+-- (1.2) Sightings: a mob of an open objective whose nameplate shows up close
+-- to you (within about 28 yards, the follow distance) marks your spot as a
+-- place where it is. Out of combat, at most once per creature every 5
+-- seconds; the 0.02 spacing of the spots keeps them apart. These spots are
+-- shared like the others (Exchange.lua), so the map fills while people play.
+---------------------------------------------------------------------------
+local SIGHT_SECS = 5
+local lastSight = {}
+local sightStats = { seen = 0, added = 0, far = 0 }
+function ns.SightingStats() return sightStats end
+local function Close(unit)
+  if not CheckInteractDistance then return false end
+  local ok, near = pcall(CheckInteractDistance, unit, 4)
+  return ok and ns.Usable(near) and near and true or false
+end
+-- Nameplates appear at about 40 yards: the visible ones are looked at again
+-- every 2 seconds out of combat (cheap: a lookup per plate).
+local function CheckPlates()
+  if not (ns.db and ns.db.learnQuests and ns.NameplateUnits) or (InCombatLockdown and InCombatLockdown()) then return end
+  for _, unit in ipairs(ns.NameplateUnits()) do
+    local guid = ns.Value(UnitGUID, unit)
+    if guid ~= nil then ns.NoteSighting(unit, ns.CreatureIDFromGUID(guid)) end
+  end
+end
+ns.OnInit(function() ns.NewTicker(2, CheckPlates) end)
+ns.CheckSightings = CheckPlates
+
+function ns.NoteSighting(unit, creatureID)
+  if not (ns.db and ns.db.learnQuests and creatureID and ns.CreatureQuestIndex) then return end
+  if InCombatLockdown and InCombatLockdown() then return end
+  local now = Clock()
+  if lastSight[creatureID] and now - lastSight[creatureID] < SIGHT_SECS then return end
+  local objectives = ns.CreatureQuestIndex(creatureID)
+  if not objectives then return end
+  local open = {}
+  for _, entry in ipairs(objectives) do
+    local questID, index = ns.ObjectiveEntry(entry)
+    -- not for "use an item here" objectives: their learned spots are the place of use
+    if ns.InQuestLog(questID) and not ns.IsQuestComplete(questID) and not ns.IsUseObjective(questID, index) then
+      local o = ns.ClientObjectives(questID)[index]
+      if not (type(o) == "table" and ns.True(o.finished)) then open[#open + 1] = { questID, index } end
+    end
+  end
+  if #open == 0 then return end
+  if not Close(unit) then sightStats.far = sightStats.far + 1 return end -- checked again later (slow ticker)
+  lastSight[creatureID] = now
+  sightStats.seen = sightStats.seen + 1
+  local map, x, y = ns.PlayerPosition()
+  for _, e in ipairs(open) do
+    if ns.AddObjectiveSpot(e[1], e[2], map, x, y) then sightStats.added = sightStats.added + 1 end
+  end
 end
 
 ---------------------------------------------------------------------------
@@ -335,10 +389,33 @@ local function NoteCredit(questID, index, o)
   db.learnedCredit[questID] = q
   local c = q[index] or {}
   q[index] = c
+  local newCreature = false
   for _, src in ipairs(credit) do
     c[src[1]] = c[src[1]] or {}
+    if src[1] == "c" and not c.c[src[2]] then newCreature = true end
     Bump(c[src[1]], src[2])
   end
+  -- (1.2) a mob newly known to count for this objective: nameplates, tooltips,
+  -- sightings and the map use it from now on
+  if newCreature and ns.ResetCreatureIndex then ns.ResetCreatureIndex() end
+end
+
+-- (1.2) Creatures that gave credit for an objective (learned), { ids } or nil.
+-- A creature counts once it gave credit twice, or once when the data names no
+-- creature for that objective (new Forever quests).
+function ns.LearnedObjectiveCreatures(questID, index, dataHasCreatures)
+  local q = type(ns.db.learnedCredit) == "table" and ns.db.learnedCredit[questID]
+  local c = q and q[index] and q[index].c
+  if type(c) ~= "table" then return nil end
+  local list
+  for id, n in pairs(c) do
+    if type(id) == "number" and (n >= 2 or not dataHasCreatures) then
+      list = list or {}
+      list[#list + 1] = id
+    end
+  end
+  if list then table.sort(list) end
+  return list
 end
 
 local function ItemIDFromLink(link)

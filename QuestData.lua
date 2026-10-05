@@ -234,6 +234,67 @@ function ns.DataCanTakeQuest(questID)
   return DataCanTake(questID, Player())
 end
 
+---------------------------------------------------------------------------
+-- (1.2) Zone quest list (ZoneQuests.lua): every quest that starts on a map,
+-- and why a quest is not available yet.
+---------------------------------------------------------------------------
+local ORIGIN = 14
+-- Quest IDs starting on a map: the data plus what Questdon learned.
+function ns.QuestsStartingOnMap(mapID)
+  local list, seen = {}, {}
+  if not mapID then return list end
+  for _, id in ipairs(ByMap()[mapID] or {}) do seen[id] = true list[#list + 1] = id end
+  for id, e in pairs(ns.db and ns.db.learned or {}) do
+    if not seen[id] and type(e) == "table" and e.start and not e.start.item and e.start.map == mapID then
+      seen[id] = true
+      list[#list + 1] = id
+    end
+  end
+  return list
+end
+
+function ns.QuestInData(questID) return Q[questID] ~= nil end
+
+-- A quest only Questdon learned (not in the data): available to this
+-- character by the same rules as on the map (AvailableOnMap). true, or
+-- false and why: "faction", "missing", "never", "level", "client".
+function ns.LearnedQuestAvailable(questID)
+  local e = ns.db and ns.db.learned and ns.db.learned[questID]
+  local player = Player()
+  local fac = e and (e.faction == "Alliance" and "A" or e.faction == "Horde" and "H") or nil
+  if fac and player.faction and fac ~= player.faction then return false, "faction" end
+  if ns.QuestKnownMissing(questID) then return false, "missing" end
+  if ns.NeverOffered and ns.NeverOffered(questID) then return false, "never" end
+  local client = ns.ClientAvailability and ns.ClientAvailability(questID)
+  if client == true then return true end
+  if player.level and ns.NotOfferedLevel(questID, player.level) then return false, "level" end
+  if client == false then return false, "client" end
+  return true
+end
+
+-- "o": only in ATT's older data, may not exist in Forever (see ATT_Quests.lua).
+function ns.QuestOnlyInOldData(questID)
+  local q = Q[questID]
+  return q ~= nil and q[ORIGIN] == "o"
+end
+
+-- First prerequisite this character still has to do (one it can reach), or nil.
+function ns.MissingPrereq(questID)
+  local q = Q[questID]
+  if not q or not q[PREREQS] then return nil end
+  local player = Player()
+  if PrereqsDone(questID, q, player) then return nil end
+  for _, id in ipairs(q[PREREQS]) do
+    if not ns.IsQuestDone(id) and Reachable(id, player) then return id end
+  end
+  return nil
+end
+
+-- Breadcrumb whose quest is already in the log or done.
+function ns.BreadcrumbObsolete(questID)
+  return BreadcrumbObsolete(questID)
+end
+
 -- Started by an item (a drop or a found object), not by an NPC you can walk to.
 -- (1.0) Quest of a holiday or world event (flag "e"): its quest givers are
 -- only there while the event runs, so the data alone cannot say it is available.
@@ -535,6 +596,47 @@ end
 local USE, USE_PTS = 4, 5
 local NEAR = 4 -- map units (0-100): "at the quest giver / turn-in"
 
+-- (1.2) Spawn points of a creature from Wowhead's quest maps (Data/Spawns.lua):
+-- flat { map, x, y, ... } in 0-100 coordinates, decoded once; nil if none.
+local SPAWNS = ns.SPAWNS or {}
+local spawnCache = {}
+local function Spawns(creatureID)
+  local c = spawnCache[creatureID]
+  if c ~= nil then return c or nil end
+  c = false
+  local s = SPAWNS[creatureID]
+  if type(s) == "table" then
+    c = {}
+    for m, enc in pairs(s) do
+      for i = 1, #enc - 3, 4 do
+        local x, y = tonumber(enc:sub(i, i + 1), 36), tonumber(enc:sub(i + 2, i + 3), 36)
+        if x and y then c[#c + 1] = m c[#c + 1] = x / 10 c[#c + 1] = y / 10 end
+      end
+    end
+    if #c == 0 then c = false end
+  end
+  spawnCache[creatureID] = c
+  return c or nil
+end
+ns.CreatureSpawns = Spawns
+
+-- Where a creature is: Wowhead's spawns, else the few points of the data.
+-- fn(map, x, y) per point (0-100). true if any.
+local function EachSpawn(creatureID, fn)
+  local w = Spawns(creatureID)
+  if w then
+    for i = 1, #w, 3 do fn(w[i], w[i + 1], w[i + 2]) end
+    return true
+  end
+  local spawns = NPC[creatureID]
+  if spawns then
+    for i = 2, #spawns, 3 do fn(spawns[i], spawns[i + 1], spawns[i + 2]) end
+    return true
+  end
+  return false
+end
+ns.EachCreatureSpawn = EachSpawn
+
 -- Count of an item in the bags; nil if unknown (missing API, secret value).
 local function ItemCount(itemID)
   local fn = (C_Item and C_Item.GetItemCount) or GetItemCount
@@ -608,14 +710,26 @@ function ns.ObjectiveTargets(questID, index, o, spots, onlyMap)
     end
     -- 1. spots this account has seen the counter go up (0-1 coordinates)
     for i = 1, #spots, 3 do Add(out, spots[i], spots[i + 1], spots[i + 2], nil, 1) end
-    -- 2. ATT objective coordinates, 3. ATT creature spawns (0-100 coordinates)
+    -- 2. ATT objective coordinates (0-100)
     for i = 1, #pts, 3 do Add(out, pts[i], pts[i + 1], pts[i + 2], o[1] and o[1][1], 100) end
-    if #pts == 0 then
-      for _, cr in ipairs(o[1] or {}) do
-        local spawns = NPC[cr]
-        if spawns then
-          for i = 2, #spawns, 3 do Add(out, spawns[i], spawns[i + 1], spawns[i + 2], cr, 100) end
-        end
+    -- 3. (1.2) where the objective's creatures are: Wowhead's spawns (all of
+    -- them), else the data's creature points (only when the objective has no
+    -- points of its own, as before)
+    for _, cr in ipairs(o[1] or {}) do
+      if Spawns(cr) or #pts == 0 then
+        local from = #out
+        EachSpawn(cr, function(m, x, y) Add(out, m, x, y, cr, 100) end)
+        for k = from + 1, #out do out[k].spawn = true end -- may be thinned out on the map
+      end
+    end
+    -- (1.2) mobs learned to give credit (not in the data): their spawns, if known
+    local known = {}
+    for _, cr in ipairs(o[1] or {}) do known[cr] = true end
+    for _, cr in ipairs(ns.LearnedObjectiveCreatures and ns.LearnedObjectiveCreatures(questID, index, #(o[1] or {}) > 0) or {}) do
+      if not known[cr] and Spawns(cr) then
+        local from = #out
+        EachSpawn(cr, function(m, x, y) Add(out, m, x, y, cr, 100) end)
+        for k = from + 1, #out do out[k].spawn = true end
       end
     end
     return out
@@ -655,10 +769,9 @@ function ns.ObjectiveTargets(questID, index, o, spots, onlyMap)
   -- the creatures drop the item (or are where it is used, then the item is
   -- usually handed out with the quest and already in the bags)
   for _, cr in ipairs(o[1] or {}) do
-    local spawns = NPC[cr]
-    if spawns then
-      for i = 2, #spawns, 3 do Add(acquire, spawns[i], spawns[i + 1], spawns[i + 2], cr, 100) end
-    end
+    local from = #acquire
+    EachSpawn(cr, function(m, x, y) Add(acquire, m, x, y, cr, 100) end) -- (1.2) Wowhead's spawns first
+    for k = from + 1, #acquire do acquire[k].spawn = true end
   end
 
   local has, itemID = HasItem(o)
@@ -714,8 +827,12 @@ end
 -- Points for the unfinished objectives of quests in the log on one map.
 -- { {questID, index, x, y (0-1), text, creature, needsItem, dimmed}, ... }
 -- dimmed: place of use of an item the player does not have yet (map only).
+-- (1.2) points per objective and per map (all quests): enough to see where
+-- the mobs are, few enough for the map, the minimap and the refresh signature
+local MAX_OBJ_POINTS, MANY_POINTS, MAX_MAP_POINTS = 80, 25, 400
 function ns.ObjectivePointsOnMap(mapID)
   local list = {}
+  local total = 0
   if not mapID then return list end
   local learnedObj = ns.db.learnedObj or {}
   for _, info in ipairs(ns.QuestLogEntries()) do
@@ -728,17 +845,33 @@ function ns.ObjectivePointsOnMap(mapID)
       for _, index in ipairs(open) do
         local state = client[index]
         local text = type(state) == "table" and type(state.text) == "string" and ns.Usable(state.text) and state.text or nil
-        local count = 0
         local targets, _, usePts = ns.ObjectiveTargets(id, index, objs[index], learned[index], mapID)
-        local function Point(p)
-          if p.mapID == mapID and count < 40 then
-            count = count + 1
-            list[#list + 1] = { questID = id, index = index, x = p.x, y = p.y, text = text, creature = p.creature,
-              needsItem = p.needsItem, dimmed = p.dimmed }
+        -- (1.2) all spawns (Wowhead), thinned out evenly above MAX_OBJ_POINTS;
+        -- many points: smaller dots (map and minimap)
+        -- learned spots, data points and the place of use always; the spawns
+        -- (many) thinned out evenly to what is left of MAX_OBJ_POINTS
+        local keep, spawns = {}, {}
+        for _, p in ipairs(targets) do
+          if p.mapID == mapID then if p.spawn then spawns[#spawns + 1] = p else keep[#keep + 1] = p end end
+        end
+        for _, p in ipairs(usePts or {}) do if p.mapID == mapID then keep[#keep + 1] = p end end
+        local many = (#keep + #spawns > MANY_POINTS) or nil
+        local function Put(p)
+          if total >= MAX_MAP_POINTS then return end
+          total = total + 1
+          list[#list + 1] = { questID = id, index = index, x = p.x, y = p.y, text = text, creature = p.creature,
+            needsItem = p.needsItem, dimmed = p.dimmed, small = many }
+        end
+        for _, p in ipairs(keep) do Put(p) end
+        local room = math.max(0, MAX_OBJ_POINTS - #keep)
+        if room > 0 and #spawns > 0 then
+          local step = #spawns > room and #spawns / room or 1
+          local k = 1
+          while k <= #spawns + 0.0001 do
+            Put(spawns[math.floor(k)])
+            k = k + step
           end
         end
-        for _, p in ipairs(targets) do Point(p) end
-        for _, p in ipairs(usePts or {}) do Point(p) end
       end
     end
   end

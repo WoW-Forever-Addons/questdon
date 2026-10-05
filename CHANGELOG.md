@@ -1,5 +1,14 @@
 # Changes
 
+## 1.2.0
+
+- **Quests of the zone:** a new window lists every quest of the zone: in your log, available, later (with the reason) and done. Click one: the arrow points there and the map marks it. `/qd zone` or the new list button in the title bar.
+- **More spawn points:** quest mobs show all their spawn points for the first quests (Elwynn, Westfall, Redridge and more), and Questdon now also learns where quest mobs are when they come close to you, shared with other players.
+- **Title bar:** a gear button opens the options.
+- **Back to your corpse:** after you release your spirit, the arrow leads to your corpse.
+- **Learns new quest mobs:** mobs that gave credit for a quest without mob data (many new Forever quests) now get quest icons, tooltips and learned spots too.
+- **XP only once:** while the XP bar is shown, the window leaves out its experience lines; the bar now also shows where in the level you land after turning in.
+
 ## 1.1.0
 
 - **Learn together:** Questdon now shares what it learns with other Questdon players (only numbers, no names): your guild and group, and everyone else through a hidden channel. Turn-ins and objective spots that enough players reported show up for everyone. Both on by default, each with its own option.

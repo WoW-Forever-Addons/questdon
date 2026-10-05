@@ -34,6 +34,7 @@ ns.defaults = {
   chainHint = true,
   -- 1.3
   arrow = true,
+  arrowCorpse = true, -- (1.2) as a ghost the arrow leads to your corpse
   arrowPos = nil,
   -- 1.4
   arrowScale = 1.15,
@@ -510,7 +511,7 @@ end
 
 SLASH_QUESTDON1 = "/qd"
 SLASH_QUESTDON2 = "/questdon"
-ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd reset (reset button position)"]
+ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd zone (quests of the zone), /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd reset (reset button position)"]
 SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
   msg = strtrim and strtrim(msg or ""):lower() or (msg or "")
   if msg == "reset" then
@@ -545,6 +546,8 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
     if ns.UndoNotHere then ns.UndoNotHere() end
   elseif msg == "nothere list" then
     if ns.PrintNotHere then ns.PrintNotHere() end
+  elseif msg == "zone" or msg == "quests" then
+    if ns.ToggleZoneQuests then ns.ToggleZoneQuests() end
   elseif msg == "nettest" then
     if ns.NetTest then ns.NetTest() end
   elseif msg == "help" then

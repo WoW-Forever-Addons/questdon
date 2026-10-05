@@ -22,6 +22,8 @@ local function PanelLook() if ns.ApplyPanelLook then ns.ApplyPanelLook() end end
 local function ArrowLook() if ns.ApplyArrow then ns.ApplyArrow() end end
 local function XPBarLook() if ns.ApplyXPBarLook then ns.ApplyXPBarLook() end end
 local function UpdateXPBar() if ns.UpdateXPBar then ns.UpdateXPBar() end end
+-- (1.2) switching the bar also changes the window (its experience lines)
+local function UpdateXPBarAndPanel() UpdateXPBar() if ns.UpdatePanel then ns.UpdatePanel() end end
 local SMIN, SMAX = ns.Style.SCALE_MIN, ns.Style.SCALE_MAX
 
 local PAGES = {
@@ -83,12 +85,13 @@ local PAGES = {
     { header = "Direction arrow" },
     { key = "arrow", name = "Show window", tip = "Arrow with distance to the quest you track in the quest log or tracker (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = ArrowLook },
     { key = "arrowLocked", name = "Lock window", tip = "The arrow can no longer be dragged.", parent = "arrow" },
+    { key = "arrowCorpse", name = "Lead to your corpse when dead", tip = "After you released your spirit, the arrow points to your corpse until you are alive again. Then it goes back to your quest.", parent = "arrow" },
     { key = "arrowScale", kind = "slider", name = "Size", tip = "Size of the direction arrow and its text.", min = SMIN, max = SMAX, step = 0.05, parent = "arrow", onChange = ArrowLook },
     { key = "arrowAlpha", kind = "slider", name = "Background opacity", tip = "How dark the plate behind the target and distance is.", min = 0, max = 1, step = 0.05, parent = "arrow", onChange = ArrowLook },
     { key = "arrowCombatFade", name = "Dim in combat", tip = "Dims the arrow to 40 % while you are in combat.", parent = "arrow", onChange = ArrowLook },
     { kind = "button", name = "Reset position", button = "Reset", tip = "Puts the arrow back to its default place.", onClick = function() if ns.ResetArrowPosition then ns.ResetArrowPosition() end end },
     { header = "XP bar" },
-    { key = "xpBar", name = "Show window", tip = "Blue: your XP. Yellow: XP of the finished quests in your log. Light blue: rested XP. Mouse over for details. /qd xpbar toggles it.", onChange = UpdateXPBar },
+    { key = "xpBar", name = "Show window", tip = "Blue: your XP. Yellow: XP of the finished quests in your log. Light blue: rested XP. Mouse over for details. While the bar is shown, the Questdon window leaves its experience lines out. /qd xpbar toggles it.", onChange = UpdateXPBarAndPanel },
     { key = "xpBarLocked", name = "Lock window", tip = "When unlocked, drag the bar with the left mouse button.", parent = "xpBar" },
     { key = "xpBarScale", kind = "slider", name = "Size", tip = "Overall size of the XP bar including the text.", min = SMIN, max = SMAX, step = 0.05, parent = "xpBar", onChange = UpdateXPBar },
     { key = "xpBarAlpha", kind = "slider", name = "Background opacity", tip = "How dark the strip behind the bar is.", min = 0, max = 1, step = 0.05, parent = "xpBar", onChange = UpdateXPBar },
