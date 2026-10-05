@@ -191,6 +191,14 @@ local function NewPin()
   b:SetSize(QUEST_SIZE, QUEST_SIZE)
   b.icon = b:CreateTexture(nil, "OVERLAY")
   b.icon:SetAllPoints(b)
+  -- (1.3) dark ring behind the objective dots: a green dot on green ground stays visible
+  b.ring = b:CreateTexture(nil, "ARTWORK")
+  b.ring:SetPoint("CENTER", b, "CENTER", 0, 0)
+  if b.ring:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask") == false then
+    b.ring:SetTexture("Interface\\COMMON\\Indicator-Gray")
+  end
+  b.ring:SetVertexColor(0, 0, 0, 0.85)
+  b.ring:Hide()
   b:RegisterForClicks("LeftButtonUp")
   b:SetScript("OnEnter", ns.Guard("minimap tooltip", PinTooltip))
   b:SetScript("OnLeave", function(self) ns.Style.HideTooltip(self) end)
@@ -220,7 +228,10 @@ local function Look(b, pin)
     b:SetSize(d, d)
     b.icon:SetTexture("Interface\\COMMON\\Indicator-Yellow")
     b.icon:SetVertexColor(ns.QuestColor(pin.questID))
+    b.ring:SetSize(d + 4, d + 4)
+    b.ring:Show()
   else
+    b.ring:Hide()
     b:SetSize(QUEST_SIZE, QUEST_SIZE)
     SetQuestIcon(b.icon, pin.iconKind or pin.kind) -- (1.2) the picked quest of the zone list
   end

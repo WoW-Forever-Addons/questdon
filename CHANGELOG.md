@@ -1,5 +1,9 @@
 # Changes
 
+## 1.3.1
+
+- **Minimap:** the quest objective dots have a dark ring, so they stay visible on green ground.
+
 ## 1.3.0
 
 - **Quest book:** a new large window with three tabs. Open it with the button at the bottom of the Questdon window, /qd journal, /qd zone or /qd search.
