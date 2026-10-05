@@ -1,5 +1,10 @@
 # Changes
 
+## 1.2.1
+
+- **Spawn points for 14 zones:** every spawn point of quest mobs and quest objects from the Wowhead Forever quest maps, for Elwynn Forest (with Northshire), Dun Morogh (with Coldridge Valley), Teldrassil (with Shadowglen), Westfall, Loch Modan, Darkshore, Redridge Mountains, Wetlands, Duskwood, Ashenvale, Silverpine Forest, Hillsbrad Foothills, Arathi Highlands and Stonetalon Mountains. That is roughly level 1 to 30, mostly the Alliance side; the Horde quests of these zones are included. The Horde start zones and The Barrens follow in a later version.
+- **New Forever quests and mobs:** the new Forever quests of these zones get their spawn points too, and new Forever mobs that also drop quest items (for example Dragonmaw in the Wetlands, Witherbark in Arathi) now count as quest mobs: icon, tooltip and spawn points.
+
 ## 1.2.0
 
 - **Quests of the zone:** a new window lists every quest of the zone: in your log, available, later (with the reason) and done. Click one: the arrow points there and the map marks it. `/qd zone` or the new list button in the title bar.
