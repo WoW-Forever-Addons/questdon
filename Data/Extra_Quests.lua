@@ -415,11 +415,13 @@ ns.EXTRA_PREREQS = {
 ns.EXTRA_STARTS = {
 [92110]={1415,41.2,79.0},
 }
--- [questID] = minimum level of ATT quests whose level Forever changed (Wowhead)
+-- [questID] = minimum level of ATT quests whose level Forever changed (Wowhead), and (05.10.)
+-- single quests without a level in ATT whose level was checked in the game
 ns.EXTRA_LEVELS = {
 [299]=22,
 [421]=12,
 [1160]=25,
+[2158]=5,
 }
 -- (1.0.1) learned while playing (/qd export, SavedVariables; parse_export.py --json):
 -- [questID] = { quests turned in right before it was offered } added to the prerequisites
