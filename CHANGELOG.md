@@ -1,5 +1,13 @@
 # Changes
 
+## 1.3.0
+
+- **Quest book:** a new large window with three tabs. Open it with the button at the bottom of the Questdon window, /qd journal, /qd zone or /qd search.
+  - **Journal:** your own quest diary per character. Accepted, turned in (with XP and money), abandoned and failed quests and your level-ups, with date and time. Today's quests, XP and money at the top, filters, and the quests you did before as "done earlier".
+  - **Zones:** pick any zone of Kalimdor, the Eastern Kingdoms and Zephras Isle. Its map with the parts you explored, your progress and all its quests. Quests of a chain with the same name are one line that opens. Quests of the higher zones that are only in the older data are listed with a note until Forever confirms them.
+  - **Search:** your journal, every quest and every zone by name, level or quest ID.
+- **No second ? on the map:** where the game marks the turn-in of a finished quest itself, Questdon draws no learned turn-in point.
+
 ## 1.2.2
 
 - **Spawn points for the Horde start zones:** Durotar (with the Valley of Trials), Mulgore (with Red Cloud Mesa), Tirisfal Glades (with Deathknell) and The Barrens now bring every spawn point of quest mobs and quest objects from the Wowhead Forever quest maps too. Together with 1.2.1 this covers both factions up to roughly level 30.

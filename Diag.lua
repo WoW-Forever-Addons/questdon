@@ -69,6 +69,7 @@ end
 function ns.BuildDiag()
   local out = { "Questdon diagnostics" }
   out[#out + 1] = "version: " .. ns.Version()
+  Probe(out, "quest book art", function() return ns.QuestBookArt and ns.QuestBookArt() or "-" end)
   Probe(out, "client", function()
     local version, build, _, toc = GetBuildInfo()
     return ("%s build %s interface %s"):format(tostring(version), tostring(build), tostring(toc))

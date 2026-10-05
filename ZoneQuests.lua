@@ -15,19 +15,20 @@ local Style = ns.Style
 --
 -- Quests other characters cannot do (faction, race, class), quests the
 -- server does not know and quests only in ATT's old data that nobody has
--- seen in Forever are left out. Pages of PAGE_SIZE lines (back / forward in
--- the title bar).
+-- seen in Forever are left out.
+--
+-- (1.2.2) The window is the quest book: three tabs, "Journal" (Journal.lua,
+-- the personal diary), "Zone" (this list) and "Search". /qd zone opens the
+-- zone tab, /qd journal the journal; the list button in the Questdon title
+-- bar opens the book on the last tab.
+--
+-- (1.3) The window itself is in QuestBook.lua (large, zones to pick, chains
+-- in one line); this file keeps the list and the status of the quests.
 ---------------------------------------------------------------------------
-local PAGE_SIZE = 20
-local MAX_TOOLTIP = 12
-local win
-local page = 1
-local shownMap
-local lastSig
-
 -- status groups, in display order
 local GROUPS = { "log", "available", "later", "done" }
-local GROUP_TITLE = { log = "In your log", available = "Available", later = "Later", done = "Done" }
+ns.ZONE_GROUPS = GROUPS
+ns.ZONE_GROUP_TITLE = { log = "In your log", available = "Available", later = "Later", done = "Done" }
 
 -- Zone of a map (caves and buildings: the zone around them).
 local function ZoneOf(mapID)
@@ -45,6 +46,7 @@ local function CurrentZone()
   return ZoneOf(ns.Value(C_Map.GetBestMapForUnit, "player"))
 end
 ns.ZoneQuestsMap = CurrentZone
+ns.ZoneOfMap = ZoneOf
 
 local function MapName(mapID)
   local info = mapID and ns.Value(C_Map.GetMapInfo, mapID)
@@ -54,8 +56,9 @@ local function MapName(mapID)
 end
 
 ---------------------------------------------------------------------------
--- Status of one quest: group, text, colour, sort level; nil = not listed
+-- Status of one quest: group, text, colour, unconfirmed; nil = not listed
 ---------------------------------------------------------------------------
+local ZoneStatusFor
 function ns.ZoneQuestStatus(questID)
   if ns.IsQuestDone(questID) then return "done", L["completed"], "good" end
   if ns.InQuestLog(questID) then
@@ -74,8 +77,19 @@ function ns.ZoneQuestStatus(questID)
   if ns.BreadcrumbObsolete(questID) then return nil end
   local client = ns.ClientAvailability and ns.ClientAvailability(questID) == true
   local confirmed = client or (ns.OfferConfirmed and ns.OfferConfirmed(questID, ns.PlayerLevel()))
-  -- only in ATT's old data and never seen in Forever: probably gone
-  if ns.QuestOnlyInOldData(questID) and not confirmed and not (ns.db.learned and ns.db.learned[questID]) then return nil end
+  -- only in ATT's old data and not seen in Forever yet. (1.3) Listed unless
+  -- the server said it does not exist (QuestKnownMissing above): ATT's
+  -- Forever data only covers the zones of the beta so far, most quests of the
+  -- higher zones (Ashenvale, Felwood, Tanaris ...) are only in the old data.
+  -- The server is asked in the background (Exists.lua); marked "unconfirmed".
+  local unconfirmed = ns.QuestOnlyInOldData(questID) and not confirmed and not (ns.db.learned and ns.db.learned[questID])
+    and ns.QuestExists(questID) ~= true
+  local group, text, color = ZoneStatusFor(questID, client, confirmed)
+  return group, text, color, unconfirmed or nil
+end
+
+-- The rest of the status (after the checks above).
+ZoneStatusFor = function(questID, client, confirmed)
   if client or ns.CanTakeQuest(questID) then
     if ns.IsLowLevelQuest(questID) then return "available", L["low level"], "textHint" end
     if not confirmed and ns.UnconfirmedNoLevel and ns.UnconfirmedNoLevel(questID) then
@@ -104,9 +118,9 @@ function ns.ZoneQuestList(mapID)
   local rank = {}
   for i, g in ipairs(GROUPS) do rank[g] = i end
   for _, id in ipairs(ns.QuestsStartingOnMap(mapID)) do
-    local group, text, color = ns.ZoneQuestStatus(id)
+    local group, text, color, unconfirmed = ns.ZoneQuestStatus(id)
     if group then
-      out[#out + 1] = { questID = id, group = group, text = text, color = color,
+      out[#out + 1] = { questID = id, group = group, text = text, color = color, unconfirmed = unconfirmed,
         level = ns.QuestLevel(id) or 0, title = ns.QuestTitle(id) }
     end
   end
@@ -117,12 +131,6 @@ function ns.ZoneQuestList(mapID)
     return a.questID < b.questID
   end)
   return out
-end
-
-local function Counts(list)
-  local c = { log = 0, available = 0, later = 0, done = 0 }
-  for _, e in ipairs(list) do c[e.group] = c[e.group] + 1 end
-  return c
 end
 
 ---------------------------------------------------------------------------
@@ -173,10 +181,17 @@ local function Focus(e, openMap)
   ns.UpdateZoneQuests(true)
 end
 
+-- (1.2.2) For the journal and the search: arrow and map mark for any quest.
+function ns.FocusQuest(questID, openMap)
+  local group, text = ns.ZoneQuestStatus(questID)
+  Focus({ questID = questID, group = group or "done", text = text }, openMap)
+end
+
 ---------------------------------------------------------------------------
--- Window
+-- Tooltip
 ---------------------------------------------------------------------------
-local function Tooltip(e)
+-- Tooltip of a quest row (zone list, chains, search): title, lines, hint.
+function ns.ZoneQuestTooltip(e)
   return function()
     local lines = {}
     local level = ns.QuestLevel(e.questID)
@@ -190,6 +205,7 @@ local function Tooltip(e)
     local m, x, y = ns.QuestStart(e.questID)
     if m and x then lines[#lines + 1] = { L["Location"], ("%s %.1f, %.1f"):format(MapName(m), x, y) } end
     if ns.QuestFlags(e.questID):find("b", 1, true) then lines[#lines + 1] = { L["Breadcrumb quest"] } end
+    if e.unconfirmed then lines[#lines + 1] = { L["Only in the older quest data. Forever has not confirmed this quest yet, it may be changed or gone."] } end
     local follow = #(ns.FollowUpQuests(e.questID) or {})
     if follow > 0 then lines[#lines + 1] = { L["Chain"], L["%d follow-up quests known"]:format(follow) } end
     return ns.QuestTitle(e.questID), lines,
@@ -197,134 +213,3 @@ local function Tooltip(e)
   end
 end
 
-local function Summary(list, c)
-  return L["%d done, %d in log, %d available, %d later"]:format(c.done, c.log, c.available, c.later)
-end
-
-local function Build()
-  local mapID = CurrentZone()
-  local list = mapID and ns.ZoneQuestList(mapID) or {}
-  local pages = math.max(1, math.ceil(#list / PAGE_SIZE))
-  if mapID ~= shownMap then page = 1 shownMap = mapID end
-  if page > pages then page = pages end
-  if page < 1 then page = 1 end
-  local c = Counts(list)
-  local focusID = ns.zoneFocus and ns.zoneFocus.questID
-  -- signature: rebuild only when something visible changed
-  local parts = { tostring(mapID), page, tostring(focusID), tostring(ns.PlayerLevel()) }
-  for _, e in ipairs(list) do parts[#parts + 1] = e.questID .. e.group .. tostring(e.text) .. tostring(e.title) end
-  local sig = table.concat(parts, ",")
-  if sig == lastSig and win:IsShown() then return end
-  lastSig = sig
-
-  win:SetTitle(Style.Wordmark("Quest", "don") .. Style.Colorize("  " .. MapName(mapID), "textSecondary")
-    .. (pages > 1 and Style.Colorize(("  %d/%d"):format(page, pages), "textHint") or ""))
-  local back, fwd = win:GetButton("back"), win:GetButton("forward")
-  if back then back:SetEnabled(page > 1) end
-  if fwd then fwd:SetEnabled(page < pages) end
-
-  win:ClearRows()
-  local sum = Style.Row(win)
-  Style.KeyValue(sum, L["Quests of the zone"], Style.Number(#list))
-  sum:SetTooltip(function() return MapName(mapID), { { Summary(list, c) } },
-    L["Shows the zone of the open world map, else yours."] end)
-  if #list == 0 then
-    local row = Style.Row(win)
-    row:SetText(L["No quests known for this zone."], "textHint")
-    Style.Relayout(win)
-    return
-  end
-  local first, last = (page - 1) * PAGE_SIZE + 1, math.min(#list, page * PAGE_SIZE)
-  local group
-  for i = first, last do
-    local e = list[i]
-    if e.group ~= group then
-      group = e.group
-      Style.Header(win, L[GROUP_TITLE[group]] .. Style.Colorize(("  %d"):format(c[group]), "textHint"))
-    end
-    local row = Style.Row(win)
-    local title = ns.QuestLevelTag(e.questID) .. e.title
-    if e.group == "done" or e.color == "textHint" then
-      -- done and later: the whole line quiet (the level tag without its colour)
-      local plain = (ns.QuestLevelTag(e.questID):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
-      title = Style.Colorize(plain .. e.title, "textHint")
-    end
-    row:SetText(title, "textPrimary")
-    row:SetValue(e.text, e.color)
-    if e.questID == focusID then row:SetActive(true) end
-    row:SetTooltip(Tooltip(e))
-    row:SetOnClick(function() Focus(e, ns.True(ns.Value(IsShiftKeyDown))) end)
-  end
-  Style.Relayout(win)
-end
-
-function ns.UpdateZoneQuests(force)
-  if not win or not win:IsShown() then return end
-  if force then lastSig = nil end
-  Build()
-end
-
-local function Create()
-  win = Style.Panel("QuestdonZoneQuests", UIParent, {
-    title = Style.Wordmark("Quest", "don"),
-    width = 340,
-    close = true,
-    closeTooltip = L["Hide window"],
-    get = function(key)
-      if key == "pos" then return ns.db.zoneQuestsPos end
-      if key == "scale" then return ns.db.panelScale end
-      if key == "alpha" then return ns.db.panelAlpha end
-      if key == "locked" then return false end
-    end,
-    set = function(key, value) if key == "pos" then ns.db.zoneQuestsPos = value end end,
-    defaultPoint = { "TOPRIGHT", "TOPRIGHT", -560, -220 },
-    onClose = function(p)
-      ns.zoneFocus = nil
-      if ns.RefreshPins then ns.RefreshPins() end
-      p:FadeOut()
-    end,
-    buttons = {
-      { key = "forward", kind = "forward", tooltip = L["Next page"],
-        onClick = function() page = page + 1 ns.UpdateZoneQuests(true) end },
-      { key = "back", kind = "back", tooltip = L["Previous page"],
-        onClick = function() page = page - 1 ns.UpdateZoneQuests(true) end },
-    },
-  })
-  win:Hide()
-  -- the world map opened, closed or shows another zone: follow it. Our own
-  -- frame looks twice a second while the window is open (no hooks on
-  -- Blizzard frames, see Core.lua).
-  local watch, elapsed, last = CreateFrame("Frame", nil, win), 0, nil
-  watch:SetScript("OnUpdate", function(_, dt)
-    elapsed = elapsed + (tonumber(dt) or 0)
-    if elapsed < 0.5 then return end
-    elapsed = 0
-    local key = WorldMapFrame and WorldMapFrame:IsShown() and tostring(ns.Value(WorldMapFrame.GetMapID, WorldMapFrame)) or "-"
-    if key ~= last then
-      last = key
-      ns.SafeCall("zone quests", ns.UpdateZoneQuests)
-    end
-  end)
-end
-
-function ns.ToggleZoneQuests()
-  if not win then Create() end
-  if win:IsShown() then
-    ns.zoneFocus = nil
-    if ns.RefreshPins then ns.RefreshPins() end
-    win:FadeOut()
-    return
-  end
-  lastSig = nil
-  win:FadeIn()
-  Build()
-end
-function ns.ZoneQuestsFrame() return win end
-
-ns.RegisterRefresh("zonequests", function() ns.UpdateZoneQuests() end)
-local function Queue() if win and win:IsShown() then ns.QueueRefresh("zonequests") end end
-ns.On("QUEST_LOG_UPDATE", Queue)
-ns.On("QUEST_TURNED_IN", Queue)
-ns.On("PLAYER_LEVEL_UP", Queue)
-ns.On("ZONE_CHANGED_NEW_AREA", Queue)
-ns.On("QUEST_DATA_LOAD_RESULT", Queue)

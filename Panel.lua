@@ -369,6 +369,40 @@ local function UpdateCollapseButton()
   if collapse then collapse:SetEnabled(not panel._qdOnlyKept or panel:IsCollapsed()) end
 end
 
+-- (1.3) A clear button for the quest book at the bottom of the window
+-- (option "bookButton"); the small icon in the title bar only when it is off.
+local bookButton
+local function BookButton()
+  if bookButton then return bookButton end
+  local C = Style.COLORS
+  local b = CreateFrame("Button", nil, UIParent)
+  b:SetHeight(24)
+  b.bg = b:CreateTexture(nil, "BACKGROUND")
+  b.bg:SetAllPoints(b)
+  local function Bg(a) if b.bg.SetColorTexture then b.bg:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], a) end end
+  Bg(0.14)
+  b.icon = b:CreateTexture(nil, "ARTWORK")
+  b.icon:SetSize(16, 16)
+  b.icon:SetPoint("LEFT", b, "LEFT", 6, 0)
+  b.icon:SetTexture("Interface\\Icons\\INV_Misc_Book_09")
+  if b.icon.SetTexCoord then b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+  b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
+  b.text:SetText(Style.Colorize(L["Quest book"], "accent"))
+  b.hint = b:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  b.hint:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+  b.hint:SetText(L["Journal, zones, search"])
+  b:SetScript("OnEnter", function(self)
+    Bg(0.26)
+    Style.Tooltip(self, L["Quest book"], nil, L["Your journal, the quests of the zone and a search over all quests. /qd journal, /qd zone"], "auto")
+  end)
+  b:SetScript("OnLeave", function(self) Bg(0.14) Style.HideTooltip(self) end)
+  b:SetScript("OnClick", function() if ns.ToggleQuestBook then ns.ToggleQuestBook() end end)
+  bookButton = b
+  return b
+end
+ns.PanelBookButton = function() return bookButton end
+
 local function Build(content)
   panel:ClearRows()
   built = {}
@@ -396,6 +430,15 @@ local function Build(content)
         built[#built + 1] = row
       end
     end
+  end
+  -- the small icon in the title bar only when the big button is off
+  local icon = panel:GetButton("zone")
+  if ns.db.bookButton ~= false then
+    Style.Content(panel, BookButton(), 24, { gapBefore = 6 })
+    if icon then icon:Hide() end
+  else
+    if bookButton then bookButton:Hide() end
+    if icon then icon:Show() end
   end
 end
 
@@ -508,8 +551,8 @@ local function Create()
     buttons = {
       { key = "options", kind = "options", tooltip = { L["Options"], nil, L["/qd opens them too."] },
         onClick = function() if ns.OpenOptions then ns.OpenOptions() end end },
-      { key = "zone", kind = "qdZoneList", tooltip = { L["Quests of the zone"], nil, L["All quests of the zone: done, in your log, available and later. /qd zone"] },
-        onClick = function() if ns.ToggleZoneQuests then ns.ToggleZoneQuests() end end },
+      { key = "zone", kind = "qdZoneList", tooltip = { L["Quest book"], nil, L["Your journal, the quests of the zone and a search over all quests. /qd journal, /qd zone"] },
+        onClick = function() if ns.ToggleQuestBook then ns.ToggleQuestBook() end end },
     },
     collapseTooltip = { L["Collapse or expand"], nil, L["Collapsed, one line stays: the next quest, a nearly full quest log or the XP of finished quests."] },
     get = Get, set = Set,

@@ -66,6 +66,7 @@ ns.defaults = {
   shared = {}, -- (1.0.1) what other players reported: [key] = { v = { variants }, c, t }
   shareSent = {}, -- (1.0.1) [key] = what was last sent
   showPanel = true,
+  bookButton = true, -- (1.3) quest book button at the bottom of the window
   panelPos = nil,
   learned = {}, -- [questID] = { title, level, faction, start = {...}, finish = {...} }
   -- 1.13: [questID] = false for quests the server does not know (Exists.lua)
@@ -511,7 +512,7 @@ end
 
 SLASH_QUESTDON1 = "/qd"
 SLASH_QUESTDON2 = "/questdon"
-ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd zone (quests of the zone), /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd reset (reset button position)"]
+ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd zone (quests of the zone), /qd journal (quest journal), /qd search, /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd reset (reset button position)"]
 SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
   msg = strtrim and strtrim(msg or ""):lower() or (msg or "")
   if msg == "reset" then
@@ -548,6 +549,10 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
     if ns.PrintNotHere then ns.PrintNotHere() end
   elseif msg == "zone" or msg == "quests" then
     if ns.ToggleZoneQuests then ns.ToggleZoneQuests() end
+  elseif msg == "journal" or msg == "tagebuch" then
+    if ns.ToggleJournal then ns.ToggleJournal() end
+  elseif msg == "search" or msg == "suche" then
+    if ns.OpenQuestBook then ns.OpenQuestBook("search") end
   elseif msg == "nettest" then
     if ns.NetTest then ns.NetTest() end
   elseif msg == "help" then

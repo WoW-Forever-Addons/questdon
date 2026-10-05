@@ -18,12 +18,22 @@ local function QuestColor(questID)
 end
 ns.QuestColor = QuestColor
 
+-- (1.3) The game marks the turn-in of a finished quest itself (its quest
+-- POI, a "?"): with the option "skipGameGivers" no second "?" from Questdon.
+local function GameShowsTurnIn(questID)
+  if not (ns.db and ns.db.skipGameGivers) or not ns.QuestPOI then return false end
+  local m, _, _, kind = ns.QuestPOI(questID)
+  return m ~= nil and kind == "turnin"
+end
+ns.GameShowsTurnIn = GameShowsTurnIn
+
 local function LearnedTurnIns(mapID)
   local list = {}
   if not ns.db.learnPins then return list end
   for questID, e in pairs(ns.db.learned) do
     if e.finish and e.finish.map == mapID and ns.InQuestLog(questID) and ns.IsQuestComplete(questID)
-        and not (ns.db.pinsOnlyUnknown and ns.QuestieKnows(questID) == true) then
+        and not (ns.db.pinsOnlyUnknown and ns.QuestieKnows(questID) == true)
+        and not GameShowsTurnIn(questID) then
       list[#list + 1] = { kind = "turnin", questID = questID, x = e.finish.x, y = e.finish.y, npc = e.finish.npc }
     end
   end

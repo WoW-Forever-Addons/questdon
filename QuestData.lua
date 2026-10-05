@@ -278,6 +278,12 @@ function ns.QuestOnlyInOldData(questID)
   return q ~= nil and q[ORIGIN] == "o"
 end
 
+-- (1.3) Previous quests of a quest in the data (for the order of a chain).
+function ns.QuestPrereqs(questID)
+  local q = Q[questID]
+  return q and q[PREREQS] or {}
+end
+
 -- First prerequisite this character still has to do (one it can reach), or nil.
 function ns.MissingPrereq(questID)
   local q = Q[questID]
