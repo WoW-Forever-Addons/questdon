@@ -84,6 +84,9 @@ ns.defaults = {
   arrowCombatFade = false,
   xpBarAlpha = 0.82,
   xpBarCombatFade = false,
+  hideBlizzardXP = true, -- (1.3.2) game's own XP bar hidden while ours is shown
+  artInXPPlace = true, -- (1.3.2) an ornament strip in the action bar style fills the free place
+  ownRepBar = true, -- (1.3.2) a tracked faction is shown in Questdon's own (clickable) reputation bar
   -- 1.21
   minimapPins = true, -- the map pins of the current zone on the minimap too
   -- 1.22

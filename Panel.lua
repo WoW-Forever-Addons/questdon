@@ -47,7 +47,7 @@ local function LevelTag(questID)
 end
 
 local function Hours(h)
-  return ("%d:%02d h"):format(math.floor(h), math.floor(h % 1 * 60))
+  return L["%d:%02d h"]:format(math.floor(h), math.floor(h % 1 * 60))
 end
 
 local function Abandon()

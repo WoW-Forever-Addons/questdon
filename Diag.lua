@@ -70,6 +70,21 @@ function ns.BuildDiag()
   local out = { "Questdon diagnostics" }
   out[#out + 1] = "version: " .. ns.Version()
   Probe(out, "quest book art", function() return ns.QuestBookArt and ns.QuestBookArt() or "-" end)
+  Probe(out, "blizzard xp bar", function()
+    local mgr = rawget(_G, "StatusTrackingBarManager")
+    if type(mgr) ~= "table" or type(mgr.barContainers) ~= "table" then return "manager not found" end
+    local shown = {}
+    for i, c in ipairs(mgr.barContainers) do shown[#shown + 1] = i .. "=" .. tostring(type(c) == "table" and c.shownBarIndex) end
+    local repShown = ns.RepBarState and ns.RepBarState()
+    return ("%s, option %s, containers %s, own reputation bar %s (option %s), ornament %s (option %s)"):format(ns.BlizzardXPHidden and ns.BlizzardXPHidden() and "hidden by Questdon" or "visible",
+      ns.db.hideBlizzardXP ~= false and "on" or "off", table.concat(shown, " "), tostring(repShown or "off"),
+      ns.db.ownRepBar ~= false and "on" or "off", ns.XPPlaceArtShown and ns.XPPlaceArtShown() and "shown" or "off",
+      ns.db.artInXPPlace ~= false and "on" or "off")
+  end)
+  Probe(out, "texts cut", function()
+    local S = ns.Style
+    return S and S.TextCutCount and tostring(S.TextCutCount()) or "-"
+  end)
   Probe(out, "client", function()
     local version, build, _, toc = GetBuildInfo()
     return ("%s build %s interface %s"):format(tostring(version), tostring(build), tostring(toc))

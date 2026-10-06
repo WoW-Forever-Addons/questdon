@@ -112,7 +112,7 @@ ns.QuestProgressText = Progress
 local function GroupStates(id)
   local out = {}
   if not (ns.PartyProgress and ns.PartyStateText) then return out end
-  for _, p in ipairs(ns.PartyProgress(id)) do out[#out + 1] = p.name .. " " .. ns.PartyStateText(p) end
+  for _, p in ipairs(ns.PartyProgress(id)) do out[#out + 1] = L["%s %s (player and quest state)"]:format(p.name, ns.PartyStateText(p)) end
   return out
 end
 
@@ -258,7 +258,7 @@ function ns.DungeonTooltipLines(overview)
       local g = GroupStates(id)
       if #g > 0 then state = state .. " " .. L["(group: %s)"]:format(table.concat(g, ", ")) end
       -- (1.20) title and state as own fields: titles may contain ": " themselves
-      lines[#lines + 1] = { text = "  " .. title .. ": " .. state, inLog = true, questID = id, title = title, state = state }
+      lines[#lines + 1] = { text = "  " .. title .. L[": "] .. state, inLog = true, questID = id, title = title, state = state }
     end
     for _, id in ipairs(d.available) do
       local m = ns.QuestStart(id)
@@ -268,13 +268,13 @@ function ns.DungeonTooltipLines(overview)
       local title = LevelTag(id) .. ns.QuestTitle(id)
       local state = (where and L["pick up in %s"]:format(where) or L["not picked up"])
         .. (#who > 0 and (" " .. L["(group: %s)"]:format(table.concat(who, ", "))) or "")
-      lines[#lines + 1] = { text = "  " .. title .. ": " .. state, questID = id, title = title, state = state }
+      lines[#lines + 1] = { text = "  " .. title .. L[": "] .. state, questID = id, title = title, state = state }
     end
     -- (1.28) quests only the group has (cannot be shared: they pick them up themselves)
     for _, id in ipairs(d.group or {}) do
       local title = LevelTag(id) .. ns.QuestTitle(id)
       local state = L["not picked up"] .. " " .. L["(group: %s)"]:format(table.concat(GroupStates(id), ", "))
-      lines[#lines + 1] = { text = "  " .. title .. ": " .. state, questID = id, title = title, state = state }
+      lines[#lines + 1] = { text = "  " .. title .. L[": "] .. state, questID = id, title = title, state = state }
     end
   end
   return lines
@@ -312,7 +312,7 @@ local function OnZone()
   for _, g in ipairs(ns.DungeonGroupSummary(inst)) do who[#who + 1] = ("%s (%d)"):format(g.name, g.count) end
   if #who > 0 then
     local line = L["Group members with quests of this dungeon: %s"]:format(table.concat(who, ", "))
-    if inLog == 0 and #missing == 0 then ns.Print(ns.DungeonName(inst) .. ": " .. line) return end
+    if inLog == 0 and #missing == 0 then ns.Print(ns.DungeonName(inst) .. L[": "] .. line) return end
     groupLine = line
   end
   if inLog == 0 and #missing == 0 then return end

@@ -372,9 +372,9 @@ function ns.PrintParty()
   local po = ns.PartyOverview()
   ns.Print(L["Group: %d shared quests, %d to pick up"]:format(#po.shared, #po.takeable))
   for _, id in ipairs(po.shared) do
-    local parts = { L["You"] .. " " .. (ns.IsQuestComplete(id) and L["done"] or ns.QuestProgressText and ns.QuestProgressText(id) or L["in log"]) }
-    for _, p in ipairs(ns.PartyProgress(id)) do parts[#parts + 1] = p.name .. " " .. ns.PartyStateText(p) end
-    ns.Print("  " .. ns.QuestTitle(id) .. ": " .. table.concat(parts, ", "))
+    local parts = { L["%s %s (player and quest state)"]:format(L["You"], ns.IsQuestComplete(id) and L["done"] or ns.QuestProgressText and ns.QuestProgressText(id) or L["in log"]) }
+    for _, p in ipairs(ns.PartyProgress(id)) do parts[#parts + 1] = L["%s %s (player and quest state)"]:format(p.name, ns.PartyStateText(p)) end
+    ns.Print("  " .. ns.QuestTitle(id) .. L[": "] .. table.concat(parts, ", "))
   end
   for _, id in ipairs(po.takeable) do
     ns.Print("  " .. L["To pick up: %s (%s)"]:format(ns.QuestTitle(id), table.concat(ns.PartyMembersWithQuest(id), ", ")))

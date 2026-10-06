@@ -166,6 +166,49 @@ local function TextWidth(fs)
   return #Plain(fs:GetText()) * 6
 end
 
+-- (i18n) A text in a fixed space (Style.FitText): first a little smaller, then
+-- cut with "..."; the whole text then shows in the tooltip of its line or tile.
+local function Fit(fs, budget, owner)
+  local ok = Style.FitText(fs, budget)
+  if owner then
+    owner._cut = owner._cut or {}
+    owner._cut[fs] = (not ok) and Style.FullText(fs) or nil
+  end
+  return ok
+end
+
+local function CutLines(owner)
+  if type(owner._cut) ~= "table" then return nil end
+  local out = {}
+  for _, t in pairs(owner._cut) do out[#out + 1] = t end
+  if #out == 0 then return nil end
+  table.sort(out)
+  return out
+end
+
+local function ShowCut(owner)
+  local cut = CutLines(owner)
+  if not cut then return false end
+  local rest = {}
+  for i = 2, #cut do rest[#rest + 1] = cut[i] end
+  Style.Tooltip(owner, cut[1], rest, nil, "ANCHOR_RIGHT")
+  return true
+end
+
+-- A plain frame that shows its cut texts on mouse over.
+local function CutTip(f)
+  f:EnableMouse(true)
+  f:SetScript("OnEnter", function(self) ShowCut(self) end)
+  f:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
+end
+
+-- Width of a list line: its real width in the game, else what the layout gives it.
+local function RowW(f)
+  local w = ns.Num(f.GetWidth and f:GetWidth())
+  if w and w > 50 then return w end
+  return (f._list and f._list.rowW) or (W - 20)
+end
+
 local function LevelRGB(level)
   local hex = level and level > 0 and ns.LevelColor and ns.LevelColor(level)
   local r, g, b = tostring(hex or ""):match("|cff(%x%x)(%x%x)(%x%x)")
@@ -214,6 +257,8 @@ local function Clickable(f)
     if self.tooltip then
       local ok, title, lines, hint = pcall(self.tooltip, self)
       if ok and title then Style.Tooltip(self, title, lines, hint, "ANCHOR_RIGHT") end
+    else
+      ShowCut(self)
     end
   end)
   f:SetScript("OnLeave", function(self)
@@ -228,8 +273,9 @@ end
 ---------------------------------------------------------------------------
 -- Virtual list: items { kind, h, ... }; one pool of frames per kind
 ---------------------------------------------------------------------------
-local function NewList(parent, factories)
+local function NewList(parent, factories, rowW)
   local list = CreateFrame("Frame", nil, parent)
+  list.rowW = rowW -- width of a line when the game cannot tell yet (layout constants)
   list.items, list.offset, list.pools, list.used, list.factories = {}, 1, {}, {}, factories
   list:EnableMouseWheel(true)
   list:SetScript("OnMouseWheel", function(self, delta) self:Scroll(-(tonumber(delta) or 0) * 3) end)
@@ -272,6 +318,7 @@ local function NewList(parent, factories)
     if not pool then pool = {} self.pools[kind] = pool end
     for _, r in ipairs(pool) do if not r.inUse then r.inUse = true return r end end
     local r = self.factories[kind].create(self)
+    r._list = self
     r.inUse = true
     pool[#pool + 1] = r
     return r
@@ -340,6 +387,11 @@ local HeadKind = {
     SetColor(f.text, it.color or "textSecondary")
     f.count:SetText(it.count and tostring(it.count) or "")
     f.right:SetText(it.right or "")
+    local rw = RowW(f)
+    local rightW = 0
+    if it.right and it.right ~= "" then Fit(f.right, rw * 0.45, f) rightW = TextWidth(f.right) + 16 end
+    local countW = it.count and (TextWidth(f.count) + 6) or 0
+    Fit(f.text, rw - 40 - countW - rightW, f)
     f.line:ClearAllPoints()
     f.line:SetPoint("LEFT", f.count, "RIGHT", 8, 0)
     if it.right and it.right ~= "" then
@@ -357,9 +409,13 @@ local EmptyKind = {
     local f = CreateFrame("Frame", nil, list)
     f.text = Text(f, 12, "textHint", "CENTER")
     f.text:SetPoint("CENTER", f, "CENTER", 0, 0)
+    f.text:SetWordWrap(true) -- (i18n) a long note wraps instead of running out of the list
     return f
   end,
-  render = function(f, it) f.text:SetText(it.text or "") end,
+  render = function(f, it)
+    f.text:SetWidth(math.max(100, RowW(f) - 40))
+    f.text:SetText(it.text or "")
+  end,
 }
 
 -- Journal line: time, a mark on the time line, title and what happened,
@@ -435,9 +491,11 @@ local EntryKind = {
     if e.k == "o" then f.r1:SetPoint("RIGHT", f, "RIGHT", -10, 0) else f.r1:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -5) end
     f.r1:SetText(r1 or "")
     f.r2:SetText(r2 or "")
+    Fit(f.r1, 100, f) Fit(f.r2, 100, f)
     f.title:ClearAllPoints()
     f.sub:ClearAllPoints()
     local left = level and 76 or 72
+    Fit(f.title, RowW(f) - left - 110, f) Fit(f.sub, RowW(f) - left - 110, f)
     local h = ns.Num(f:GetHeight()) or it.h or ROW_H
     if sub and sub ~= "" then
       local top = math.floor((h - 30) / 2)
@@ -515,7 +573,10 @@ local QuestKind = {
     end
     -- the dots of a chain right after the title
     local n = it.dots and #it.dots or 0
-    local tw = math.min(TextWidth(f.title), 330)
+    local room = math.min(330, RowW(f) - left - 160 - n * 10 - (it.chain and 26 or 0))
+    Fit(f.title, room, f)
+    if it.sub and it.sub ~= "" then Fit(f.sub, RowW(f) - left - 150, f) end
+    local tw = math.min(TextWidth(f.title), room)
     for i, d in ipairs(f.dots) do
       local c = it.dots and it.dots[i]
       if c and i <= n then
@@ -532,6 +593,7 @@ local QuestKind = {
     -- status on the right
     if it.pill and it.pill ~= "" then
       f.pillText:SetText(it.pill)
+      Fit(f.pillText, 130, f)
       SetColor(f.pillText, it.pillColor or "textSecondary")
       Fill(f.pill, it.pillColor or "textSecondary", it.pillColor == "textHint" and 0.08 or 0.16)
       f.pillText:Show() f.pill:Show()
@@ -586,6 +648,8 @@ local ZoneKind = {
     local s = it.map and ZoneStats(it.map)
     SetColor(f.name, (s and s.total == 0) and "textHint" or (it.selected and "textPrimary" or "textSecondary"))
     f.range:SetText(it.range or "")
+    Fit(f.range, 70, f)
+    Fit(f.name, RowW(f) - (it.here and 24 or 12) - 16 - TextWidth(f.range), f)
     if it.here then f.here:Show() else f.here:Hide() end
     if it.selected then f.sel:Show() f.selBar:Show() else f.sel:Hide() f.selBar:Hide() end
     if s and s.total > 0 then
@@ -719,7 +783,7 @@ end
 local function Pill(e)
   if e.group == "log" then return e.text, e.color end
   if e.group == "available" then return e.text, e.color end
-  if e.group == "done" then return L["done"], "good" end
+  if e.group == "done" then return L["done (turned in)"], "good" end
   return L["later"], "textHint"
 end
 
@@ -1008,11 +1072,13 @@ local function Chip(parent, onClick)
   b.bg:SetAllPoints(b)
   b.text = Text(b, 11, "textSecondary", "CENTER")
   b.text:SetPoint("CENTER", b, "CENTER", 0, 0)
-  b:SetScript("OnEnter", function(self) if not self.on then Fill(self.bg, "textPrimary", 0.10) end end)
-  b:SetScript("OnLeave", function(self) if not self.on then Fill(self.bg, "textPrimary", 0.05) end end)
+  b:SetScript("OnEnter", function(self) if not self.on then Fill(self.bg, "textPrimary", 0.10) end ShowCut(self) end)
+  b:SetScript("OnLeave", function(self) if not self.on then Fill(self.bg, "textPrimary", 0.05) end Style.HideTooltip(self) end)
   b:SetScript("OnClick", function(self) if onClick then ns.SafeCall("quest book", onClick, self) end end)
   function b:Set(text, on)
     self.text:SetText(text)
+    Style.FitText(self.text, 1e6) -- back to the normal size (Layout may make it smaller)
+    if self._cut then self._cut[self.text] = nil end
     self.on = on and true or false
     Fill(self.bg, on and "accent" or "textPrimary", on and 0.20 or 0.05)
     SetColor(self.text, on and "textPrimary" or "textSecondary")
@@ -1021,7 +1087,24 @@ local function Chip(parent, onClick)
   return b
 end
 
-local function Layout(chips, gap)
+-- (i18n) avail: room for the whole row; too long texts get smaller, then cut.
+local function Layout(chips, gap, avail)
+  gap = gap or 6
+  if avail then
+    local total, n = 0, 0
+    for _, c in ipairs(chips) do
+      if c:IsShown() then total = total + (ns.Num(c:GetWidth()) or TextWidth(c.text) + 20) n = n + 1 end
+    end
+    if n > 0 and total + gap * (n - 1) > avail then
+      local each = math.floor((avail - gap * (n - 1)) / n) - 20
+      for _, c in ipairs(chips) do
+        if c:IsShown() then
+          Fit(c.text, each, c)
+          c:SetWidth(TextWidth(c.text) + 20)
+        end
+      end
+    end
+  end
   local prev
   for _, c in ipairs(chips) do
     if c:IsShown() then
@@ -1034,7 +1117,7 @@ local function Layout(chips, gap)
   end
 end
 
-local function EditBox(parent, placeholderText, onChange)
+local function EditBox(parent, placeholderText, onChange, budget)
   local box = CreateFrame("Frame", nil, parent)
   box.bg = Tex(box, "BACKGROUND", "textPrimary", 0.06)
   box.bg:SetAllPoints(box)
@@ -1053,6 +1136,7 @@ local function EditBox(parent, placeholderText, onChange)
   box.placeholder = Text(box, 12, "textHint", "LEFT")
   box.placeholder:SetPoint("LEFT", box, "LEFT", 26, 0)
   box.placeholder:SetText(placeholderText)
+  if budget then Fit(box.placeholder, budget, box) CutTip(box) end
   local pending = 0
   edit:SetScript("OnTextChanged", ns.Guard("quest book search", function(self)
     local text = tostring(self:GetText() or "")
@@ -1092,6 +1176,7 @@ local function Tile(parent)
   t.fill:SetPoint("TOPLEFT", t.track, "TOPLEFT", 0, 0)
   t.fill:SetPoint("BOTTOMLEFT", t.track, "BOTTOMLEFT", 0, 0)
   t.track:Hide() t.fill:Hide()
+  CutTip(t)
   return t
 end
 
@@ -1101,6 +1186,7 @@ local function CreateJournalPage(page)
   page:SetScript("OnSizeChanged", function(self, w)
     w = (ns.Num(w) or W) - 28
     local each = (w - 3 * 8) / 4
+    P.tileW = each
     for i, t in ipairs(P.tiles) do
       t:ClearAllPoints()
       t:SetPoint("TOPLEFT", self, "TOPLEFT", 14 + (i - 1) * (each + 8), -12)
@@ -1119,6 +1205,7 @@ local function CreateJournalPage(page)
   P.footer:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
   P.footer:SetHeight(28)
   Tex(P.footer, "BACKGROUND", "header"):SetAllPoints(P.footer)
+  CutTip(P.footer)
   P.footLeft = Text(P.footer, 11, "textHint", "LEFT")
   P.footLeft:SetPoint("LEFT", P.footer, "LEFT", 14, 0)
   P.footOld = CreateFrame("Button", nil, P.footer)
@@ -1126,11 +1213,13 @@ local function CreateJournalPage(page)
   P.footOld:SetHeight(22)
   P.footOld.text = Text(P.footOld, 11, "accent", "RIGHT")
   P.footOld.text:SetPoint("RIGHT", P.footOld, "RIGHT", -4, 0)
+  P.footOld:SetScript("OnEnter", function(self) ShowCut(self) end)
+  P.footOld:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
   P.footOld:SetScript("OnClick", function()
     local l = lists.journal
     if l and l.items.oldAt then l:ScrollTo(l.items.oldAt) end
   end)
-  local list = NewList(page, KINDS)
+  local list = NewList(page, KINDS, W - 2 - 10 - 8)
   list:SetPoint("TOPLEFT", page, "TOPLEFT", 6, -110)
   list:SetPoint("BOTTOMRIGHT", P.footer, "TOPRIGHT", -4, 4)
   lists.journal = list
@@ -1175,6 +1264,12 @@ local function UpdateTiles()
   end
   local since = lastLevel and Fmt.Span(Fmt.Now() - lastLevel)
   t[4].small:SetText(since and L["%s on this level"]:format(since) or "")
+  local each = P.tileW or ((W - 2 - 28 - 24) / 4)
+  for _, tile in ipairs(t) do
+    Fit(tile.label, each - 20, tile)
+    Fit(tile.value, each - 20, tile)
+    Fit(tile.small, each - 26 - TextWidth(tile.value), tile)
+  end
 end
 
 local function CreateZonePage(page)
@@ -1185,11 +1280,11 @@ local function CreateZonePage(page)
   Tex(side, "BACKGROUND", { 0, 0, 0 }, 0.22):SetAllPoints(side)
   local edge = Tex(side, "BORDER", "divider")
   edge:SetPoint("TOPRIGHT") edge:SetPoint("BOTTOMRIGHT") edge:SetWidth(1)
-  P.zoneBox = EditBox(side, L["Find a zone"], function(text) zoneQuery = text Refresh() end)
+  P.zoneBox = EditBox(side, L["Find a zone"], function(text) zoneQuery = text Refresh() end, SIDE_W - 20 - 34)
   P.zoneBox:SetPoint("TOPLEFT", side, "TOPLEFT", 10, -10)
   P.zoneBox:SetPoint("TOPRIGHT", side, "TOPRIGHT", -10, -10)
   P.zoneBox:SetHeight(24)
-  local zl = NewList(side, KINDS)
+  local zl = NewList(side, KINDS, SIDE_W + 2 - 8)
   zl:SetPoint("TOPLEFT", side, "TOPLEFT", 0, -40)
   zl:SetPoint("BOTTOMRIGHT", side, "BOTTOMRIGHT", 2, 6)
   lists.zones = zl
@@ -1234,6 +1329,7 @@ local function CreateZonePage(page)
   hero.fill = Tex(hero.shade, "OVERLAY", "good")
   hero.fill:SetPoint("TOPLEFT", hero.track, "TOPLEFT", 0, 0)
   hero.fill:SetPoint("BOTTOMLEFT", hero.track, "BOTTOMLEFT", 0, 0)
+  CutTip(hero.shade)
   P.hero = hero
 
   P.segQuests = Chip(main, function() zoneSeg = "quests" lists.zone.offset = 1 Refresh() end)
@@ -1241,7 +1337,7 @@ local function CreateZonePage(page)
   P.segJournal = Chip(main, function() zoneSeg = "journal" lists.zone.offset = 1 Refresh() end)
   P.segHere = Chip(main, function() SelectZone(nil) end)
   P.segHere:SetPoint("TOPRIGHT", hero, "BOTTOMRIGHT", -14, -8)
-  local list = NewList(main, KINDS)
+  local list = NewList(main, KINDS, W - 2 - SIDE_W - 10 - 8)
   list:SetPoint("TOPLEFT", hero, "BOTTOMLEFT", 6, -38)
   list:SetPoint("BOTTOMRIGHT", main, "BOTTOMRIGHT", -4, 6)
   lists.zone = list
@@ -1350,11 +1446,11 @@ local function UpdateHeroArt(m)
 end
 
 local function CreateSearchPage(page)
-  P.searchBox = EditBox(page, L["Search quest, zone, level or ID"], function(text) query = text Refresh(true) end)
+  P.searchBox = EditBox(page, L["Search quest, zone, level or ID"], function(text) query = text Refresh(true) end, W - 2 - 28 - 34)
   P.searchBox:SetPoint("TOPLEFT", page, "TOPLEFT", 14, -12)
   P.searchBox:SetPoint("TOPRIGHT", page, "TOPRIGHT", -14, -12)
   P.searchBox:SetHeight(30)
-  local list = NewList(page, KINDS)
+  local list = NewList(page, KINDS, W - 2 - 10 - 8)
   list:SetPoint("TOPLEFT", page, "TOPLEFT", 6, -52)
   list:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -4, 6)
   lists.search = list
@@ -1377,8 +1473,8 @@ local function TabButton(parent, key)
   b.mark:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 14, 0)
   b.mark:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -14, 0)
   b.mark:SetHeight(2)
-  b:SetScript("OnEnter", function(self) self.hover:Show() end)
-  b:SetScript("OnLeave", function(self) self.hover:Hide() end)
+  b:SetScript("OnEnter", function(self) self.hover:Show() ShowCut(self) end)
+  b:SetScript("OnLeave", function(self) self.hover:Hide() Style.HideTooltip(self) end)
   b:SetScript("OnClick", function(self) ns.OpenQuestBook(self.key) end)
   return b
 end
@@ -1429,6 +1525,22 @@ local function Create()
     P.tabs[TABS[i]] = b
     prev = b
   end
+  -- (i18n) tabs as wide as their text needs (at least 118 px); the subtitle gets what is left
+  local titleW = TextWidth(title)
+  local each = math.floor((W - 2 - 14 - titleW - 10 - 60 - 38) / #TABS) - 50
+  local tabsW = 0
+  for _, key in ipairs(TABS) do
+    local b = P.tabs[key]
+    Fit(b.text, each, b)
+    local w = math.max(118, TextWidth(b.text) + 50)
+    b:SetWidth(w)
+    b.icon:ClearAllPoints()
+    b.icon:SetPoint("RIGHT", b, "CENTER", -TextWidth(b.text) / 2 + 2, 0)
+    tabsW = tabsW + w
+  end
+  Fit(sub, W - 2 - 14 - titleW - 10 - tabsW - 38 - 16, header)
+  header:SetScript("OnEnter", function(self) ShowCut(self) end)
+  header:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
 
   P.pages = {}
   for _, key in ipairs(TABS) do
@@ -1471,16 +1583,20 @@ local function RenderJournal(reset)
     if n[chip.key] and n[chip.key] > 0 then label = label .. "  " .. n[chip.key] end
     chip:Set(label, chip.key == jfilter)
   end
-  Layout(P.chips)
+  Layout(P.chips, 6, W - 2 - 28)
   local dated = c.a + c.c + c.x + c.f + c.l
   P.footLeft:SetText(L["%d entries"]:format(dated))
+  local oldW = 0
   if items.old and items.old > 0 then
     P.footOld.text:SetText(L["Done earlier (%d)"]:format(items.old))
+    Fit(P.footOld.text, (W - 40) / 2, P.footOld)
     P.footOld:SetWidth(TextWidth(P.footOld.text) + 8)
     P.footOld:Show()
+    oldW = TextWidth(P.footOld.text) + 8
   else
     P.footOld:Hide()
   end
+  Fit(P.footLeft, W - 2 - 24 - oldW - 30, P.footer)
   lists.journal:SetItems(items, not reset)
 end
 
@@ -1509,6 +1625,10 @@ local function RenderZone(reset)
   end
   hero.count:SetText(("%d / %d"):format(s.done, s.total))
   hero.countLabel:SetText(L["quests done"])
+  local heroW = W - 2 - SIDE_W
+  Fit(hero.countLabel, 150, hero.shade)
+  Fit(hero.name, heroW - 40 - 170, hero.shade)
+  Fit(hero.meta, heroW - 40 - 170, hero.shade)
   if s.total > 0 and s.done > 0 then
     hero.fill:SetWidth(math.max(1, 150 * s.done / s.total))
     hero.fill:Show()
@@ -1521,12 +1641,15 @@ local function RenderZone(reset)
   P.segJournal:Set(L["Your journal here"] .. "  " .. jn, zoneSeg == "journal")
   P.segJournal:ClearAllPoints()
   P.segJournal:SetPoint("LEFT", P.segQuests, "RIGHT", 6, 0)
+  local hereW = 0
   if selZone and selZone ~= here then
     P.segHere:Set(L["Back to my zone"], false)
     P.segHere:Show()
+    hereW = (ns.Num(P.segHere:GetWidth()) or 0) + 12
   else
     P.segHere:Hide()
   end
+  Layout({ P.segQuests, P.segJournal }, 6, W - 2 - SIDE_W - 28 - hereW)
   lists.zone:SetItems(items, not reset)
 end
 
