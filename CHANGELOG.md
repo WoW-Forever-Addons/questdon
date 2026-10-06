@@ -1,5 +1,13 @@
 # Changes
 
+## 1.3.2
+
+- **Blizzard's XP bar hidden:** while the Questdon XP bar is shown, the game's own XP bar is hidden (option, on by default). Your action bars stay where they are.
+- **Ornament in its place:** an ornate band joins the two ends of the action bar where the game's XP bar was (option, on by default).
+- **Clickable reputation bar:** a faction you track in the reputation list shows in Questdon's own bar in the same look; a click opens the reputation list (option, on by default).
+- **Translations:** French, Spanish (Spain and Latin America), Brazilian Portuguese, Russian, Korean and Traditional Chinese.
+- **Texts that fit:** long texts in the quest book shrink a little or are shortened, with the full text in the tooltip, so no language breaks the layout.
+
 ## 1.3.1
 
 - **Minimap:** the quest objective dots have a dark ring, so they stay visible on green ground.

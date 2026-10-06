@@ -10,7 +10,7 @@
 ## Notes-koKR: WoW Forever용 퀘스트 도우미: 세계 지도, 미니맵, 이름표에 수락 가능한 퀘스트와 목표 위치 표시(All The Things 기반 자체 데이터베이스), 자동 수락/완료, 가장 비싼 보상, 경험치 계획, 던전 퀘스트, 파티 퀘스트 진행도, 달성 알림, 퀘스트 정리, 파티 공유와 편의 기능.
 ## Notes-zhTW: WoW Forever 任務助手：在世界地圖、小地圖與名條上顯示可接任務與任務目標的位置(以 All The Things 為基礎的自有資料庫)、自動接受/回報、最佳獎勵、經驗值規劃、地城任務、隊伍任務進度、完成提示、任務整理、隊伍分享與便利功能。
 ## Author: DonCoohd
-## Version: 1.3.1
+## Version: 1.3.2
 ## X-Curse-Project-ID: 1723659
 ## Category: Quests
 ## Category-frFR: Quêtes
