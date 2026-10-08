@@ -1,5 +1,17 @@
 # Changes
 
+## 1.3.3
+
+- **Shorter quest tooltips:** on the world map and minimap the level stands in the title, "[6] Al'Aketh Assassins", in its difficulty colour. Below only what helps: quest giver, chain, dungeon, group, and a small "not confirmed yet" where only the data knows the quest. Hold Shift for where the data comes from.
+- **Quest book, new tab "Dungeons":** every dungeon with its quests for you, sorted by level. Under each quest you see what to do first, with quest giver and zone, so you can pick up the whole chain before you go in.
+- **Learned in the game:** more turn-ins, follow-up quests and objective spots from players' exports are bundled (Zephras Isle, Teldrassil, Elwynn Forest, Dun Morogh, Westfall, Redridge Mountains, Tirisfal Glades and more).
+- **Export:** after sending an export, click "Mark as sent": the next `/qd export` only shows what is new or changed. `/qd export all` still shows everything, now also the list of quests the server doesn't know. The note to export before you log out is gone, the game keeps what Questdon learned.
+- **Zephras Isle:** spawn points for the quest mobs and objects of the Skyborne start zone, and its quest givers' turn-ins.
+- **Overlapping markers:** where quest givers stand close together, as on Zephras Isle, their "!" no longer cover each other on the world map and the minimap. They become one marker that lists all quests; zoomed in, they come apart again. And where the game draws its own "!", Questdon no longer puts a second one right next to it.
+- **Window buttons:** the gear and the other buttons in the Questdon window can be clicked again when an action bar addon such as Bartender4 sits underneath.
+- **Action bar addons:** with Bartender4, ElvUI or Dominos the ornament and the clickable reputation bar only show while the game's own bars are on screen, and they fade along with them.
+- **QuestdonNet channel:** it no longer takes /1 from General. Questdon waits for the game's channels and moves its own channel behind them.
+
 ## 1.3.2
 
 - **Blizzard's XP bar hidden:** while the Questdon XP bar is shown, the game's own XP bar is hidden (option, on by default). Your action bars stay where they are.
