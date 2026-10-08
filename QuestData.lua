@@ -547,7 +547,12 @@ function AvailableOnMap(mapID, upcoming)
       entry.questID, entry.x, entry.y, entry.npc = id, x / 100, y / 100, npc
       -- (1.25) the game lists it with a spot: it draws its own "!" there
       -- (1.26) only where it really draws one (not hidden, local story, other map)
-      if listed and client.drawn and client.drawn[id] then entry.gameShown = true end
+      if listed and client.drawn and client.drawn[id] then
+        entry.gameShown = true
+        -- (1.3.3) where the game draws its "!" (its spot can differ from the data's)
+        local cp = client.pos and client.pos[id]
+        if cp then entry.gx, entry.gy = cp[1], cp[2] end
+      end
       list[#list + 1] = entry
     end
   end
@@ -572,9 +577,11 @@ function AvailableOnMap(mapID, upcoming)
         if ok then ns.CheckQuestExists(id) end
       end
       if ok then
+        local gp = Listed(id) and client and client.drawn and client.drawn[id] and client.pos and client.pos[id]
         list[#list + 1] = { questID = id, x = e.start.x, y = e.start.y, npc = e.start.npc, learned = not Q[id] or nil,
           confirmed = (Listed(id) or ns.OfferConfirmed(id, player.level)) and true or nil,
-          gameShown = (Listed(id) and client.drawn and client.drawn[id]) and true or nil } -- (1.25, 1.26)
+          gameShown = (Listed(id) and client.drawn and client.drawn[id]) and true or nil, -- (1.25, 1.26)
+          gx = gp and gp[1] or nil, gy = gp and gp[2] or nil } -- (1.3.3)
       end
     end
   end

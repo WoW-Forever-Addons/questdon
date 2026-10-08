@@ -270,6 +270,42 @@ function ns.BlizzardXPHidden() return blizzHidden end
 --   click opens the reputation list. Frame texture and dividers of that container stay.
 -- Both are own frames, only anchored to the game's frames; nothing is set on those.
 ---------------------------------------------------------------------------
+-- (1.3.3) Action bar addons (Daniel 06.10.): Bartender4, ElvUI or Dominos hide the game's
+-- bars by moving them into a hidden parent, or show them in their own bar with a fade. Our
+-- ornament and reputation bar are own frames on UIParent, so they follow the game's frames:
+-- only while those are really on screen (IsVisible, not IsShown) and with their alpha.
+local function OnScreen(f)
+  if type(f) ~= "table" then return false end
+  if type(f.IsVisible) == "function" then
+    local ok, v = pcall(f.IsVisible, f)
+    if ok then return v and true or false end
+  end
+  return type(f.IsShown) ~= "function" or f:IsShown() and true or false
+end
+
+-- The ornament joins the end pieces of the game's own action bar; without that bar on screen
+-- (an action bar addon hid it) there is nothing to join.
+local function GameActionBarShown()
+  local f = rawget(_G, "MainActionBar") or rawget(_G, "MainMenuBar")
+  if type(f) ~= "table" then return true end
+  return OnScreen(f)
+end
+
+-- OnUpdate of our own frames: the alpha of the game's frame they sit on (fades of the game or
+-- of an action bar addon). Divided by UIParent's, which our frames get anyway.
+local function FollowAlpha(self)
+  local src = self.alphaFrom
+  if type(src) ~= "table" or type(src.GetEffectiveAlpha) ~= "function" then return end
+  local ok, a = pcall(src.GetEffectiveAlpha, src)
+  if not ok or type(a) ~= "number" then return end
+  local base = UIParent and UIParent.GetEffectiveAlpha and UIParent:GetEffectiveAlpha() or 1
+  if base and base > 0 then a = math.min(1, a / base) end
+  if a ~= self.followAlpha then
+    self.followAlpha = a
+    self:SetAlpha(a)
+  end
+end
+
 local rep
 local REP_COLORS = { "Red", "Red", "Orange", "Yellow", "Green", "Green", "Green", "Green" }
 
@@ -356,11 +392,12 @@ local function CreateRep()
   rep:SetScript("OnLeave", function(self) self.label:Hide() Style.HideTooltip(self) end)
   rep:SetScript("OnMouseUp", ns.Guard("rep bar", RepClick))
   rep:SetScript("OnSizeChanged", function(self) self.fillDirty = true end)
+  rep:SetScript("OnUpdate", FollowAlpha)
   rep:Hide()
 end
 
--- Shows faction `id` over the hidden game bar `target`, or hides it (target nil).
-local function ShowRep(target, id)
+-- Shows faction `id` over the hidden game bar `target` (in container `holder`), or hides it.
+local function ShowRep(target, id, holder)
   if not target then
     if rep then rep:Hide() end
     return false
@@ -371,6 +408,7 @@ local function ShowRep(target, id)
     return false
   end
   if not rep then CreateRep() end
+  rep.alphaFrom = holder or target
   local anchor = type(target.StatusBar) == "table" and target.StatusBar or target
   if rep.anchor ~= anchor then
     rep:ClearAllPoints()
@@ -408,6 +446,7 @@ local ART_TOP, ART_BOTTOM = 0.001953125, 0.07226563
 local function CreateArt()
   art = CreateFrame("Frame", "QuestdonXPPlaceArt", UIParent)
   art:SetFrameStrata("LOW")
+  art:SetScript("OnUpdate", FollowAlpha)
   local band = art:CreateTexture(nil, "ARTWORK")
   local ok, set = pcall(band.SetTexture, band, ART_FILE, true, false)
   if ok and set ~= false then
@@ -454,6 +493,7 @@ local function ShowArt(c)
     art:SetPoint("BOTTOMRIGHT", c, "BOTTOMRIGHT", 0, -pad)
     art.anchor = c
   end
+  art.alphaFrom = c
   art:Show()
   return true
 end
@@ -467,8 +507,7 @@ function ns.XPPlaceArtShown() return art and art:IsShown() and true or false, ar
 -- The container that shows bar `index` and is on screen, and that bar.
 local function Holder(mgr, index)
   for _, c in ipairs(mgr.barContainers) do
-    local shown = type(c) == "table" and c.shownBarIndex == index
-      and (type(c.IsShown) ~= "function" or c:IsShown())
+    local shown = type(c) == "table" and c.shownBarIndex == index and OnScreen(c)
     if shown and type(c.bars) == "table" and type(c.bars[index]) == "table" then return c, c.bars[index] end
   end
   return nil
@@ -485,12 +524,12 @@ function ns.ApplyBlizzardXP()
   local xp, ri = XPIndex(), RepIndex()
   local hide = ns.db and ns.db.xpBar and ns.db.hideBlizzardXP ~= false and bar and bar:IsShown() and true or false
   local xpHolder = hide and Holder(mgr, xp) or nil
-  ShowArt(xpHolder and ns.db.artInXPPlace ~= false and xpHolder or nil)
+  ShowArt(xpHolder and ns.db.artInXPPlace ~= false and GameActionBarShown() and xpHolder or nil)
   -- the tracked faction in our own bar, on the game's reputation bar
   local watched = hide and ns.db.ownRepBar ~= false and WatchedID() or nil
   local repHolder, repBar
   if watched then repHolder, repBar = Holder(mgr, ri) end
-  local ours = ShowRep(repBar, watched)
+  local ours = ShowRep(repBar, watched, repHolder)
   for _, c in ipairs(mgr.barContainers) do
     if type(c) == "table" then
       local bars = type(c.bars) == "table" and c.bars or {}

@@ -157,7 +157,6 @@ Nur lesend, plus Steuerung des Pfeils, für Zusatz-Addons. Neue Funktionen komme
 ## Hinweise
 - Keine Kampfdaten, kein Combat Log: das Addon fällt nicht unter die Forever-Kampfrestriktionen.
 - Der Questitem-Button ist ein Secure Button und aktualisiert sich im Kampf erst nach Kampfende.
-- Beta: Gehen Einstellungen oder gelernte Daten nach einem Neustart verloren, ist das ein bekannter, noch offener Fehler des Beta-Clients (SavedVariables werden geschrieben, aber nicht wieder geladen). Er betrifft alle Addons und ist in keinen Patch Notes als behoben genannt.
 
 ## Lizenz / Quellen
 - Code: DonCoohd.

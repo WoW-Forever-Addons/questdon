@@ -193,7 +193,7 @@ local TOOLS = {
         wipe(ns.db.learned)
         if ns.db.learnedObj then wipe(ns.db.learnedObj) end
         if ns.db.learnedItems then wipe(ns.db.learnedItems) end
-        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "shared", "shareSent", "notHere" }) do
+        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "shared", "shareSent", "notHere", "exportSent" }) do
           if type(ns.db[k]) == "table" then wipe(ns.db[k]) end
         end
         if ns.db.guessedItems then wipe(ns.db.guessedItems) end

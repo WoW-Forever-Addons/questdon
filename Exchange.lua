@@ -53,6 +53,7 @@ local CONFIRM = 2           -- reporters needed before a fact is used
 local CHANNEL_NAMES = { "QuestdonNet", "QuestdonNet2", "QuestdonNet3" }
 local CONFIRM_OPEN = 3
 local JOIN_DELAY, JOIN_CHECK = 10, 3 -- seconds after login; seconds until a join is checked
+local JOIN_WAIT_MAX = 90    -- (1.3.3) seconds to wait for the game's own channels before joining anyway
 local SENDS_PER_FLUSH = 9   -- addon messages per prefix: 10 at once, then 1 per second
 local NEAR = 2              -- map units: two spots this close are the same
 
@@ -390,7 +391,7 @@ end
 -- Blizzard's chat code): addon messages are invisible anyway; the client
 -- may show one "joined channel" line and lists the channel in /chatlist.
 ---------------------------------------------------------------------------
-local chan = { name = nil, index = 1, pending = nil, at = 0, state = "off", joins = 0 }
+local chan = { name = nil, index = 1, pending = nil, at = 0, state = "off", joins = 0, since = nil, moves = 0 }
 
 local function ChannelID(name)
   if type(GetChannelName) ~= "function" or not name then return nil end
@@ -403,19 +404,75 @@ local function ChannelWanted()
   return ns.db and ns.db.shareChannel and ns.db.shareLearned and ns.db.learnQuests and true or false
 end
 
+-- (1.3.3) Daniel 06.10.: QuestdonNet must not take /1 from General. The channel only joins
+-- once the game's own channels are there (or after JOIN_WAIT_MAX), and if it still sits in
+-- front of one of them, it is moved behind the last one, as the chat settings do when a
+-- player drags a channel (C_ChatInfo.SwapChatChannelsByChannelIndex, never in combat).
+local function IsOurs(name)
+  if type(name) ~= "string" then return false end
+  for _, n in ipairs(CHANNEL_NAMES) do
+    if name == n or name:lower() == n:lower() then return true end
+  end
+  return false
+end
+
+-- Highest slot of a channel that is not ours, and how many there are.
+local function OtherChannels()
+  if type(GetChannelList) ~= "function" then return 0, 0 end
+  local list = { pcall(GetChannelList) }
+  if not list[1] then return 0, 0 end
+  local top, count = 0, 0
+  for i = 2, #list, 3 do
+    local id, name = ns.Num(list[i]), list[i + 1]
+    if id and not IsOurs(name) then
+      count = count + 1
+      if id > top then top = id end
+    end
+  end
+  return top, count
+end
+
+local function MoveBehindOthers(id)
+  local top = OtherChannels()
+  if not id or top <= id or chan.moves >= 3 then return false end
+  if Locked() or ns.True(ns.Value(InCombatLockdown)) then return false end
+  local swap = C_ChatInfo and C_ChatInfo.SwapChatChannelsByChannelIndex
+  if type(swap) ~= "function" then return false end
+  chan.moves = chan.moves + 1
+  for i = id, top - 1 do
+    if not pcall(swap, i, i + 1) then return false end
+  end
+  return true
+end
+ns.ShareChannelMoveBehind = MoveBehindOthers -- (tests)
+
 -- Called by the ticker and after login: join, check a join, try the next name.
 function ns.ShareChannelTick()
   if not ChannelWanted() then
     chan.state = "off"
     return nil
   end
-  if chan.name and ChannelID(chan.name) then chan.state = "joined" return chan.name end
+  if chan.name and ChannelID(chan.name) then
+    chan.state = "joined"
+    MoveBehindOthers(ChannelID(chan.name))
+    return chan.name
+  end
   -- already in one of the names (e.g. after /reload)
   for i, name in ipairs(CHANNEL_NAMES) do
-    if ChannelID(name) then chan.name, chan.index, chan.pending, chan.state = name, i, nil, "joined" return name end
+    if ChannelID(name) then
+      chan.name, chan.index, chan.pending, chan.state = name, i, nil, "joined"
+      MoveBehindOthers(ChannelID(name))
+      return name
+    end
   end
   chan.name = nil
   local now = Now()
+  chan.since = chan.since or now
+  -- the game's own channels first (General stays /1)
+  if not chan.pending and select(2, OtherChannels()) == 0 and now - chan.since < JOIN_WAIT_MAX then
+    chan.state = "waiting"
+    return nil
+  end
   if chan.pending then
     if now - chan.at < JOIN_CHECK then return nil end
     chan.pending = nil

@@ -15,6 +15,9 @@ local C = Style.COLORS
 --            the right with a picture of its map, "23 / 72 done", its
 --            quests (ZoneQuests.lua) or your journal entries there. Quests
 --            of a chain with the same name are one line ("2/6") that opens.
+--   Dungeons (1.3.3, Daniel 08.10.) every dungeon with its quests for you,
+--            sorted by level; under each open quest the quests still to do
+--            before it ("First: ..."), with quest giver and zone.
 --   Search   journal, all quests and zones by name, level or quest ID.
 --
 -- Long lists are drawn as a window onto the list (mouse wheel), only the
@@ -42,9 +45,10 @@ local TAB_ICON = {
   journal = "Interface\\Icons\\INV_Misc_Book_09",
   zone = "Interface\\Icons\\INV_Misc_Map_01",
   search = "Interface\\Icons\\INV_Misc_Spyglass_03",
+  dungeons = "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01",
 }
-local TABS = { "journal", "zone", "search" }
-local TAB_TITLE = { journal = "Journal", zone = "Zones", search = "Search" }
+local TABS = { "journal", "zone", "dungeons", "search" }
+local TAB_TITLE = { journal = "Journal", zone = "Zones", dungeons = "Dungeons", search = "Search" }
 
 -- Zones of the book: uiMapID, continent, level range (cities without), faction
 -- of start zones and capitals ("A"/"H", hidden for the other faction).
@@ -1043,6 +1047,109 @@ local function SearchItems()
 end
 
 ---------------------------------------------------------------------------
+-- (1.3.3) Dungeons: per dungeon its quests for you; under an open quest the
+-- quests still to do before it, deepest first (the order you walk them).
+---------------------------------------------------------------------------
+local dunOpen = {} -- instanceID -> true/false (nil: open when it fits your level)
+
+local function QuestEntry(id)
+  local group, text, color, unconfirmed = ns.ZoneQuestStatus(id)
+  if not group then return nil end
+  return { questID = id, group = group, text = text, color = color, unconfirmed = unconfirmed,
+    level = ns.QuestLevel(id) or 0, title = ns.QuestTitle(id) }
+end
+
+local function StartZone(id)
+  local m = ns.QuestStart(id)
+  return m and MapName(ZoneOf(m) or m) or nil
+end
+
+local function WithZone(sub, id)
+  local zone = StartZone(id)
+  if not zone then return sub end
+  return sub and (sub .. "  ·  " .. zone) or zone
+end
+
+-- Prerequisites not done yet, the earliest first.
+function ns.DungeonQuestChain(id)
+  local out, seen = {}, { [id] = true }
+  local function Walk(q, depth)
+    if depth > 12 then return end
+    for _, pre in ipairs(ns.QuestPrereqs(q) or {}) do
+      if not seen[pre] then
+        seen[pre] = true
+        if not ns.IsQuestDone(pre) then
+          Walk(pre, depth + 1)
+          local e = QuestEntry(pre)
+          if e then out[#out + 1] = e end
+        end
+      end
+    end
+  end
+  Walk(id, 0)
+  return out
+end
+
+local DUN_RANK = { log = 1, available = 2, later = 3, done = 4 }
+local function DungeonItems()
+  local items = {}
+  local player = ns.PlayerLevel() or 1
+  local insts = {}
+  for inst in pairs(ns.ATT_DUNGEONS or {}) do
+    if #ns.DungeonQuestIDs(inst) > 0 then insts[#insts + 1] = inst end
+  end
+  table.sort(insts, function(a, b)
+    local la, lb = ns.DungeonMinLevel(a) or 99, ns.DungeonMinLevel(b) or 99
+    if la ~= lb then return la < lb end
+    return a < b
+  end)
+  for _, inst in ipairs(insts) do
+    local entries, done = {}, 0
+    for _, id in ipairs(ns.DungeonQuestIDs(inst)) do
+      local e = QuestEntry(id)
+      if e then
+        entries[#entries + 1] = e
+        if e.group == "done" then done = done + 1 end
+      end
+    end
+    if #entries > 0 then
+      local minL = ns.DungeonMinLevel(inst)
+      local open = dunOpen[inst]
+      if open == nil then open = done < #entries and minL ~= nil and player >= minL - 3 and player <= minL + 10 end
+      local name = ns.DungeonName(inst)
+      if minL then name = name .. "  " .. Style.Colorize(L["from level %d"]:format(minL), "textHint") end
+      items[#items + 1] = { kind = "head", h = HEAD_H, text = name, color = "textPrimary", count = ("%d/%d"):format(done, #entries),
+        right = open and L["hide"] or L["show"], onClick = function() dunOpen[inst] = not open Refresh() end }
+      if open then
+        table.sort(entries, function(a, b)
+          local ra, rb = DUN_RANK[a.group] or 5, DUN_RANK[b.group] or 5
+          if ra ~= rb then return ra < rb end
+          local la, lb = a.level > 0 and a.level or 999, b.level > 0 and b.level or 999
+          if la ~= lb then return la < lb end
+          return a.questID < b.questID
+        end)
+        for _, e in ipairs(entries) do
+          if e.group ~= "done" then
+            local it = QuestItem(e)
+            it.sub = WithZone(QuestSub(e), e.questID)
+            items[#items + 1] = it
+            for _, p in ipairs(ns.DungeonQuestChain(e.questID)) do
+              local c = QuestItem(p, { indent = 22, title = L["First: %s"]:format(p.title or ns.QuestTitle(p.questID)) })
+              c.sub = WithZone(QuestSubText(p), p.questID)
+              items[#items + 1] = c
+            end
+          end
+        end
+        if done == #entries then items[#items + 1] = { kind = "empty", h = 40, text = L["All quests of this dungeon done."] } end
+      end
+    end
+  end
+  if #items == 0 then items[1] = { kind = "empty", h = 60, text = L["No dungeon quests known for you."] } end
+  return items
+end
+ns.QuestBookDungeonItems = DungeonItems -- (tests)
+
+---------------------------------------------------------------------------
 -- Frames
 ---------------------------------------------------------------------------
 local function SavePos()
@@ -1456,6 +1563,13 @@ local function CreateSearchPage(page)
   lists.search = list
 end
 
+local function CreateDungeonPage(page)
+  local list = NewList(page, KINDS, W - 2 - 10 - 8)
+  list:SetPoint("TOPLEFT", page, "TOPLEFT", 6, -8)
+  list:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -4, 6)
+  lists.dungeons = list
+end
+
 local function TabButton(parent, key)
   local b = CreateFrame("Button", nil, parent)
   b.key = key
@@ -1553,6 +1667,7 @@ local function Create()
   CreateJournalPage(P.pages.journal)
   CreateZonePage(P.pages.zone)
   CreateSearchPage(P.pages.search)
+  CreateDungeonPage(P.pages.dungeons)
 
   -- the world map opened, closed or shows another zone: follow it (zone tab,
   -- no zone picked). Our own frame looks twice a second while the book is open.
@@ -1657,6 +1772,10 @@ local function RenderSearch(reset)
   lists.search:SetItems(SearchItems(), not reset)
 end
 
+local function RenderDungeons(reset)
+  lists.dungeons:SetItems(DungeonItems(), not reset)
+end
+
 local lastTab
 function Refresh(reset)
   if not book or not book:IsShown() then return end
@@ -1671,6 +1790,7 @@ function Refresh(reset)
   if tab ~= lastTab then reset = true lastTab = tab end
   if tab == "journal" then RenderJournal(reset)
   elseif tab == "zone" then RenderZone(reset)
+  elseif tab == "dungeons" then RenderDungeons(reset)
   else RenderSearch(reset) end
 end
 

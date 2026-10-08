@@ -153,6 +153,11 @@ L["%s XP/h"] = "시간당 %s"
 L["After turning in"] = "완료 후"
 L["Choice: %s"] = "선택 보상: %s"
 L["Click: point the arrow here"] = "클릭: 화살표로 이곳 가리키기"
+-- (1.3.4) compact quest tooltips
+L["Click: arrow, Alt-click: hide"] = "클릭: 화살표, Alt-클릭: 숨기기"
+L["Click: arrow"] = "클릭: 화살표"
+L["Shift: details"] = "Shift: 자세히"
+L["Not confirmed yet"] = "아직 확인되지 않음"
 L["Drag to move. Lock it in the options."] = "끌어서 옮길 수 있습니다. 설정에서 잠글 수 있습니다."
 L["Finished quests (%d)"] = "완료 가능한 퀘스트 (%d)"
 L["Height of the XP bar."] = "경험치바의 높이입니다."
@@ -197,7 +202,13 @@ L["Nothing new: everything Questdon learned is already in its data. /qd export a
 L["%d entries. Ctrl+A selects all, Ctrl+C copies. Paste it into a new issue at %s (form \"Quest data\")."] = "항목 %d개. Ctrl+A로 전체 선택, Ctrl+C로 복사합니다. %s에서 새 이슈를 만들어 붙여 넣으십시오(\"Quest data\" 양식)."
 L["Truncated: %d more entries left out."] = "일부 생략: 항목 %d개가 더 있습니다."
 L["Only numbers: no character, realm or guild names."] = "숫자만 포함: 캐릭터, 서버, 길드 이름은 없습니다."
-L["Export before you log out: the beta forgets learned data at relog."] = "로그아웃하기 전에 내보내십시오: 베타에서는 다시 접속하면 학습한 데이터가 사라집니다."
+-- (1.3.3) export: mark as sent
+L["%d entries you already sent are left out (/qd export all shows everything)."] = "이미 보낸 항목 %d개는 제외되었습니다(/qd export all은 모두 표시)."
+L["Mark as sent: the next export only shows new entries"] = "보낸 것으로 표시: 다음 내보내기에는 새 항목만 표시"
+L["Marked as sent: %d entries."] = "보낸 것으로 표시함: %d개 항목."
+L["Mark as sent"] = "보낸 것으로 표시"
+L["Click after you sent the text. Entries that do not change are left out of the next export; anything new or changed comes along. /qd export all still shows everything."] = "텍스트를 보낸 뒤 클릭하세요. 바뀌지 않은 항목은 다음 내보내기에서 제외되고, 새롭거나 바뀐 항목은 모두 포함됩니다. /qd export all은 계속 모두 표시합니다."
+L["Nothing new since your last export marked as sent. /qd export all shows everything."] = "보낸 것으로 표시한 마지막 내보내기 이후 새 항목이 없습니다. /qd export all은 모두 표시합니다."
 
 -- 1.11
 L["an error occurred, /qd diag for details"] = "오류가 발생했습니다. 자세한 내용: /qd diag"
@@ -238,6 +249,10 @@ L["Location: database (All The Things)"] = "위치: 데이터베이스 (All The 
 
 -- 1.18: dungeon quests, group progress
 L["Dungeons"] = "던전"
+-- (1.3.3) quest book tab Dungeons
+L["First: %s"] = "먼저: %s"
+L["All quests of this dungeon done."] = "이 던전의 퀘스트를 모두 완료했습니다."
+L["No dungeon quests known for you."] = "알려진 던전 퀘스트가 없습니다."
 L["Dungeon quests"] = "던전 퀘스트"
 L["Dungeon quests in the panel"] = "창에 던전 퀘스트 표시"
 L["Lists the dungeon quests in your log and the ones you can pick up now, per dungeon. Forever pays dungeon quests extra XP: take them before you go in. Click the line: arrow to the nearest quest giver. /qd dungeons"] = "퀘스트 목록에 있는 던전 퀘스트와 지금 수락할 수 있는 던전 퀘스트를 던전별로 표시합니다. Forever에서는 던전 퀘스트가 추가 경험치를 주므로 던전에 들어가기 전에 받아 두십시오. 줄을 클릭하면 화살표가 가장 가까운 퀘스트 NPC를 가리킵니다. /qd dungeons"
@@ -463,7 +478,6 @@ L["reported by other players"] = "다른 플레이어가 보고함"
 L["Questdon data"] = "Questdon 데이터"
 L["Not offered at"] = "제공되지 않은 레벨"
 L["level %s (hidden after %d)"] = "%s (%d개 레벨이면 숨김)"
-L["Alt-click: no quest here (hide it)"] = "Alt+클릭: 이곳에 퀘스트 없음 (숨기기)"
 L["Quests hidden as not offered"] = "제공되지 않아 숨긴 퀘스트"
 L["Show again"] = "다시 표시"
 L["Click again within 5 seconds to show all quests again that were hidden as not offered."] = "제공되지 않아 숨긴 퀘스트를 모두 다시 표시하려면 5초 안에 다시 클릭하십시오."

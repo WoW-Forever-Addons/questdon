@@ -174,12 +174,20 @@ end
 -- by default) Questdon leaves such quest givers to the game: the quest and
 -- every other available pin at the same giver are not drawn (world map and
 -- minimap). Panel, nameplates and unit tooltips keep them.
-function ns.SkipGameShownPins(pins)
+-- (1.3.3) Daniel 08.10., Zephras Isle: a Questdon "!" still stood next to the
+-- game's one. The game draws at the spot of its quest lines (pin.gx/gy), which
+-- can lie a little off the data's spot of the same quest; our other quests of
+-- that giver were compared with the data's spot only and, with the tiny
+-- distance, stayed. Now both spots count, with the overlap distance of the map.
+function ns.SkipGameShownPins(pins, dist)
   local n = 0
   if not (ns.db and ns.db.skipGameGivers) then dupStats.lastSuppressed = 0 return pins or {}, 0 end
   local game = {}
   for _, p in ipairs(pins or {}) do
-    if p.kind == "available" and p.gameShown and p.x and p.y then game[#game + 1] = p end
+    if p.kind == "available" and p.gameShown and p.x and p.y then
+      game[#game + 1] = p
+      if p.gx and p.gy then game[#game + 1] = { kind = "available", questID = p.questID, x = p.gx, y = p.gy } end
+    end
   end
   if #game == 0 then dupStats.lastSuppressed = 0 return pins or {}, 0 end
   local out = {}
@@ -190,7 +198,7 @@ function ns.SkipGameShownPins(pins)
         drop = true
       else
         for _, g in ipairs(game) do
-          if SameSpot(g, p) then drop = true break end
+          if SameSpot(g, p, dist) then drop = true break end
         end
       end
     end
@@ -204,7 +212,7 @@ end
 -- (1.25) What the world map and the minimap draw: game-drawn givers left
 -- out, the rest grouped per quest giver.
 function ns.DisplayQuestPins(pins, cluster)
-  return ns.GroupQuestPins((ns.SkipGameShownPins(pins)), cluster)
+  return ns.GroupQuestPins((ns.SkipGameShownPins(pins, cluster)), cluster)
 end
 
 -- (1.28) Option "Merge markers": distance (0-1 map coordinates) under which
@@ -213,6 +221,12 @@ end
 -- rebuild the pins every frame). Zoomed in, the same distance is a smaller
 -- part of the map, so the markers come apart. nil when the option is off.
 local CLUSTER_DIST = 0.015
+-- (1.3.3) Daniel 08.10., Zephras Isle: its quest givers stand 0.2 to 0.8 map
+-- units apart (0.002-0.008), so their "!" covered each other although none of
+-- them shared a giver. Markers that would overlap on screen now always merge
+-- (OVERLAP_DIST, zoom-scaled like the cluster); "Merge markers" merges wider.
+local OVERLAP_DIST = 0.012
+ns.MINIMAP_OVERLAP = 0.01 -- minimap: a fixed distance (about one marker at its usual zoom)
 function ns.ClusterBucket(scale)
   scale = ns.Num(scale)
   if not scale or scale < 1 then return 1 end
@@ -220,8 +234,8 @@ function ns.ClusterBucket(scale)
   return math.floor(scale * 2 + 0.5) / 2
 end
 function ns.ClusterDistance(scale)
-  if not (ns.db and ns.db.clusterPins) then return nil end
-  return CLUSTER_DIST / ns.ClusterBucket(scale)
+  local d = ns.db and ns.db.clusterPins and CLUSTER_DIST or OVERLAP_DIST
+  return d / ns.ClusterBucket(scale)
 end
 function ns.DuplicatePinStats() return dupStats end
 
@@ -344,11 +358,32 @@ function ns.QuestPinDescription(pin)
 end
 
 -- (1.1) Hint of a quest pin: Alt-click reports "no quest here" (not for turn-ins).
+-- (1.3.4) One short grey line; Shift shows the details (where the data comes from).
+local function Details() return ns.True(ns.Value(IsShiftKeyDown)) end
+ns.TooltipDetails = Details
 function ns.QuestPinHint(pin)
-  if pin and pin.kind ~= "turnin" and ns.ReportPin then
-    return L["Click: point the arrow here"] .. "\n" .. L["Alt-click: no quest here (hide it)"]
-  end
-  return L["Click: point the arrow here"]
+  local hint = (pin and pin.kind ~= "turnin" and ns.ReportPin) and L["Click: arrow, Alt-click: hide"] or L["Click: arrow"]
+  if pin and pin.kind ~= "turnin" and not Details() then hint = hint .. ", " .. L["Shift: details"] end
+  return hint
+end
+
+-- (1.3.4) Pressing or releasing Shift over a marker redraws its tooltip (details).
+local hover = { owner = nil, fn = nil }
+function ns.SetHoverTooltip(owner, fn) hover.owner, hover.fn = owner, owner and fn or nil end
+ns.On("MODIFIER_STATE_CHANGED", function(key)
+  if not (hover.owner and hover.fn) then return end
+  if type(key) == "string" and not key:find("SHIFT", 1, true) then return end
+  local tt = GameTooltip
+  local ok, owned = pcall(tt and tt.IsOwned or function() return false end, tt, hover.owner)
+  if ok and owned then ns.SafeCall("tooltip details", hover.fn, hover.owner) else hover.owner, hover.fn = nil, nil end
+end)
+
+-- (1.3.4) Daniel 08.10.: the level belongs in the title, "[6] Al'Aketh Assassins",
+-- in the difficulty colour; "[?]" when the data has none (said, never guessed).
+function ns.LevelTitle(questID)
+  local level = ns.QuestLevel(questID)
+  local tag = level and (ns.LevelColor(level) .. "[" .. level .. "]|r ") or "|cff737880[?]|r "
+  return tag .. ns.QuestTitle(questID)
 end
 
 -- (1.1) "level 5, 6 (hidden after 3)"
@@ -384,21 +419,17 @@ function ns.QuestPinTooltip(pin)
     if giver then KV(L["Quest giver"], giver) end
     return ns.QuestTitle(pin.questID), lines, L["Picked in the quest list of the zone."]
   end
+  -- (1.3.4) Daniel 08.10.: compact. The "!" already says "quest available" and the
+  -- title carries the level; source and confirmation only with Shift held.
+  local details = Details()
   if pin.kind == "turnin" then
     lines[#lines + 1] = L["Turn in here"]
     for _, r in ipairs(ns.QuestRewardLines and ns.QuestRewardLines(pin.questID) or {}) do KV(L["Reward"], r) end
-  else
-    if pin.upcoming then
-      lines[#lines + 1] = L["Not yet: from level %d"]:format(pin.upcoming)
-      if pin.notOffered then lines[#lines + 1] = L["Not offered by the quest giver (level %d)"]:format(pin.notOffered) end
-    elseif pin.notOffered then
-      lines[#lines + 1] = L["Not offered by the quest giver (level %d)"]:format(pin.notOffered) -- (1.24)
-    else
-      lines[#lines + 1] = pin.learned and L["Quest available (learned by Questdon)"] or L["Quest available"]
-    end
-    -- (1.22) an unknown level is said, never guessed
-    local level = ns.QuestLevel(pin.questID)
-    if level then KV(L["Level"], level, LevelRGB(level)) else KV(L["Level"], L["unknown"], "textHint") end
+  elseif pin.upcoming then
+    lines[#lines + 1] = L["Not yet: from level %d"]:format(pin.upcoming)
+    if pin.notOffered then lines[#lines + 1] = L["Not offered by the quest giver (level %d)"]:format(pin.notOffered) end
+  elseif pin.notOffered then
+    lines[#lines + 1] = L["Not offered by the quest giver (level %d)"]:format(pin.notOffered) -- (1.24)
   end
   local giver = GiverText(pin)
   if giver then KV(L["Quest giver"], giver) end
@@ -414,16 +445,20 @@ function ns.QuestPinTooltip(pin)
   if pin.kind ~= "turnin" and ns.IsItemStartQuest(pin.questID) then
     lines[#lines + 1] = L["Starts from an item (drop or object nearby)"]
   end
-  if pin.kind ~= "turnin" then KV(L["Location"], SOURCE_SHORT[ns.StartSource(pin.questID)]) end
-  -- (1.24) who says it is available
-  if pin.kind ~= "turnin" and not (pin.upcoming or pin.notOffered) then
-    local src = ns.AvailabilitySource(pin.questID)
-    KV(L["Available"], AVAILABLE_SHORT[src], src == "database" and "textHint" or "good")
-  end
   -- (1.1) levels at which the quest giver did not offer it (hidden after 3)
   local refused = pin.kind ~= "turnin" and ns.NotHereLevels and ns.NotHereLevels(pin.questID)
   if refused then KV(L["Not offered at"], ns.NotHereLevelText(refused), "textHint") end
-  return ns.QuestTitle(pin.questID), lines, ns.QuestPinHint(pin)
+  if pin.kind ~= "turnin" then
+    local src = not (pin.upcoming or pin.notOffered) and ns.AvailabilitySource(pin.questID) or nil
+    if details then
+      KV(L["Location"], SOURCE_SHORT[ns.StartSource(pin.questID)])
+      if src then KV(L["Available"], AVAILABLE_SHORT[src], src == "database" and "textHint" or "good") end
+    elseif src == "database" then
+      -- (1.24) only the data says so: one small line instead of two
+      lines[#lines + 1] = "|cff737880" .. L["Not confirmed yet"] .. "|r"
+    end
+  end
+  return ns.LevelTitle(pin.questID), lines, ns.QuestPinHint(pin)
 end
 
 -- (1.21) Tooltip of a grouped quest giver pin: one line per quest (title,
@@ -438,17 +473,15 @@ function ns.QuestGroupTooltip(pin)
       lines[#lines + 1] = L["and %d more"]:format(#group - GROUP_LINES)
       break
     end
-    local level = ns.QuestLevel(p.questID)
-    local title = ns.QuestTitle(p.questID)
+    -- (1.3.4) "[6] Title" like the single tooltip; a status only when there is one
+    local title = ns.LevelTitle(p.questID)
     if ns.QuestFlags(p.questID):find("b", 1, true) then title = title .. " (" .. L["Breadcrumb quest"] .. ")" end
     if p.upcoming then
       lines[#lines + 1] = { title, L["from level %d"]:format(p.upcoming), "textHint" }
     elseif p.notOffered then
       lines[#lines + 1] = { title, L["not offered (level %d)"]:format(p.notOffered), "textHint" } -- (1.24)
-    elseif level then
-      lines[#lines + 1] = { title, L["Level %d"]:format(level), LevelRGB(level) }
     else
-      lines[#lines + 1] = { title, L["Level unknown"], "textHint" } -- (1.22) said, never guessed
+      lines[#lines + 1] = { title }
     end
     local dungeon = ns.QuestDungeon and ns.QuestDungeon(p.questID)
     if dungeon then lines[#lines + 1] = { "   " .. L["Dungeon"], ns.DungeonName(dungeon), "accent" } end
@@ -571,8 +604,9 @@ function Setup()
     local tip = self.qdPin.group and ns.QuestGroupTooltip or ns.QuestPinTooltip
     local title, lines, hint = tip(self.qdPin)
     ns.Style.Tooltip(self, title, lines, hint)
+    ns.SetHoverTooltip(self, self.OnMouseEnter) -- (1.3.4) Shift redraws it
   end)
-  function QuestPin:OnMouseLeave() ns.Style.HideTooltip(self) end
+  function QuestPin:OnMouseLeave() ns.Style.HideTooltip(self) ns.SetHoverTooltip(nil) end
 
   -- Objective spawns: small coloured dots.
   QuestdonObjectivePinMixin = CreateFromMixins(MapCanvasPinMixin)

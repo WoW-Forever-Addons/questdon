@@ -153,6 +153,11 @@ L["%s XP/h"] = "%s PE/h"
 L["After turning in"] = "Tras la entrega"
 L["Choice: %s"] = "A elegir: %s"
 L["Click: point the arrow here"] = "Clic: apuntar la flecha aquí"
+-- (1.3.4) compact quest tooltips
+L["Click: arrow, Alt-click: hide"] = "Clic: flecha, Alt-clic: ocultar"
+L["Click: arrow"] = "Clic: flecha"
+L["Shift: details"] = "Mayús: detalles"
+L["Not confirmed yet"] = "Aún sin confirmar"
 L["Drag to move. Lock it in the options."] = "Arrastra para moverla. Puedes bloquearla en las opciones."
 L["Finished quests (%d)"] = "Misiones completadas (%d)"
 L["Height of the XP bar."] = "Altura de la barra de experiencia."
@@ -197,7 +202,13 @@ L["Nothing new: everything Questdon learned is already in its data. /qd export a
 L["%d entries. Ctrl+A selects all, Ctrl+C copies. Paste it into a new issue at %s (form \"Quest data\")."] = "Entradas: %d. Ctrl+A selecciona todo, Ctrl+C copia. Pégalo en un nuevo issue en %s (formulario \"Quest data\")."
 L["Truncated: %d more entries left out."] = "Texto recortado (entradas omitidas: %d)."
 L["Only numbers: no character, realm or guild names."] = "Solo números: sin nombres de personajes, reinos ni hermandades."
-L["Export before you log out: the beta forgets learned data at relog."] = "Exporta antes de cerrar sesión: la beta olvida los datos aprendidos al volver a conectarte."
+-- (1.3.3) export: mark as sent
+L["%d entries you already sent are left out (/qd export all shows everything)."] = "Se omiten %d entradas que ya enviaste (/qd export all muestra todo)."
+L["Mark as sent: the next export only shows new entries"] = "Marcar como enviado: la siguiente exportación solo muestra lo nuevo"
+L["Marked as sent: %d entries."] = "Marcado como enviado: %d entradas."
+L["Mark as sent"] = "Marcar como enviado"
+L["Click after you sent the text. Entries that do not change are left out of the next export; anything new or changed comes along. /qd export all still shows everything."] = "Haz clic después de enviar el texto. Las entradas que no cambien se omitirán en la siguiente exportación; todo lo nuevo o modificado se incluirá. /qd export all sigue mostrando todo."
+L["Nothing new since your last export marked as sent. /qd export all shows everything."] = "Nada nuevo desde tu última exportación marcada como enviada. /qd export all muestra todo."
 
 -- 1.11
 L["an error occurred, /qd diag for details"] = "ocurrió un error, usa /qd diag para ver los detalles"
@@ -238,6 +249,10 @@ L["Location: database (All The Things)"] = "Ubicación: base de datos (All The T
 
 -- 1.18: dungeon quests, group progress
 L["Dungeons"] = "Calabozos"
+-- (1.3.3) quest book tab Dungeons
+L["First: %s"] = "Antes: %s"
+L["All quests of this dungeon done."] = "Todas las misiones de este calabozo completadas."
+L["No dungeon quests known for you."] = "No se conocen misiones de calabozo para ti."
 L["Dungeon quests"] = "Misiones de calabozo"
 L["Dungeon quests in the panel"] = "Misiones de calabozo en la ventana"
 L["Lists the dungeon quests in your log and the ones you can pick up now, per dungeon. Forever pays dungeon quests extra XP: take them before you go in. Click the line: arrow to the nearest quest giver. /qd dungeons"] = "Muestra por calabozo las misiones de calabozo de tu registro y las que puedes aceptar ahora. Forever da PE adicionales por las misiones de calabozo: acéptalas antes de entrar. Clic en la línea: flecha al asignador de misiones más cercano. /qd dungeons"
@@ -463,7 +478,6 @@ L["reported by other players"] = "reportada por otros jugadores"
 L["Questdon data"] = "datos de Questdon"
 L["Not offered at"] = "No ofrecida en"
 L["level %s (hidden after %d)"] = "niveles: %s (se oculta tras %d)"
-L["Alt-click: no quest here (hide it)"] = "Alt+clic: aquí no hay misión (ocultarla)"
 L["Quests hidden as not offered"] = "Misiones ocultas por no ofrecerse"
 L["Show again"] = "Mostrar de nuevo"
 L["Click again within 5 seconds to show all quests again that were hidden as not offered."] = "Vuelve a hacer clic en menos de 5 segundos para volver a mostrar todas las misiones ocultas por no ofrecerse."

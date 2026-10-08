@@ -162,6 +162,7 @@ local function PinTooltip(self)
   elseif pin.kind == "objective" then title, lines, hint = ns.ObjectivePinTooltip(pin)
   else title, lines, hint = ns.QuestPinTooltip(pin) end
   ns.Style.Tooltip(self, title, lines, hint, "auto")
+  if ns.SetHoverTooltip then ns.SetHoverTooltip(self, PinTooltip) end -- (1.3.4) Shift redraws it
 end
 
 local function PinClick(self, button)
@@ -201,7 +202,7 @@ local function NewPin()
   b.ring:Hide()
   b:RegisterForClicks("LeftButtonUp")
   b:SetScript("OnEnter", ns.Guard("minimap tooltip", PinTooltip))
-  b:SetScript("OnLeave", function(self) ns.Style.HideTooltip(self) end)
+  b:SetScript("OnLeave", function(self) ns.Style.HideTooltip(self) if ns.SetHoverTooltip then ns.SetHoverTooltip(nil) end end)
   b:SetScript("OnClick", ns.Guard("minimap click", PinClick))
   return b
 end
@@ -265,7 +266,7 @@ local function Rebuild(force)
   entries = {}
   -- available quests first (they are what you look for), then turn-ins, then dots
   local order = { focus = 0, available = 1, turnin = 2, objective = 3 }
-  local display = ns.DisplayQuestPins(pins) -- (1.25) no second "!" where the game draws one
+  local display = ns.DisplayQuestPins(pins, ns.MINIMAP_OVERLAP) -- (1.25) no second "!" where the game draws one; (1.3.3) overlapping markers merge
   table.sort(display, function(a, b)
     local oa, ob = order[a.kind] or 4, order[b.kind] or 4
     if oa ~= ob then return oa < ob end

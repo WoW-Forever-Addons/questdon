@@ -153,6 +153,11 @@ L["%s XP/h"] = "%s PX/h"
 L["After turning in"] = "Après la remise"
 L["Choice: %s"] = "Au choix : %s"
 L["Click: point the arrow here"] = "Clic : y diriger la flèche"
+-- (1.3.4) compact quest tooltips
+L["Click: arrow, Alt-click: hide"] = "Clic : flèche, Alt-clic : masquer"
+L["Click: arrow"] = "Clic : flèche"
+L["Shift: details"] = "Maj : détails"
+L["Not confirmed yet"] = "Pas encore confirmée"
 L["Drag to move. Lock it in the options."] = "Glisser pour déplacer. Verrouillable dans les options."
 L["Finished quests (%d)"] = "Quêtes terminées (%d)"
 L["Height of the XP bar."] = "Hauteur de la barre d’expérience."
@@ -197,7 +202,13 @@ L["Nothing new: everything Questdon learned is already in its data. /qd export a
 L["%d entries. Ctrl+A selects all, Ctrl+C copies. Paste it into a new issue at %s (form \"Quest data\")."] = "%d entrées. CTRL+A pour tout sélectionner, CTRL+C pour copier. Collez le texte dans un nouveau ticket sur %s (formulaire « Quest data »)."
 L["Truncated: %d more entries left out."] = "Liste tronquée, entrées omises : %d."
 L["Only numbers: no character, realm or guild names."] = "Uniquement des nombres : aucun nom de personnage, de royaume ou de guilde."
-L["Export before you log out: the beta forgets learned data at relog."] = "Exportez avant de vous déconnecter : la bêta oublie les données apprises à la reconnexion."
+-- (1.3.3) export: mark as sent
+L["%d entries you already sent are left out (/qd export all shows everything)."] = "%d entrées déjà envoyées sont omises (/qd export all affiche tout)."
+L["Mark as sent: the next export only shows new entries"] = "Marquer comme envoyé : le prochain export ne montre que les nouveautés"
+L["Marked as sent: %d entries."] = "Marqué comme envoyé : %d entrées."
+L["Mark as sent"] = "Marquer comme envoyé"
+L["Click after you sent the text. Entries that do not change are left out of the next export; anything new or changed comes along. /qd export all still shows everything."] = "Cliquez après avoir envoyé le texte. Les entrées inchangées seront omises du prochain export ; tout ce qui est nouveau ou modifié sera inclus. /qd export all affiche toujours tout."
+L["Nothing new since your last export marked as sent. /qd export all shows everything."] = "Rien de nouveau depuis votre dernier export marqué comme envoyé. /qd export all affiche tout."
 
 -- 1.11
 L["an error occurred, /qd diag for details"] = "une erreur s’est produite (détails : /qd diag)"
@@ -238,6 +249,10 @@ L["Location: database (All The Things)"] = "Lieu : base de données (All The Th
 
 -- 1.18: dungeon quests, group progress
 L["Dungeons"] = "Donjons"
+-- (1.3.3) quest book tab Dungeons
+L["First: %s"] = "D’abord : %s"
+L["All quests of this dungeon done."] = "Toutes les quêtes de ce donjon sont terminées."
+L["No dungeon quests known for you."] = "Aucune quête de donjon connue pour vous."
 L["Dungeon quests"] = "Quêtes de donjon"
 L["Dungeon quests in the panel"] = "Quêtes de donjon dans la fenêtre"
 L["Lists the dungeon quests in your log and the ones you can pick up now, per dungeon. Forever pays dungeon quests extra XP: take them before you go in. Click the line: arrow to the nearest quest giver. /qd dungeons"] = "Liste, donjon par donjon, les quêtes de donjon de votre journal et celles que vous pouvez accepter maintenant. Forever accorde des PX supplémentaires pour les quêtes de donjon : prenez-les avant d’entrer. Clic sur la ligne : flèche vers le donneur de quête le plus proche. /qd dungeons"
@@ -463,7 +478,6 @@ L["reported by other players"] = "signalée par d’autres joueurs"
 L["Questdon data"] = "données de Questdon"
 L["Not offered at"] = "Non proposée"
 L["level %s (hidden after %d)"] = "niv. %s (masquée au bout de %d)"
-L["Alt-click: no quest here (hide it)"] = "Alt+clic : pas de quête ici (la masquer)"
 L["Quests hidden as not offered"] = "Quêtes masquées comme non proposées"
 L["Show again"] = "Réafficher"
 L["Click again within 5 seconds to show all quests again that were hidden as not offered."] = "Cliquez à nouveau dans les 5 secondes pour réafficher toutes les quêtes masquées comme non proposées."

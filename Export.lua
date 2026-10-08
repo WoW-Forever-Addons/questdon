@@ -35,6 +35,13 @@ local L = ns.L
 -- already (starts at the same spot, objective spots near its points,
 -- known prerequisites, credit sources and levels); turn-ins, drops, item
 -- starts and X lines are always included (the data has none of them).
+--
+-- (1.3.3) Daniel 06.10.: "new" also leaves out lines already sent. A line
+-- counts as sent only after the player clicks "Mark as sent" in the export
+-- window (QuestdonDB.exportSent: exact line -> true), so copying without
+-- sending loses nothing. The comparison is the exact text: a new spot, a
+-- higher count or another coordinate is another line and comes along. X lines
+-- only come with "all" (they repeat in every export). "all" shows everything.
 ---------------------------------------------------------------------------
 local MAX_LINES = 3000
 local SAME_SPOT = 2   -- start: ATT within 2 map units = the same
@@ -257,15 +264,47 @@ end
 
 -- Returns text, number of records, truncated (number of records left out).
 -- all: everything learned, without comparing with ATT.
+local lastShown = nil -- records of the export window, for "Mark as sent"
+
+local function Sent()
+  if type(ns.db.exportSent) ~= "table" then ns.db.exportSent = {} end
+  return ns.db.exportSent
+end
+
 function ns.BuildExport(all)
   local records = ns.ExportRecords(all)
+  local skipped = 0
+  if not all then
+    local sent, kept = Sent(), {}
+    for _, r in ipairs(records) do
+      if r:sub(1, 2) == "X " or sent[r] then skipped = skipped + 1 else kept[#kept + 1] = r end
+    end
+    records = kept
+  end
   local lines = { ("QDX2 %s %s %s %s"):format(ns.Version(), Locale(), ns.Today(), all and "all" or "new") }
   local n = math.min(#records, MAX_LINES)
   for i = 1, n do lines[#lines + 1] = records[i] end
   local truncated = #records - n
   if truncated > 0 then lines[#lines + 1] = ("# truncated %d"):format(truncated) end
   lines[#lines + 1] = ("# records %d"):format(n)
-  return table.concat(lines, "\n"), n, truncated
+  lastShown = {}
+  for i = 1, n do lastShown[i] = records[i] end
+  return table.concat(lines, "\n"), n, truncated, skipped
+end
+
+-- Marks the records of the export window as sent; returns how many.
+function ns.MarkExportSent()
+  if type(lastShown) ~= "table" then return 0 end
+  local sent, n = Sent(), 0
+  for _, r in ipairs(lastShown) do
+    if not sent[r] then sent[r] = true n = n + 1 end
+  end
+  return n
+end
+function ns.ExportSentCount()
+  local n = 0
+  for _ in pairs(type(ns.db.exportSent) == "table" and ns.db.exportSent or {}) do n = n + 1 end
+  return n
 end
 
 ---------------------------------------------------------------------------
@@ -283,7 +322,7 @@ end
 -- scroll frame is our own: mouse wheel, the text cursor stays in view, and a
 -- thin bar on the right shows where you are. The close button is the kit's.
 ---------------------------------------------------------------------------
-local frame, edit, content, noteRow
+local frame, edit, content, noteRow, sentRow
 local text
 local winState = { alpha = 0.95 } -- session only (not saved), a bit darker than panels
 ns.windowParts = {} -- what the text window has (for /qd diag)
@@ -409,6 +448,10 @@ local function Create()
   end)
 
   content = Style.Content(frame, well, BOX_H, { gapBefore = Style.SPACING.section })
+  -- (1.3.3) under the text: mark the export as sent (only for /qd export)
+  sentRow = Style.Row(frame)
+  sentRow:SetGapBefore(Style.SPACING.section)
+  sentRow:Hide()
   frame.well, frame.scroll, frame.edit, frame.content, frame.thumb = well, scroll, edit, content, thumb
   ns.windowParts.built = true
 
@@ -432,6 +475,7 @@ function ns.ShowText(heading, note, body)
   text = body
   frame:SetTitle(ns.Style.Wordmark("Quest", "don") .. ": " .. heading)
   noteRow:SetText(note or "", "textSecondary")
+  if sentRow then sentRow:Hide() end
   edit:SetText(body)
   frame:Show()
   ScrollTo(frame.scroll, 0) -- (1.24) a new text starts at the top
@@ -442,17 +486,33 @@ function ns.ShowText(heading, note, body)
 end
 
 function ns.OpenExport(all)
-  local body, count, truncated = ns.BuildExport(all)
+  local body, count, truncated, skipped = ns.BuildExport(all)
   local note
   if count == 0 then
     note = all and L["Nothing learned yet. Play a while with \"Learn quest locations\" switched on."]
+      or (skipped or 0) > 0 and L["Nothing new since your last export marked as sent. /qd export all shows everything."]
       or L["Nothing new: everything Questdon learned is already in its data. /qd export all shows everything."]
   else
     note = L["%d entries. Ctrl+A selects all, Ctrl+C copies. Paste it into a new issue at %s (form \"Quest data\")."]:format(count, ISSUE_URL)
     if truncated > 0 then note = note .. " " .. L["Truncated: %d more entries left out."]:format(truncated) end
   end
   note = note .. " " .. L["Only numbers: no character, realm or guild names."]
-  -- (1.0.1) the Forever beta does not load saved addon data: what is learned lasts one session
-  if count > 0 then note = note .. " " .. L["Export before you log out: the beta forgets learned data at relog."] end
-  return ns.ShowText(L["Export learned data"], note, body)
+  if not all and (skipped or 0) > 0 then
+    note = note .. " " .. L["%d entries you already sent are left out (/qd export all shows everything)."]:format(skipped)
+  end
+  local shown = ns.ShowText(L["Export learned data"], note, body)
+  if sentRow and count > 0 then
+    sentRow:SetText(L["Mark as sent: the next export only shows new entries"], "accent")
+    sentRow:SetOnClick(ns.Guard("export", function(row)
+      local n = ns.MarkExportSent()
+      row:SetOnClick(nil)
+      row:SetText(L["Marked as sent: %d entries."]:format(n), "textSecondary")
+    end))
+    sentRow:SetTooltip(function()
+      return L["Mark as sent"], { L["Click after you sent the text. Entries that do not change are left out of the next export; anything new or changed comes along. /qd export all still shows everything."] }
+    end)
+    sentRow:Show()
+    ns.Style.Relayout(frame)
+  end
+  return shown
 end

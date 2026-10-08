@@ -153,6 +153,11 @@ L["%s XP/h"] = "%s опыта/ч"
 L["After turning in"] = "После сдачи"
 L["Choice: %s"] = "На выбор: %s"
 L["Click: point the arrow here"] = "Щелчок: направить стрелку сюда"
+-- (1.3.4) compact quest tooltips
+L["Click: arrow, Alt-click: hide"] = "Щелчок: стрелка, Alt-щелчок: скрыть"
+L["Click: arrow"] = "Щелчок: стрелка"
+L["Shift: details"] = "Shift: подробности"
+L["Not confirmed yet"] = "Ещё не подтверждено"
 L["Drag to move. Lock it in the options."] = "Перетащите, чтобы переместить. Зафиксировать можно в параметрах."
 L["Finished quests (%d)"] = "Выполненные задания (%d)"
 L["Height of the XP bar."] = "Высота индикатора опыта."
@@ -197,7 +202,13 @@ L["Nothing new: everything Questdon learned is already in its data. /qd export a
 L["%d entries. Ctrl+A selects all, Ctrl+C copies. Paste it into a new issue at %s (form \"Quest data\")."] = "Записей: %d. Ctrl+A выделяет все, Ctrl+C копирует. Вставьте текст в новый issue на %s (форма \"Quest data\")."
 L["Truncated: %d more entries left out."] = "Текст сокращен, не вошло записей: %d."
 L["Only numbers: no character, realm or guild names."] = "Только числа: никаких имен персонажей, названий игровых миров и гильдий."
-L["Export before you log out: the beta forgets learned data at relog."] = "Экспортируйте до выхода из игры: бета-версия забывает запомненные данные при повторном входе."
+-- (1.3.3) export: mark as sent
+L["%d entries you already sent are left out (/qd export all shows everything)."] = "Пропущено уже отправленных записей: %d (/qd export all показывает всё)."
+L["Mark as sent: the next export only shows new entries"] = "Отметить как отправленное: следующий экспорт покажет только новое"
+L["Marked as sent: %d entries."] = "Отмечено как отправленное: %d записей."
+L["Mark as sent"] = "Отметить как отправленное"
+L["Click after you sent the text. Entries that do not change are left out of the next export; anything new or changed comes along. /qd export all still shows everything."] = "Нажмите после того, как отправите текст. Неизменившиеся записи не попадут в следующий экспорт, а всё новое или изменённое будет включено. /qd export all по-прежнему показывает всё."
+L["Nothing new since your last export marked as sent. /qd export all shows everything."] = "Ничего нового с последнего экспорта, отмеченного как отправленный. /qd export all показывает всё."
 
 -- 1.11
 L["an error occurred, /qd diag for details"] = "произошла ошибка, подробности: /qd diag"
@@ -238,6 +249,10 @@ L["Location: database (All The Things)"] = "Место: база данных (A
 
 -- 1.18: dungeon quests, group progress
 L["Dungeons"] = "Подземелья"
+-- (1.3.3) quest book tab Dungeons
+L["First: %s"] = "Сначала: %s"
+L["All quests of this dungeon done."] = "Все задания этого подземелья выполнены."
+L["No dungeon quests known for you."] = "Заданий подземелий для вас не найдено."
 L["Dungeon quests"] = "Задания подземелий"
 L["Dungeon quests in the panel"] = "Задания подземелий в окне"
 L["Lists the dungeon quests in your log and the ones you can pick up now, per dungeon. Forever pays dungeon quests extra XP: take them before you go in. Click the line: arrow to the nearest quest giver. /qd dungeons"] = "Показывает по каждому подземелью задания в вашем журнале и те, которые можно принять сейчас. Forever дает за задания подземелий дополнительный опыт: берите их до входа. Щелчок по строке: стрелка к ближайшему NPC с заданием. /qd dungeons"
@@ -463,7 +478,6 @@ L["reported by other players"] = "отмечено другими игрокам
 L["Questdon data"] = "данные Questdon"
 L["Not offered at"] = "Не предлагалось"
 L["level %s (hidden after %d)"] = "на ур. %s (скрывается после %d-го)"
-L["Alt-click: no quest here (hide it)"] = "Alt+щелчок: здесь нет задания (скрыть)"
 L["Quests hidden as not offered"] = "Скрытые задания (не предлагаются)"
 L["Show again"] = "Вернуть"
 L["Click again within 5 seconds to show all quests again that were hidden as not offered."] = "Щелкните еще раз в течение 5 секунд, чтобы снова показать все скрытые задания, которые NPC не предлагает."
