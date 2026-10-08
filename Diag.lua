@@ -316,3 +316,51 @@ function ns.OpenDiag()
   return ns.ShowText(L["Diagnostics"], L["Ctrl+A selects all, Ctrl+C copies. Please add this to bug reports."]
     .. " " .. L["Only numbers: no character, realm or guild names."], text)
 end
+
+---------------------------------------------------------------------------
+-- (1.3.4) /qd mapsizes: one-time dump for the level guide's route builder.
+-- Every map the client knows with its world rectangle (yards) and the
+-- flight points of the two continents, stored in QuestdonDB.mapSizes and
+-- QuestdonDB.taxiNodes (saved at logout or /reload). Numbers and map names only.
+---------------------------------------------------------------------------
+local function WorldPos(mapID, x, y)
+  if not (C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D) then return nil end
+  local ok, cont, pos = pcall(C_Map.GetWorldPosFromMapPos, mapID, CreateVector2D(x, y))
+  if not ok or type(pos) ~= "table" or not pos.GetXY then return nil end
+  local ok2, wx, wy = pcall(pos.GetXY, pos)
+  if not ok2 then return nil end
+  return ns.Num(cont), ns.Num(wx), ns.Num(wy)
+end
+
+function ns.DumpMapSizes()
+  if not (C_Map and C_Map.GetMapInfo) then return 0, 0 end
+  local maps, n = {}, 0
+  for id = 1, 3200 do
+    local ok, info = pcall(C_Map.GetMapInfo, id)
+    if ok and type(info) == "table" and info.name then
+      local cont, x0, y0 = WorldPos(id, 0, 0)
+      local _, x1, y1 = WorldPos(id, 1, 1)
+      maps[id] = { info.name, ns.Num(info.mapType), ns.Num(info.parentMapID), cont, x0, y0, x1, y1 }
+      n = n + 1
+    end
+  end
+  ns.db.mapSizes = maps
+  local nodes, k = {}, 0
+  if C_TaxiMap and C_TaxiMap.GetTaxiNodesForMap then
+    for _, cont in ipairs({ 1414, 1415 }) do
+      local ok, list = pcall(C_TaxiMap.GetTaxiNodesForMap, cont)
+      if ok and type(list) == "table" then
+        for _, node in ipairs(list) do
+          local p = node.position
+          local px, py
+          if type(p) == "table" and p.GetXY then px, py = p:GetXY() end
+          local wc, wx, wy = WorldPos(cont, px or 0, py or 0)
+          nodes[#nodes + 1] = { ns.Num(node.nodeID), node.name, cont, px, py, wc, wx, wy, ns.Num(node.faction), node.atlasName }
+          k = k + 1
+        end
+      end
+    end
+  end
+  ns.db.taxiNodes = nodes
+  return n, k
+end

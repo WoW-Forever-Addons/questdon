@@ -44,7 +44,10 @@ local function ObjectiveOpen(questID, index)
   local client = ns.ClientObjectives(questID)
   if #client > 0 and index > #client then return false end
   local o = client[index]
-  return not (type(o) == "table" and ns.True(o.finished))
+  if type(o) == "table" and ns.True(o.finished) then return false end
+  -- (1.3.4) no mark for an optional objective ("listen to ...", often the quest giver himself)
+  if ns.IsOptionalObjective and ns.IsOptionalObjective(questID, index) then return false end
+  return true
 end
 
 -- Turn-ins learned with the NPC: [npcID] = questID, for finished quests in the log.

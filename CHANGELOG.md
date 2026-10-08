@@ -1,5 +1,25 @@
 # Changes
 
+## 1.3.4
+
+- **New direction arrow:** a golden compass needle that shines brighter and glows as you get close, a golden seal that pulses gently when you have arrived, and the target on a dark blue plaque with a thin golden line, like the quest book. The distance stands out in gold.
+- **Minimap button:** left click opens the quest book, right click a small menu with the most used switches (quest markers, quest mobs, arrow, auto accept and turn in, XP bar, window) and all options. Mouse over shows what the window showed: quests here, dungeon quests and your quest log. Drag it around the minimap. The Questdon window is now off for new players; switch it on in the menu. A new button in the window's title bar sends it to the minimap.
+- **New look for the quest book:** a gold frame with ornaments, framed tabs, every line as a card, your zone's map round in a gold ring and the day's numbers as cards.
+- **Quest details:** click a quest in the quest book and a card on the right shows everything at one glance: quest giver and place, what to do, where to turn it in, the quests before and after it, plus buttons for the arrow and the world map.
+- **Dungeon quests step by step:** each dungeon quest stands out as the goal, with what to do inside. Below it the quests to do first, numbered in the order you walk them on a gold line (quests you can do side by side share a number), each with what to do and where. The texts come from Wowhead in English and German; quest givers now have their names.
+- **Dungeons tab:** every dungeon as a card with how well it fits your level, what is in your log, what you can pick up and where. "Route" leads the arrow from quest giver to quest giver, nearest first, and moves on when you accept a quest.
+- **Zones tab:** filter the quests of a zone (available, in your log, later, done) and sort them by distance. The zone list shows "12/48" next to each bar.
+- **Journal:** accepting and turning in a quest is one line now, with how long it took. Each day shows its quests, XP and XP per hour, and a small chart shows your XP of the last seven days.
+- **No second "!" on the minimap:** the game marks every quest giver near you on the minimap itself. Questdon now leaves those to the game (within about 80 yards), so the two "!" no longer sit on top of each other. Farther away Questdon draws as before. Option "No second ! or ? where the game shows one", on by default.
+- **Profession quests:** quests that need a profession, such as "Camping 101: Tailoring", now show their "!" once you have learned that profession. Before, Questdon left them out completely. In the quest book they say "profession not learned" until then.
+- **Dungeon chains:** a quest in two parts, such as "Destruction in Deadmines", no longer lists its whole chain twice. The second part only points to the first, a step shared by two quests stands under the first one, and parts with the same name show "(1/2)" and "(2/2)".
+- **Optional objectives:** the arrow no longer leads to an optional objective such as "listen to ..." while the real objective is still open. On the map and minimap optional objectives are dimmed, and nameplates get no mark for them.
+- **Bugged (Zephras Isle):** the Skyhoppers now show their spawn points.
+- **The Missing Scholar (Zephras Isle):** the unconscious scholar is marked inside the cave, no longer at the quest giver in front of it.
+- **Quest data:** the newest All The Things data with seven new Wetlands quests and corrections for Zephras Isle. On top, about 250 Forever quests from Wowhead that All The Things does not have yet: class quests of all classes, and quests in Desolace, Duskwood, the Wetlands, Stranglethorn Vale, Shen'dralas and more. And the turn-in places of more than 700 quests from Wowhead's Forever quest pages (the Alliance zones up to level 30 and Zephras Isle), so the arrow and the map know where to hand them in.
+- **New dungeon City of Dalaran** (coming in a later beta update): its quests for both factions, with the quest givers in Stormwind, Undercity, Hillsbrad and Silverpine, and the quest that leads there. Also new: "Seeking Caitlin" for the Excavation Site, "Past Due" for the Scarlet Monastery and the shaman quest "Elemental Aid" for Razorfen Kraul.
+- **Zone progress:** quests with a version for every start zone, such as "Camping 101", no longer count as done in zones you never visited.
+
 ## 1.3.3
 
 - **Shorter quest tooltips:** on the world map and minimap the level stands in the title, "[6] Al'Aketh Assassins", in its difficulty colour. Below only what helps: quest giver, chain, dungeon, group, and a small "not confirmed yet" where only the data knows the quest. Hold Shift for where the data comes from.

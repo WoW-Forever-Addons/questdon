@@ -211,6 +211,21 @@ local function EntryTitle(e)
   return e.n or ns.QuestTitle(e.q)
 end
 
+-- (1.3.4) Did this character turn the quest in while Questdon recorded? (cached per journal size)
+local turnedInSet, turnedInN
+function ns.JournalTurnedIn(questID)
+  local j = Store()
+  if not (j and questID) then return false end
+  if turnedInN ~= #j.e then
+    turnedInSet, turnedInN = {}, #j.e
+    for i = 1, #j.e do
+      local e = j.e[i]
+      if type(e) == "table" and e.k == "c" and e.q then turnedInSet[e.q] = true end
+    end
+  end
+  return turnedInSet[questID] == true
+end
+
 ---------------------------------------------------------------------------
 -- Entries for the window: newest first, level-ups know the time since the last one
 ---------------------------------------------------------------------------

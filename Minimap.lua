@@ -26,6 +26,15 @@ local _, ns = ...
 local UPDATE_INTERVAL = 0.1 -- seconds between position updates
 local MAX_SHOWN = 100       -- pins shown at the same time (available quests first; 1.2: was 60, more spawn dots)
 local QUEST_SIZE, DOT_SIZE = 14, 9
+-- (1.3.4) Daniel 08.10., Zephras Isle: on the minimap a Questdon "!" stood on
+-- top of the game's own "!". The game puts a blip on every quest giver near
+-- you that offers you a quest (or takes a finished one), and that blip is not
+-- in its quest lines, so the 1.25 rule (SkipGameShownPins) did not see it.
+-- With "skipGameGivers" on, the minimap leaves givers closer than this to the
+-- game: no Questdon "!" or "?" there. Farther away the game shows nothing and
+-- Questdon draws as before. Dots of quest mobs stay.
+local NEAR_GIVER_YARDS = 80
+local NEAR_GIVER2 = NEAR_GIVER_YARDS * NEAR_GIVER_YARDS
 
 -- Minimap view in yards (diameter) per zoom level 0-5, used only when the
 -- client has no C_Minimap.GetViewRadius.
@@ -40,7 +49,7 @@ local entries = {}       -- { pin = displayPin, c, n, w (world position), btn = 
 local curMap, lastSig
 local last = {}          -- last position update: n, w, facing, radius, size
 local dirty = false
-local stats = { builds = 0, skipped = 0, updates = 0, shown = 0, radius = "?", rotate = "?", dressed = 0 }
+local stats = { builds = 0, skipped = 0, updates = 0, shown = 0, radius = "?", rotate = "?", dressed = 0, nearGame = 0 }
 local RotateText
 
 local function Enabled()
@@ -312,12 +321,17 @@ local function Update()
   -- cheap cut before the rotation: farther than the view's corner (square minimap)
   local reach = radius * 1.5
   local reach2 = reach * reach
-  local n = 0
+  local n, near = 0, 0
+  local leaveNear = ns.db.skipGameGivers
   for _, e in ipairs(entries) do
     local x, y, inView
     if n < MAX_SHOWN and e.c == pc then
       local dn, de = e.n - pn, -(e.w - pw)
-      if dn * dn + de * de <= reach2 then
+      local d2 = dn * dn + de * de
+      local kind = e.pin.kind
+      if leaveNear and d2 <= NEAR_GIVER2 and (kind == "available" or kind == "turnin") then
+        near = near + 1 -- the game's own blip marks this giver
+      elseif d2 <= reach2 then
         x, y = ns.MinimapOffset(dn, de, radius, half, facing)
         inView = ns.OnMinimap(x, y, half, 4, shape)
       end
@@ -338,6 +352,7 @@ local function Update()
     end
   end
   stats.shown = n
+  stats.nearGame = near
 end
 
 ---------------------------------------------------------------------------
@@ -388,8 +403,8 @@ function ns.MinimapPinsState()
   if not Minimap then return "not available (no minimap)" end
   if not container then return "waiting" end
   if not ns.db.minimapPins then return "off" end
-  return ("ready, %d shown of %d, radius %s, rotate %s, builds %d, skipped %d"):format(stats.shown, #entries,
-    tostring(stats.radius), RotateText(), stats.builds, stats.skipped)
+  return ("ready, %d shown of %d, radius %s, rotate %s, builds %d, skipped %d, near givers left to the game %d"):format(stats.shown, #entries,
+    tostring(stats.radius), RotateText(), stats.builds, stats.skipped, stats.nearGame or 0)
 end
 -- tests
 ns.MinimapUpdate = Update

@@ -60,7 +60,10 @@ end
 ---------------------------------------------------------------------------
 local ZoneStatusFor
 function ns.ZoneQuestStatus(questID)
-  if ns.IsQuestDone(questID) then return "done", L["completed"], "good" end
+  if ns.IsQuestDone(questID) then
+    if ns.DoneElsewhere and ns.DoneElsewhere(questID) then return nil end -- (1.3.4) a variant done in another zone
+    return "done", L["completed"], "good"
+  end
   if ns.InQuestLog(questID) then
     if ns.IsQuestComplete(questID) then return "log", L["ready to turn in"], "good" end
     return "log", L["in log"], "warning"
@@ -101,7 +104,8 @@ ZoneStatusFor = function(questID, client, confirmed)
   local level, player = ns.QuestLevel(questID), ns.PlayerLevel()
   if level and player and level > player then return "later", L["from level %d"]:format(level), "textHint" end
   local pre = ns.MissingPrereq(questID)
-  if pre then return "later", L["after: %s"]:format(ns.QuestTitle(pre)), "textHint" end
+  if pre then return "later", L["after: %s"]:format(ns.QuestTitleWithPart(pre)), "textHint" end -- (1.3.4) with "(1/2)"
+  if ns.MissingSkill and ns.MissingSkill(questID) then return "later", L["profession not learned"], "textHint" end
   if ns.IsEventQuest(questID) then return "later", L["event"], "textHint" end
   if ns.NeverOffered and ns.NeverOffered(questID) then return nil end
   if player and ns.NotOfferedLevel and ns.NotOfferedLevel(questID, player) then

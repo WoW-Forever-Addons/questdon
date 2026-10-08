@@ -541,6 +541,20 @@ Style.ICONS.qdZoneList = Style.ICONS.qdZoneList or {
   file = "Interface\\Buttons\\UI-GuildButton-PublicNote-Up",
 }
 
+-- (1.3.4) "to the minimap": the window goes away, the minimap button shows the same
+Style.ICONS.qdMinimap = Style.ICONS.qdMinimap or {
+  atlas = { "Waypoint-MapPin-Untracked", "Navigation-Tracked-Icon" },
+  file = "Interface\\Minimap\\Tracking\\None",
+}
+function ns.PanelToMinimap()
+  ns.db.minimapButton = true
+  if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
+  ns.db.showPanel = false
+  lastSig = nil
+  if panel then panel:FadeOut() end
+  ns.Print(L["Questdon is at the minimap now. Right click the button there to bring the window back."])
+end
+
 local function Create()
   panel = Style.Panel("QuestdonPanel", UIParent, {
     title = Style.Wordmark("Quest", "don"),
@@ -553,6 +567,8 @@ local function Create()
         onClick = function() if ns.OpenOptions then ns.OpenOptions() end end },
       { key = "zone", kind = "qdZoneList", tooltip = { L["Quest book"], nil, L["Your journal, the quests of the zone and a search over all quests. /qd journal, /qd zone"] },
         onClick = function() if ns.ToggleQuestBook then ns.ToggleQuestBook() end end },
+      { key = "minimap", kind = "qdMinimap", tooltip = { L["Show at the minimap"], nil, L["Hides this window. The minimap button shows the same; its menu brings the window back."] },
+        onClick = function() ns.PanelToMinimap() end },
     },
     collapseTooltip = { L["Collapse or expand"], nil, L["Collapsed, one line stays: the next quest, a nearly full quest log or the XP of finished quests."] },
     get = Get, set = Set,

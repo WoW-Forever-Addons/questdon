@@ -402,15 +402,98 @@ end
 ns.ArrowTarget = Target
 
 ---------------------------------------------------------------------------
--- Frame (1.19 family look): the arrow graphic in the accent colour, below it
--- a small dark plate with the target in the primary colour and the distance
--- in the secondary colour (status colours for "arrived" and "no position").
+-- Frame (1.3.4 quest book look): the golden compass needle, below it a dark
+-- blue plaque with a golden line, the target in cream and the distance in
+-- champagne gold (status colours for "arrived" and "no position").
 ---------------------------------------------------------------------------
 local Style = ns.Style
 local Look = ns.Look
-local ICON = 56
+local ICON = 60
 local TEXT_W = 220
 local S = Style.SPACING
+
+-- (1.3.4) Look of the quest book: a golden compass needle (front half blue,
+-- back half dark gold) that brightens and glows as you get near, a golden
+-- seal that pulses gently when you arrived, and a dark blue plaque with a
+-- thin golden line under it. Artwork made with Gemini, own TGA files.
+local MEDIA = "Interface\\AddOns\\Questdon\\Media\\"
+local WHITE = "Interface\\Buttons\\WHITE8x8"
+local NAVY = { 0.08, 0.09, 0.19 }
+local GOLD = { 0.86, 0.71, 0.42 }
+local CREAM = { 0.96, 0.92, 0.84 }
+local CHAMPAGNE = { 0.97, 0.87, 0.60 }
+local FAR, NEAR = 200, 30 -- yards: matte gold beyond FAR, full shine and glow inside NEAR
+
+-- 0 far away .. 1 close
+local function Nearness(dist)
+  if not dist then return 0 end
+  if dist <= NEAR then return 1 end
+  if dist >= FAR then return 0 end
+  return 1 - (dist - NEAR) / (FAR - NEAR)
+end
+
+-- Plaque: dark blue plate with a 1 px golden line (same calls as Look.Plate).
+local function GoldPlate(frame)
+  local plate = { border = {} }
+  plate.bg = frame:CreateTexture(nil, "BACKGROUND")
+  plate.bg:SetTexture(WHITE)
+  plate.bg:SetAllPoints(frame)
+  for i = 1, 4 do
+    local t = frame:CreateTexture(nil, "BORDER")
+    t:SetTexture(WHITE)
+    plate.border[i] = t
+  end
+  function plate:Layout(px)
+    px = px or Look.Pixel(frame)
+    local b = self.border
+    for i = 1, 4 do b[i]:ClearAllPoints() end
+    b[1]:SetPoint("TOPLEFT", frame, "TOPLEFT"); b[1]:SetPoint("TOPRIGHT", frame, "TOPRIGHT"); b[1]:SetHeight(px)
+    b[2]:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT"); b[2]:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT"); b[2]:SetHeight(px)
+    b[3]:SetPoint("TOPLEFT", frame, "TOPLEFT"); b[3]:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT"); b[3]:SetWidth(px)
+    b[4]:SetPoint("TOPRIGHT", frame, "TOPRIGHT"); b[4]:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT"); b[4]:SetWidth(px)
+  end
+  function plate:SetAlpha(alpha)
+    alpha = Look.Clamp(alpha, 0, 1, Style.DEFAULT_ALPHA)
+    self.alpha = alpha
+    self.bg:SetVertexColor(NAVY[1], NAVY[2], NAVY[3], alpha)
+    local a = 0.75 * math.min(1, alpha / Style.DEFAULT_ALPHA)
+    for _, t in ipairs(self.border) do t:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], a) end
+  end
+  plate:Layout()
+  plate:SetAlpha(Style.DEFAULT_ALPHA)
+  return plate
+end
+
+-- Needle layers (shadow, glow, needle) turn together.
+local function Turn(self, angle)
+  self.icon:SetRotation(angle)
+  self.glow:SetRotation(angle)
+  self.shadow:SetRotation(angle)
+end
+
+local function ShowNeedle(self, shown, nearness)
+  if shown then
+    local n = nearness or 0
+    local v = 0.78 + 0.22 * n -- matte antique gold far away, full shine near
+    self.icon:SetVertexColor(v, v, v * 0.96, 1)
+    self.glow:SetAlpha(0.45 * n)
+    self.icon:Show() self.glow:Show() self.shadow:Show()
+  else
+    self.icon:Hide() self.glow:Hide() self.shadow:Hide()
+  end
+end
+
+local function ShowSeal(self, shown)
+  if shown then
+    if not self.seal:IsShown() then
+      self.seal:Show() self.sealGlow:Show()
+      if self.pulse then self.pulse:Play() end
+    end
+  elseif self.seal:IsShown() then
+    if self.pulse then self.pulse:Stop() end
+    self.seal:Hide() self.sealGlow:Hide()
+  end
+end
 
 local function Scale()
   return Look.Clamp(ns.db.arrowScale, Style.SCALE_MIN, Style.SCALE_MAX, 1.15)
@@ -461,7 +544,8 @@ local function SetTexts(self, label, dist, distColor)
   self.dist:SetWidth(TEXT_W)
   self.label:SetText(label)
   self.dist:SetText(dist)
-  Look.SetColor(self.dist, distColor or "textSecondary")
+  -- (1.3.4) distance in champagne gold, states in their status colour
+  Look.SetColor(self.dist, (distColor == nil or distColor == "textSecondary") and CHAMPAGNE or distColor)
   local lw, lh, e1 = TextSize(self.label)
   local dw, dh, e2 = TextSize(self.dist)
   self.box.estimated = e1 or e2
@@ -490,10 +574,10 @@ local function Update(self)
     self.qdMouse = wantMouse
     self:EnableMouse(wantMouse)
   end
-  if not wantMouse then self.icon:Hide() SetTexts(self, "", "") return end
+  if not wantMouse then ShowNeedle(self, false) ShowSeal(self, false) SetTexts(self, "", "") return end
   if not t.mapID then
     -- nothing to walk to (a quest that completes from the log): text only
-    self.icon:Hide() SetTexts(self, t.label, "")
+    ShowNeedle(self, false) ShowSeal(self, false) SetTexts(self, t.label, "")
     return
   end
   -- (1.25) objective area of the tracked quest (auto target only)
@@ -505,32 +589,33 @@ local function Update(self)
   local dist, bearing = ns.DistanceAndBearing(t)
   if inArea then
     if not dist or dist <= AREA_ENTER then
-      self.icon:Hide()
+      ShowNeedle(self, false) ShowSeal(self, true)
       SetTexts(self, t.label, L["In the objective area"], "good")
       return
     end
     SetTexts(self, t.label, L["In the objective area, nearest spot %d yards"]:format(dist), "good")
   end
   if not dist then
-    self.icon:Hide()
+    ShowNeedle(self, false) ShowSeal(self, false)
     SetTexts(self, t.label, L["Other zone or no position"], "textHint")
     return
   end
   if dist < ARRIVED_YARDS then
-    self.icon:Hide()
+    ShowNeedle(self, false) ShowSeal(self, true)
     SetTexts(self, t.label, L["Arrived"], "good")
     if manual == t then manual = nil end
     return
   end
+  ShowSeal(self, false)
   if not inArea then SetTexts(self, t.label, L["%d yards"]:format(dist), "textSecondary") end
   local facing = ns.Num(ns.Value(GetPlayerFacing))
   if facing then
     -- facing: radians counter-clockwise from north; bearing: clockwise from north.
     -- Angle to turn (clockwise) = bearing + facing; SetRotation turns counter-clockwise.
-    self.icon:SetRotation(-(bearing + facing))
-    self.icon:Show()
+    Turn(self, -(bearing + facing))
+    ShowNeedle(self, true, Nearness(dist))
   else
-    self.icon:Hide()
+    ShowNeedle(self, false)
   end
 end
 
@@ -565,24 +650,63 @@ local function Create()
   arrow:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
   ApplyPosition()
 
+  -- (1.3.4) needle with a soft dark shadow (readable on snow and sand) and a
+  -- golden glow that grows as you get near; all three turn together
+  arrow.shadow = arrow:CreateTexture(nil, "BACKGROUND")
+  arrow.shadow:SetPoint("CENTER")
+  arrow.shadow:SetSize(ICON * 1.7, ICON * 1.7) -- glow art: silhouette at 60 % of the texture
+  arrow.shadow:SetTexture(MEDIA .. "ArrowNeedleGlow")
+  arrow.shadow:SetVertexColor(0, 0, 0, 0.55)
+  arrow.glow = arrow:CreateTexture(nil, "BORDER")
+  arrow.glow:SetPoint("CENTER")
+  arrow.glow:SetSize(ICON * 1.75, ICON * 1.75)
+  arrow.glow:SetTexture(MEDIA .. "ArrowNeedleGlow")
+  arrow.glow:SetVertexColor(1, 0.82, 0.45)
+  arrow.glow:SetBlendMode("ADD")
   arrow.icon = arrow:CreateTexture(nil, "ARTWORK")
   arrow.icon:SetAllPoints()
-  arrow.icon:SetTexture("Interface\\Minimap\\MinimapArrow")
-  local a = Style.COLORS.accent
-  arrow.icon:SetVertexColor(a[1], a[2], a[3])
+  arrow.icon:SetTexture(MEDIA .. "ArrowNeedle")
 
-  -- text plate below the arrow (own frame, no mouse: clicks go to the world)
+  -- arrived: golden seal with a slow pulsing glow
+  arrow.sealGlow = arrow:CreateTexture(nil, "BORDER")
+  arrow.sealGlow:SetPoint("CENTER")
+  arrow.sealGlow:SetSize(ICON * 1.4, ICON * 1.4)
+  arrow.sealGlow:SetTexture(MEDIA .. "ArrowSealGlow")
+  arrow.sealGlow:SetVertexColor(1, 0.85, 0.5)
+  arrow.sealGlow:SetBlendMode("ADD")
+  arrow.seal = arrow:CreateTexture(nil, "ARTWORK")
+  arrow.seal:SetPoint("CENTER")
+  arrow.seal:SetSize(ICON * 0.8, ICON * 0.8)
+  arrow.seal:SetTexture(MEDIA .. "ArrowSeal")
+  if arrow.sealGlow.CreateAnimationGroup then
+    local ok, group = pcall(arrow.sealGlow.CreateAnimationGroup, arrow.sealGlow)
+    if ok and group then
+      group:SetLooping("BOUNCE")
+      local fade = group:CreateAnimation("Alpha")
+      if fade then
+        fade:SetFromAlpha(0.15)
+        fade:SetToAlpha(0.55)
+        fade:SetDuration(0.9)
+        if fade.SetSmoothing then fade:SetSmoothing("IN_OUT") end
+      end
+      arrow.pulse = group
+    end
+  end
+  arrow.seal:Hide() arrow.sealGlow:Hide()
+  arrow.icon:Hide() arrow.glow:Hide() arrow.shadow:Hide()
+
+  -- text plaque below the arrow (own frame, no mouse: clicks go to the world)
   local box = CreateFrame("Frame", nil, arrow)
   box:SetPoint("TOP", arrow, "BOTTOM", 0, -S.rowGap * 2)
   box:EnableMouse(false)
-  box.plate = Look.Plate(box)
+  box.plate = GoldPlate(box)
   arrow.box = box
 
-  arrow.label = Look.Font(box, "GameFontHighlightSmall", "textPrimary")
+  arrow.label = Look.Font(box, "GameFontHighlightSmall", CREAM)
   arrow.label:SetPoint("TOP", box, "TOP", 0, -S.padY)
   arrow.label:SetJustifyH("CENTER")
   arrow.label:SetWordWrap(true)
-  arrow.dist = Look.Font(box, "GameFontHighlightSmall", "textSecondary")
+  arrow.dist = Look.Font(box, "GameFontNormal", CHAMPAGNE)
   arrow.dist:SetJustifyH("CENTER")
   arrow.dist:SetPoint("TOP", arrow.label, "BOTTOM", 0, -S.rowGap)
   box:Hide()

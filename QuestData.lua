@@ -185,6 +185,89 @@ local function BreadcrumbObsolete(questID)
   return false
 end
 
+---------------------------------------------------------------------------
+-- (1.3.4) Profession quests (ATT's skill field, e.g. "Camping 101: Tailoring"):
+-- before, never shown ("too noisy without a skill check"). Daniel 08.10.,
+-- Zephras Isle: after learning Tailoring and First Aid the quest giver had
+-- the Camping 101 quests, but Questdon showed no "!". Now a profession quest
+-- counts once the character knows that profession: one of its rank spells,
+-- or (fallback) a skill line of that name in the character's skills.
+---------------------------------------------------------------------------
+local SKILL_SPELLS = {
+  [129] = { 3273, 3274, 7924, 10846 },          -- First Aid
+  [164] = { 2018, 3100, 3538, 9785 },           -- Blacksmithing
+  [165] = { 2108, 3104, 3811, 10662 },          -- Leatherworking
+  [171] = { 2259, 3101, 3464, 11611 },          -- Alchemy
+  [182] = { 2366, 2368, 3570, 11993, 2383 },    -- Herbalism (+ Find Herbs)
+  [185] = { 2550, 3102, 3413, 18260 },          -- Cooking
+  [186] = { 2575, 2576, 3564, 10248, 2580, 2656 }, -- Mining (+ Find Minerals, Smelting)
+  [197] = { 3908, 3909, 3910, 12180 },          -- Tailoring
+  [202] = { 4036, 4037, 4038, 12656 },          -- Engineering
+  [333] = { 7411, 7412, 7413, 13920 },          -- Enchanting
+  [356] = { 7620, 7731, 7732, 18248 },          -- Fishing
+  [393] = { 8613, 8617, 8618, 10768 },          -- Skinning
+}
+local function SpellKnown(id)
+  if ns.True(ns.Value(IsPlayerSpell, id)) or ns.True(ns.Value(IsSpellKnown, id)) then return true end
+  local sb = C_SpellBook
+  return sb and ns.True(ns.Value(sb.IsSpellKnown, id)) or false
+end
+local function SpellName(id)
+  local n = C_Spell and ns.Value(C_Spell.GetSpellName, id)
+  if type(n) ~= "string" then n = ns.Value(GetSpellInfo, id) end
+  return type(n) == "string" and n ~= "" and n or nil
+end
+local function ReadKnownSkills()
+  local known, names = {}, {}
+  local n = ns.Num(ns.Value(GetNumSkillLines)) or 0
+  for i = 1, math.min(n, 100) do
+    local ok, name, header = pcall(GetSkillLineInfo, i)
+    if ok and type(name) == "string" and ns.Usable(name) and not ns.True(header) then names[name] = true end
+  end
+  for line, spells in pairs(SKILL_SPELLS) do
+    for _, id in ipairs(spells) do
+      if SpellKnown(id) then known[line] = true break end
+    end
+    if not known[line] then
+      local name = SpellName(spells[1])
+      if name and names[name] then known[line] = true end
+    end
+  end
+  return known
+end
+local function KnownSkills() return ns.ScopeValue("knownSkills", ReadKnownSkills) end
+-- Does the character know the profession (ATT skill line ID)? Unknown IDs count as known.
+function ns.KnowsSkill(skill)
+  skill = ns.Num(skill)
+  if not skill or not SKILL_SPELLS[skill] then return true end
+  return KnownSkills()[skill] == true
+end
+-- The profession a quest needs and the character lacks, else nil.
+function ns.MissingSkill(questID)
+  local q = Q[questID]
+  local skill = q and q[SKILL]
+  if skill and not ns.KnowsSkill(skill) then return skill end
+  return nil
+end
+-- Learning a profession: profession quests appear (batched; only when the set changed).
+local skillSig
+local function SkillSignature()
+  local t = {}
+  for line in pairs(ReadKnownSkills()) do t[#t + 1] = line end
+  table.sort(t)
+  return table.concat(t, ",")
+end
+local function SkillsChanged()
+  local sig = SkillSignature()
+  if sig == skillSig then return end
+  local first = skillSig == nil
+  skillSig = sig
+  if not first then ns.QueueRefresh("map", "minimap", "nameplates", "panel") ns.QueueRefresh("questbook") end
+end
+ns.On("SKILL_LINES_CHANGED", SkillsChanged)
+ns.On("LEARNED_SPELL_IN_TAB", SkillsChanged)
+ns.On("PLAYER_ENTERING_WORLD", function() skillSig = SkillSignature() end)
+
 -- Can this character pick up the quest right now? (ATT data)
 -- above (1.22, internal): also true for quests whose minimum level is at most
 -- that many levels above the player (everything else must fit); the API and
@@ -208,7 +291,7 @@ function DataCanTake(questID, player, above)
   if ns.IsQuestDone(questID) or ns.InQuestLog(questID) then return false end
   if ns.QuestKnownMissing(questID) then return false end -- the server does not know it
   if not Reachable(questID, player) then return false end
-  if q[SKILL] then return false end -- profession quests: too noisy without a skill check
+  if q[SKILL] and not ns.KnowsSkill(q[SKILL]) then return false end -- (1.3.4) profession quests once the profession is learned
   if q[LEVEL] and player.level and q[LEVEL] > player.level + (tonumber(above) or 0) then return false end
   if not PrereqsDone(questID, q, player) then return false end
   -- (1.1) helper quests that only exist while another quest is in the log (Data/Extra_Quests.lua)
@@ -405,6 +488,74 @@ function ns.QuestTitle(questID)
   if learned and learned.title then return learned.title end
   local q = Q[questID]
   return q and q[NAME] or ("Quest " .. questID)
+end
+
+-- (1.3.4) Zone variants of one quest ("Camping 101: Fishing" on Zephras Isle,
+-- "... [Dun Morogh]", "... [Elwynn Forest]" ...). Daniel 08.10.: the server
+-- flags the variants of the other zones as done too, so zones he never
+-- visited showed quests done. A done variant counts only where the journal
+-- saw it turned in; with no journal entry for any of them and several flagged,
+-- Questdon cannot tell which one was done and claims none.
+local variants
+local function Variants()
+  if variants then return variants end
+  variants = {}
+  local groups, suffixed = {}, {}
+  for id, q in pairs(Q) do
+    local name = type(q[NAME]) == "string" and q[NAME]
+    if name then
+      local base, zone = name:match("^(.-)%s+%[(.-)%]$")
+      local key = (base or name) .. "|" .. tostring(q[SKILL] or "")
+      local g = groups[key]
+      if not g then g = {} groups[key] = g end
+      g[#g + 1] = id
+      if base then suffixed[key] = true end
+    end
+  end
+  for key, g in pairs(groups) do
+    if suffixed[key] and #g > 1 then for _, id in ipairs(g) do variants[id] = g end end
+  end
+  return variants
+end
+function ns.QuestVariants(questID) return Variants()[questID] end
+function ns.DoneElsewhere(questID)
+  local g = Variants()[questID]
+  if not g then return false end
+  local journal = ns.JournalTurnedIn
+  if journal and journal(questID) then return false end
+  local flagged = 0
+  for _, other in ipairs(g) do
+    if other ~= questID and journal and journal(other) then return true end
+    if ns.IsQuestDone(other) then flagged = flagged + 1 end
+  end
+  return flagged > 1
+end
+
+-- (1.3.4) Quests of a chain in parts share one title in the game ("Destruction
+-- in Deadmines" twice); the data names the part: "... (1/2)". The title with
+-- that part, where the data has one and the title does not show it yet.
+function ns.QuestTitleWithPart(questID)
+  local title = ns.QuestTitle(questID)
+  local q = Q[questID]
+  local part = q and type(q[NAME]) == "string" and q[NAME]:match("(%(%d+/%d+%))%s*$")
+  if part and type(title) == "string" and not title:find(part, 1, true) then return title .. " " .. part end
+  return title
+end
+
+-- (1.3.4) What to do, from Wowhead's quest pages (Data/Quest_Texts.lua):
+-- { o = objective sentence, r = { "Kobold Digger slain (4)", ... }, s = quest giver, e = turn-in NPC }
+-- in the game's language where Wowhead has it, else English. nil if unknown.
+function ns.QuestText(questID)
+  local T = ns.QUEST_TEXTS
+  if type(T) ~= "table" then return nil end
+  local loc = ns.Value(GetLocale)
+  local mine = type(loc) == "string" and T[loc] and T[loc][questID]
+  local en = T.enUS and T.enUS[questID]
+  if type(mine) == "table" and type(en) == "table" then
+    -- names Wowhead has not translated yet: the English ones
+    return { o = mine.o or en.o, r = mine.r or en.r, s = mine.s or en.s, e = mine.e or en.e }
+  end
+  return type(mine) == "table" and mine or (type(en) == "table" and en) or nil
 end
 
 -- (1.26) The data's (English) name of a quest, nil if unknown.
@@ -612,6 +763,8 @@ local NEAR = 4 -- map units (0-100): "at the quest giver / turn-in"
 -- (1.2) Spawn points of a creature from Wowhead's quest maps (Data/Spawns.lua):
 -- flat { map, x, y, ... } in 0-100 coordinates, decoded once; nil if none.
 local SPAWNS = ns.SPAWNS or {}
+-- (1.3.4) spawn points from Wowhead NPC pages (Data/Extra_Quests.lua) where Spawns.lua has none
+for id, z in pairs(ns.EXTRA_SPAWNS or {}) do if SPAWNS[id] == nil then SPAWNS[id] = z end end
 local spawnCache = {}
 local function Spawns(creatureID)
   local c = spawnCache[creatureID]
@@ -822,7 +975,40 @@ local function IsOpen(client, index)
   return not ns.True(state.finished)
 end
 
+-- (1.3.4) Optional objectives (Daniel 08.10., Blood Tithe: the arrow led to
+-- "listen to Alvarion (Optional)" instead of the real objective). The client
+-- marks them in the text: the game's own suffix (OPTIONAL_QUEST_OBJECTIVE_DESCRIPTION,
+-- "%s (Optional)") or one of the known words.
+local OPTIONAL_WORDS = { "(Optional)", "(optional)", "(Optionnel)", "(Facultatif)", "(Opcional)", "(opcional)",
+  "(Необязательно)", "(необязательно)", "(선택 사항)", "(선택)", "(可選)", "(可选)" }
+local optionalSuffix
+local function OptionalSuffix()
+  if optionalSuffix == nil then
+    optionalSuffix = false
+    local g = _G.OPTIONAL_QUEST_OBJECTIVE_DESCRIPTION
+    if type(g) == "string" and g:find("%s", 1, true) then
+      local suf = g:gsub("%%s", ""):gsub("^%s+", ""):gsub("%s+$", "")
+      if suf ~= "" then optionalSuffix = suf end
+    end
+  end
+  return optionalSuffix
+end
+local function IsOptional(client, index)
+  local state = client[index]
+  local text = type(state) == "table" and state.text
+  if type(text) ~= "string" or not ns.Usable(text) then return false end
+  local suf = OptionalSuffix()
+  if suf and text:find(suf, 1, true) then return true end
+  for _, w in ipairs(OPTIONAL_WORDS) do if text:find(w, 1, true) then return true end end
+  return false
+end
+function ns.IsOptionalObjective(questID, index)
+  return IsOptional(ClientObjectives(questID), index)
+end
+
 -- Sorted indices of the open objectives with data (ATT or learned).
+-- (1.3.4) Optional objectives only when nothing else is open; else they come
+-- back as the fourth value (the map shows them dimmed).
 local function OpenIndices(questID, client)
   local objs = OBJ[questID] or {}
   local learned = (ns.ObjectiveSpots and ns.ObjectiveSpots(questID) or (ns.db.learnedObj or {})[questID]) or {} -- (1.0.1) own + shared
@@ -830,11 +1016,14 @@ local function OpenIndices(questID, client)
   for index in pairs(objs) do indices[#indices + 1] = index end
   for index in pairs(learned) do if not objs[index] then indices[#indices + 1] = index end end
   table.sort(indices)
-  local open = {}
+  local open, optional = {}, {}
   for _, index in ipairs(indices) do
-    if type(index) == "number" and IsOpen(client, index) then open[#open + 1] = index end
+    if type(index) == "number" and IsOpen(client, index) then
+      if IsOptional(client, index) then optional[#optional + 1] = index else open[#open + 1] = index end
+    end
   end
-  return open, objs, learned
+  if #open == 0 then return optional, objs, learned, {} end
+  return open, objs, learned, optional
 end
 
 -- Points for the unfinished objectives of quests in the log on one map.
@@ -854,7 +1043,9 @@ function ns.ObjectivePointsOnMap(mapID)
     if tracked and (OBJ[id] or learnedObj[id] or (ns.SharedSpots and ns.SharedSpots(id))) and not ns.IsQuestComplete(id) and not ns.IsQuestFailed(id)
         and not DrawnElsewhere(id, "objective") then
       local client = ClientObjectives(id)
-      local open, objs, learned = OpenIndices(id, client)
+      local open, objs, learned, optional = OpenIndices(id, client)
+      local dimIndex = {}
+      for _, index in ipairs(optional or {}) do open[#open + 1] = index dimIndex[index] = true end
       for _, index in ipairs(open) do
         local state = client[index]
         local text = type(state) == "table" and type(state.text) == "string" and ns.Usable(state.text) and state.text or nil
@@ -873,7 +1064,7 @@ function ns.ObjectivePointsOnMap(mapID)
           if total >= MAX_MAP_POINTS then return end
           total = total + 1
           list[#list + 1] = { questID = id, index = index, x = p.x, y = p.y, text = text, creature = p.creature,
-            needsItem = p.needsItem, dimmed = p.dimmed, small = many }
+            needsItem = p.needsItem, dimmed = p.dimmed or dimIndex[index] or nil, small = many, optional = dimIndex[index] }
         end
         for _, p in ipairs(keep) do Put(p) end
         local room = math.max(0, MAX_OBJ_POINTS - #keep)
@@ -905,8 +1096,10 @@ end
 function ns.ObjectiveState(questID)
   local client = ClientObjectives(questID)
   local open, openIndex, types = 0, nil, {}
+  local mainOpen = false
+  for i = 1, #client do if IsOpen(client, i) and not IsOptional(client, i) then mainOpen = true break end end
   for i = 1, #client do
-    if IsOpen(client, i) then
+    if IsOpen(client, i) and not (mainOpen and IsOptional(client, i)) then
       open = open + 1
       openIndex = open == 1 and i or nil
       local t = type(client[i]) == "table" and client[i].type

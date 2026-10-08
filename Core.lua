@@ -65,7 +65,9 @@ ns.defaults = {
   shareChannel = true, -- (1.1) also through the open channel QuestdonNet (all Questdon players) -- (1.0.1) send own learned data to guild and group (Exchange.lua)
   shared = {}, -- (1.0.1) what other players reported: [key] = { v = { variants }, c, t }
   shareSent = {}, -- (1.0.1) [key] = what was last sent
-  showPanel = true,
+  showPanel = false, -- (1.3.4) off for new players: the minimap button shows what the window did
+  minimapButton = true, -- (1.3.4) minimap button: quest book, menu, info tooltip
+  minimapButtonAngle = 200,
   bookButton = true, -- (1.3) quest book button at the bottom of the window
   panelPos = nil,
   learned = {}, -- [questID] = { title, level, faction, start = {...}, finish = {...} }
@@ -536,6 +538,12 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
     if ns.OpenExport then ns.OpenExport(msg == "export all") end
   elseif msg == "missing" then
     if ns.OpenMissing then ns.OpenMissing() end
+  elseif msg == "mapsizes" then
+    -- (1.3.4) map rectangles and flight points for the level guide (saved at /reload)
+    if ns.DumpMapSizes then
+      local n, k = ns.DumpMapSizes()
+      print(("|cff3fa9f5Questdon|r: %d maps, %d flight points stored. /reload saves them."):format(n, k))
+    end
   elseif msg == "diag" then
     if ns.OpenDiag then ns.OpenDiag() end
   elseif msg == "xpcheck" or msg == "xpcheck reset" then
