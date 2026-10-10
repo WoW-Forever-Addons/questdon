@@ -4,8 +4,11 @@ local _, ns = ...
 -- Read-only interface for other addons (e.g. a guide addon).
 -- Versioned: add functions, never change existing ones. Bump VERSION only
 -- when something is added; other addons check QuestdonAPI.version.
+--   1: the first set
+--   2: (1.3.5) CanTakeQuestLater (Leveldon, 09.10.), DungeonLevelRange, Dungeons, DungeonsForLevel
+--      (Geardon, 10.10.)
 ---------------------------------------------------------------------------
-local VERSION = 1
+local VERSION = 2
 local Q = ns.ATT_QUESTS or {}
 
 local function Copy(t)
@@ -38,6 +41,13 @@ function API.QuestTitle(questID) return ns.QuestTitle(questID) end
 -- character's quest giver did not offer it at the current level (until the
 -- level rises) or when the client's quest lines say it is not available yet.
 function API.CanTakeQuest(questID) return ns.CanTakeQuest(questID) end
+-- (API 2, Leveldon 09.10.) CanTakeQuestLater: could this character take the quest once its level is high
+-- enough? false when something else blocks it: a prerequisite not done, faction, race, class, profession,
+-- a quest the server does not know. A guide skips such a quest instead of waiting for it.
+function API.CanTakeQuestLater(questID)
+  if ns.IsQuestDone(questID) or ns.InQuestLog(questID) then return false end
+  return ns.CanTakeQuest(questID, nil, 100) and true or false
+end
 function API.IsQuestDone(questID) return ns.IsQuestDone(questID) end
 function API.InQuestLog(questID) return ns.InQuestLog(questID) end
 function API.IsQuestComplete(questID) return ns.IsQuestComplete(questID) end
@@ -112,6 +122,46 @@ function API.QuestDungeon(questID)
   if not inst then return nil end
   local d = ns.ATT_DUNGEONS and ns.ATT_DUNGEONS[inst] or {}
   return inst, ns.DungeonName(inst), d[2], d[6]
+end
+
+-- (API 2, 1.3.5, Geardon 10.10.) Level range of a dungeon (ATT instance ID): min, max, source ("game" = the
+-- client's Group Finder, "data" = Questdon's table); nil when unknown.
+function API.DungeonLevelRange(inst)
+  local lo, hi, source = ns.DungeonLevelRange(inst)
+  if not lo then return nil end
+  return lo, hi or lo, source
+end
+
+-- (API 2) Every dungeon and raid of the data with a level range:
+-- { { inst, name (localized), min, max, source, raid (true for 60-60 raids), entranceMap, entranceX, entranceY (0-1, nil if
+-- unknown) }, ... } sorted by min, max, inst.
+function API.Dungeons()
+  local list = {}
+  for inst in pairs(ns.ATT_DUNGEONS or {}) do
+    local lo, hi, source = ns.DungeonLevelRange(inst)
+    if lo then
+      local m, x, y = ns.DungeonEntrance(inst)
+      list[#list + 1] = { inst = inst, name = ns.DungeonName(inst), min = lo, max = hi or lo, source = source,
+        raid = (lo >= 60 and (hi or lo) >= 60) or nil, entranceMap = m, entranceX = x, entranceY = y }
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.min ~= b.min then return a.min < b.min end
+    if a.max ~= b.max then return a.max < b.max end
+    return a.inst < b.inst
+  end)
+  return list
+end
+
+-- (API 2) The dungeons whose range holds level (default: the player's), same entries as Dungeons().
+function API.DungeonsForLevel(level)
+  level = tonumber(level) or ns.PlayerLevel()
+  local out = {}
+  if not level then return out end
+  for _, d in ipairs(API.Dungeons()) do
+    if level >= d.min and level <= d.max then out[#out + 1] = d end
+  end
+  return out
 end
 
 -- (1.18) Quest progress of group members who use Questdon (party of up to five):

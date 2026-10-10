@@ -28,10 +28,15 @@ local L = ns.L
 --                                                      offers it: m = reported by
 --                                                      the player, a = not offered
 --                                                      at 3 levels (NotHere.lua)
+--   M <npcID> <name>                                   (1.3.5) an NPC's name as the
+--                                                      game showed it, in the locale
+--                                                      of the header (rest of the line)
 --   # comments (count, truncation)
 --
 -- Coordinates 0-100 with one decimal. Only numbers: no character, realm,
--- guild, NPC or quest names. "new" leaves out what the bundled data has
+-- guild or quest names. (1.3.5) The one exception are M lines: names of NPCs
+-- as the game shows them, so the shipped translations can grow. They are only
+-- in /qd export, never in what Questdon shares with guild and group. "new" leaves out what the bundled data has
 -- already (starts at the same spot, objective spots near its points,
 -- known prerequisites, credit sources and levels); turn-ins, drops, item
 -- starts and X lines are always included (the data has none of them).
@@ -271,8 +276,44 @@ local function Sent()
   return ns.db.exportSent
 end
 
+-- (1.3.5) M lines: NPC names the game showed in this locale. "new": only names
+-- that differ from the shipped translation (or, without one, from the data).
+local questNpcs
+local function QuestNpcs()
+  if questNpcs then return questNpcs end
+  questNpcs = {}
+  for _, q in pairs(Q) do
+    for _, g in ipairs(type(q[7]) == "table" and q[7] or {}) do questNpcs[g] = true end
+  end
+  for _, e in pairs(ns.QUEST_ENDS or {}) do if type(e) == "table" and e[4] then questNpcs[e[4]] = true end end
+  for _, objs in pairs(OBJ) do
+    for _, o in pairs(type(objs) == "table" and objs or {}) do
+      for _, c in ipairs(type(o) == "table" and type(o[1]) == "table" and o[1] or {}) do questNpcs[c] = true end
+    end
+  end
+  return questNpcs
+end
+
+local function NameRecords(all)
+  local out = {}
+  local relevant = QuestNpcs()  -- quest givers, turn-in NPCs and quest mobs only
+  local byLoc = type(ns.db.npcNames) == "table" and ns.db.npcNames[Locale()]
+  if type(byLoc) ~= "table" then return out end
+  -- English names come with Wowhead's data already: an English client sends them only with "all"
+  if not all and Locale() == "enUS" then return out end
+  for _, id in ipairs(SortedKeys(byLoc)) do
+    local name = byLoc[id]
+    if relevant[id] and type(name) == "string" and name ~= "" and #name <= 80 and not name:find("[%c|]") then
+      local known = (ns.NPC_NAMES and ns.NPC_NAMES[id]) or ns.CreatureName(id)
+      if all or name ~= known then out[#out + 1] = ("M %d %s"):format(id, name) end
+    end
+  end
+  return out
+end
+
 function ns.BuildExport(all)
   local records = ns.ExportRecords(all)
+  for _, r in ipairs(NameRecords(all)) do records[#records + 1] = r end
   local skipped = 0
   if not all then
     local sent, kept = Sent(), {}
@@ -496,7 +537,8 @@ function ns.OpenExport(all)
     note = L["%d entries. Ctrl+A selects all, Ctrl+C copies. Paste it into a new issue at %s (form \"Quest data\")."]:format(count, ISSUE_URL)
     if truncated > 0 then note = note .. " " .. L["Truncated: %d more entries left out."]:format(truncated) end
   end
-  note = note .. " " .. L["Only numbers: no character, realm or guild names."]
+  -- (1.3.5) the M lines carry NPC names as the game showed them
+  note = note .. " " .. L["Numbers and the NPC names your game showed: no character, realm or guild names."]
   if not all and (skipped or 0) > 0 then
     note = note .. " " .. L["%d entries you already sent are left out (/qd export all shows everything)."]:format(skipped)
   end

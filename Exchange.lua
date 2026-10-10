@@ -22,12 +22,17 @@ local L = ns.L
 -- remembered (QuestdonDB.shareSent: key -> line); counters are sent again only
 -- at the next step (1, 5, 25, 100); facts KNOWN others already reported the
 -- same way and spots beyond SPOTS_PER_OBJECTIVE per objective are not sent.
+-- (1.3.5) Daniel 09.10.: nothing is kept for players who are offline, so an
+-- own fact goes out again after RESEND (QuestdonDB.shareSentAt: key -> time),
+-- oldest first and only with the budget new facts leave. Receivers count
+-- reporters, so the same fact from the same player again changes nothing.
+-- At most FACTS_PER_HOUR facts an hour, below PER_SENDER of the receivers.
 -- Receiving is always on (decision 2026-10-04: everybody may use shared data).
 -- (1.1) Also through the open channel "QuestdonNet" (option shareChannel, on):
 -- every Questdon player, so facts from there need three reporters unless two
 -- came through guild or group.
 --
--- Checks on receipt: exact line shapes, number ranges, own echoes ignored,
+-- Checks on receipt: (1.3.5) only guild, group and the channel, exact line shapes, number ranges, own echoes ignored,
 -- at most PER_SENDER facts per sender and hour, at most MAX_SHARED facts.
 -- Reporters are kept as a 24 bit checksum of "Name-Realm" (to count them),
 -- never shown or exported. Shared data never overrides own learning or the
@@ -46,19 +51,28 @@ local MAX_VARIANTS = 3      -- differing reports per fact
 local MAX_REPORTERS = 8     -- reporters kept per variant
 local PER_SENDER = 200      -- facts per sender and hour
 local CONFIRM = 2           -- reporters needed before a fact is used
+local RESEND = 86400        -- (1.3.5) an own fact goes out again after a day
+local FACTS_PER_HOUR = 190  -- (1.3.5) facts sent per hour (receivers take PER_SENDER)
 -- (1.1) The open channel: every Questdon player (option shareChannel, on).
 -- Anybody can join a channel, so a fact needs CONFIRM_OPEN reporters when
 -- not CONFIRM of them came through guild or group. If the first name is
 -- taken (a password, a ban), the next one is tried.
 local CHANNEL_NAMES = { "QuestdonNet", "QuestdonNet2", "QuestdonNet3" }
 local CONFIRM_OPEN = 3
+-- (1.3.5, Daniel 10.10.) Only the ways Questdon itself sends on count: guild and group are
+-- trusted, the channel is open; anything else (a whisper) is ignored. Before, every chat type
+-- but the channel counted as trusted, so two characters whispering could confirm a fact.
+local TRUSTED_WAYS = { GUILD = true, PARTY = true, RAID = true, INSTANCE_CHAT = true,
+  PARTY_LEADER = true, RAID_LEADER = true, INSTANCE_CHAT_LEADER = true }
+-- (1.3.5) "the quest giver never offers it" hides a quest: two trusted reporters or CONFIRM_NOT_HERE in all
+local CONFIRM_NOT_HERE = 5
 local JOIN_DELAY, JOIN_CHECK = 10, 3 -- seconds after login; seconds until a join is checked
 local JOIN_WAIT_MAX = 90    -- (1.3.3) seconds to wait for the game's own channels before joining anyway
 local SENDS_PER_FLUSH = 9   -- addon messages per prefix: 10 at once, then 1 per second
 local NEAR = 2              -- map units: two spots this close are the same
 
-local stats = { saved = 0, sentMsgs = 0, sentFacts = 0, recvMsgs = 0, recvLines = 0, bad = 0, own = 0, limited = 0, blocked = 0, pruned = 0,
-  recvChannel = 0 }
+local stats = { saved = 0, sentMsgs = 0, sentFacts = 0, resentFacts = 0, recvMsgs = 0, recvLines = 0, bad = 0, own = 0, limited = 0, blocked = 0, pruned = 0,
+  recvChannel = 0, otherWay = 0 }
 ns.shareStats = stats
 local registered = false
 local seq = 0
@@ -72,6 +86,7 @@ local function DB()
   local db = ns.db
   if type(db.shared) ~= "table" then db.shared = {} end
   if type(db.shareSent) ~= "table" then db.shareSent = {} end
+  if type(db.shareSentAt) ~= "table" then db.shareSentAt = {} end -- (1.3.5)
   -- (1.1) shared data of the test builds counted the own echo as a player: start clean once
   if db.sharedVersion ~= 2 then
     wipe(db.shared)
@@ -290,16 +305,17 @@ end
 
 -- The variant most players reported, if CONFIRM or more did through guild
 -- or group, or CONFIRM_OPEN or more in all (1.1: open channel).
-local function Confirmed(v)
+-- needOpen: reporters needed in all when fewer than CONFIRM came through guild or group.
+local function Confirmed(v, needOpen)
   local n = ns.Num(v.n) or 0
   local trusted = n - (ns.Num(v.o) or 0)
-  return trusted >= CONFIRM or n >= CONFIRM_OPEN
+  return trusted >= CONFIRM or n >= (needOpen or CONFIRM_OPEN)
 end
-local function Best(e)
+local function Best(e, needOpen)
   if type(e) ~= "table" or type(e.v) ~= "table" then return nil end
   local best
   for _, v in ipairs(e.v) do
-    if type(v) == "table" and Confirmed(v) and (not best or v.n > best.n) then best = v end
+    if type(v) == "table" and Confirmed(v, needOpen) and (not best or v.n > best.n) then best = v end
   end
   return best
 end
@@ -318,6 +334,9 @@ end
 
 local function OnMessage(_, prefix, text, chatType, sender)
   if prefix ~= PREFIX then return end
+  -- (1.3.5) guild and group are trusted, the channel is open, every other way is ignored
+  local open = chatType == "CHANNEL" -- (1.1) anybody can be in the channel
+  if not open and not (type(chatType) == "string" and TRUSTED_WAYS[chatType]) then stats.otherWay = stats.otherWay + 1 return end
   if type(text) ~= "string" or not ns.Usable(text) or #text > 255 then return end
   local full = FullSender(sender)
   if not full then return end
@@ -335,7 +354,6 @@ local function OnMessage(_, prefix, text, chatType, sender)
   end
   if not payload then stats.bad = stats.bad + 1 return end
   stats.recvMsgs = stats.recvMsgs + 1
-  local open = chatType == "CHANNEL" -- (1.1) anybody can be in the channel
   if open then stats.recvChannel = stats.recvChannel + 1 end
   local lines = {}
   for line in payload:gmatch("[^;]+") do lines[#lines + 1] = line end
@@ -541,14 +559,15 @@ local function SendTo(msg, channels)
   return any
 end
 
--- What is new to send: { {key, sig, line}, ... }
--- What is new to send: { {key, sig, line}, ... }. Left out (and marked as sent):
--- facts three or more others already reported the same way, and objective
--- spots beyond SPOTS_PER_OBJECTIVE per objective.
+-- What to send: { {key, sig, line, again}, ... }: first what is new, then
+-- (1.3.5) what was sent RESEND or longer ago, the oldest first. Left out (and
+-- marked as sent): facts three or more others already reported the same way,
+-- and objective spots beyond SPOTS_PER_OBJECTIVE per objective.
 local function Pending()
-  local sent = DB().shareSent
-  local shared = DB().shared
-  local list, spots = {}, {}
+  local db = DB()
+  local sent, at, shared = db.shareSent, db.shareSentAt, db.shared
+  local list, again, spots = {}, {}, {}
+  local due = Clock() - RESEND
   for _, line in ipairs(ns.ExportRecords and ns.ExportRecords(false) or {}) do
     local key, value, count = Parse(line)
     if key then
@@ -559,17 +578,26 @@ local function Pending()
         spots[obj] = (spots[obj] or 0) + 1
         skip = spots[obj] > SPOTS_PER_OBJECTIVE
       end
-      if sent[key] ~= sig and not skip then
+      if not skip then
         local best = Best(shared[key])
-        if best and best.n >= KNOWN and Same(best, value) then
-          sent[key] = sig -- known well enough already
-          stats.saved = stats.saved + 1
-        else
-          list[#list + 1] = { key, sig, line }
+        local known = best and best.n >= KNOWN and Same(best, value)
+        if sent[key] ~= sig then
+          if known then
+            sent[key] = sig -- known well enough already
+            stats.saved = stats.saved + 1
+          else
+            list[#list + 1] = { key, sig, line }
+          end
+        elseif not known then
+          -- sent before 1.3.5 (no time): due at once
+          local t = ns.Num(at[key]) or 0
+          if t <= due then again[#again + 1] = { key, sig, line, t } end
         end
       end
     end
   end
+  table.sort(again, function(a, b) if a[4] ~= b[4] then return a[4] < b[4] end return a[1] < b[1] end)
+  for _, e in ipairs(again) do list[#list + 1] = e end
   return list
 end
 
@@ -581,6 +609,15 @@ local function HourBudget()
   return MAX_PER_HOUR - #sentTimes
 end
 
+-- (1.3.5) Facts sent within the last hour (session): { {t, n}, ... }.
+local factTimes = {}
+local function FactBudget()
+  local now, n = Now(), 0
+  while factTimes[1] and now - factTimes[1][1] > 3600 do table.remove(factTimes, 1) end
+  for _, e in ipairs(factTimes) do n = n + e[2] end
+  return FACTS_PER_HOUR - n
+end
+
 function ns.ShareFlush()
   if not (ns.db and ns.db.shareLearned and ns.db.learnQuests) then return 0 end
   if not (C_ChatInfo and type(C_ChatInfo.SendAddonMessage) == "function") then return 0 end
@@ -589,15 +626,16 @@ function ns.ShareFlush()
   if #channels == 0 or not Register() then return 0 end
   -- (1.1) every message goes to each way: stay within the client's burst
   local budget = math.min(MAX_PER_FLUSH, HourBudget(), math.floor(SENDS_PER_FLUSH / #channels))
-  if budget <= 0 then return 0 end
+  local facts = FactBudget()
+  if budget <= 0 or facts <= 0 then return 0 end
   local pending = Pending()
-  local sent = DB().shareSent
+  local sent, at = DB().shareSent, DB().shareSentAt
   local msgs, i = 0, 1
-  while i <= #pending and msgs < budget do
+  while i <= #pending and msgs < budget and facts > 0 do
     seq = (seq + 1) % 1000
     local head = ("D2:%d:%s:"):format(seq, MyToken())
     local parts, used, size = {}, {}, #head
-    while i <= #pending and size + #pending[i][3] + (#parts > 0 and 1 or 0) <= MAX_MSG do
+    while i <= #pending and #parts < facts and size + #pending[i][3] + (#parts > 0 and 1 or 0) <= MAX_MSG do
       parts[#parts + 1] = pending[i][3]
       used[#used + 1] = pending[i]
       size = size + #pending[i][3] + (#parts > 1 and 1 or 0)
@@ -607,9 +645,16 @@ function ns.ShareFlush()
     elseif SendTo(head .. table.concat(parts, ";"), channels) then
       msgs = msgs + 1
       sentTimes[#sentTimes + 1] = Now()
+      factTimes[#factTimes + 1] = { Now(), #used }
+      facts = facts - #used
       stats.sentMsgs = stats.sentMsgs + 1
       stats.sentFacts = stats.sentFacts + #used
-      for _, p in ipairs(used) do sent[p[1]] = p[2] end
+      local clock = Clock()
+      for _, p in ipairs(used) do
+        sent[p[1]] = p[2]
+        at[p[1]] = clock
+        if p[4] then stats.resentFacts = stats.resentFacts + 1 end
+      end
     else
       break
     end
@@ -620,10 +665,10 @@ end
 ---------------------------------------------------------------------------
 -- Using shared data
 ---------------------------------------------------------------------------
--- Turn-in point others reported: map, x, y (0-1), reporters.
+-- Turn-in point others reported: map, x, y (0-1), reporters, (1.3.5) the NPC's creature ID (0 = unknown).
 function ns.SharedTurnIn(questID)
   local v = Best(ns.db and ns.db.shared and ns.db.shared["T " .. tostring(questID)])
-  if v and v.m and v.x and v.y then return v.m, v.x / 100, v.y / 100, v.n end
+  if v and v.m and v.x and v.y then return v.m, v.x / 100, v.y / 100, v.n, v.id end
 end
 
 -- Objective spots others reported (confirmed): { [index] = { map, x, y, ... } (0-1) }
@@ -672,13 +717,14 @@ function ns.ObjectiveSpots(questID)
 end
 
 -- (1.1) Two or more other players found that the quest giver never offers it.
+-- (1.3.5) Two through guild or group, or CONFIRM_NOT_HERE in all: it hides a quest.
 function ns.SharedNotHere(questID)
-  return Best(ns.db and ns.db.shared and ns.db.shared["N " .. tostring(questID)]) ~= nil
+  return Best(ns.db and ns.db.shared and ns.db.shared["N " .. tostring(questID)], CONFIRM_NOT_HERE) ~= nil
 end
 function ns.SharedNotHereCount()
   local n = 0
   for key, e in pairs(ns.db and ns.db.shared or {}) do
-    if type(key) == "string" and key:sub(1, 2) == "N " and Best(e) then
+    if type(key) == "string" and key:sub(1, 2) == "N " and Best(e, CONFIRM_NOT_HERE) then
       local id = tonumber(key:sub(3))
       local hidden, why = ns.NeverOffered(id)
       if hidden and why == "shared" then n = n + 1 end
@@ -700,10 +746,10 @@ function ns.ShareDiag()
     if Best(e) then confirmed = confirmed + 1 end
   end
   local state, name, id, joins = ns.ShareChannelState()
-  return ("%s, channel %s%s, sent %d facts in %d messages (left out as known %d), received %d lines in %d messages (via channel %d; bad %d, limited %d, own %d), blocked %d, shared %d facts (confirmed %d), pruned %d"):format(
+  return ("%s, channel %s%s, sent %d facts in %d messages (again %d, left out as known %d), received %d lines in %d messages (via channel %d; bad %d, limited %d, own %d, other ways %d), blocked %d, shared %d facts (confirmed %d), pruned %d"):format(
     ns.db and ns.db.shareLearned and "on" or "off", tostring(state), name and (" " .. name .. " #" .. tostring(id or "?") .. ", joins " .. joins) or "",
-    stats.sentFacts, stats.sentMsgs, stats.saved, stats.recvLines, stats.recvMsgs, stats.recvChannel,
-    stats.bad, stats.limited, stats.own, stats.blocked, facts, confirmed, stats.pruned)
+    stats.sentFacts, stats.sentMsgs, stats.resentFacts, stats.saved, stats.recvLines, stats.recvMsgs, stats.recvChannel,
+    stats.bad, stats.limited, stats.own, stats.otherWay, stats.blocked, facts, confirmed, stats.pruned)
 end
 
 function ns.ResetShared()

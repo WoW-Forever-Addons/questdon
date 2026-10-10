@@ -1,4 +1,5 @@
 local _, ns = ...
+local L = ns.L
 
 ---------------------------------------------------------------------------
 -- (1.21) Minimap pins: the same pins as on the world map (available quests,
@@ -24,8 +25,27 @@ local _, ns = ...
 -- map use the zone around them.
 ---------------------------------------------------------------------------
 local UPDATE_INTERVAL = 0.1 -- seconds between position updates
-local MAX_SHOWN = 100       -- pins shown at the same time (available quests first; 1.2: was 60, more spawn dots)
+local MAX_SHOWN = 150       -- pins shown at the same time (available quests first; 1.2: was 60, more spawn dots; 1.3.5: 150, all spawns near you)
+-- (1.3.5, Daniel 05.10.: "only 2 dots in a field") The quest mob dots are the minimap's own:
+-- every spawn point within NEAR_REACH times the view radius (ns.ObjectivePointsNear), not the
+-- zone-wide 80 of the world map. The list is made again when the player has moved REBUILD_MOVE
+-- times the radius from where it was made, or the view got larger.
+local NEAR_REACH, REBUILD_MOVE = 1.5, 0.4
 local QUEST_SIZE, DOT_SIZE = 14, 9
+-- (1.3.5, Daniel 10.10., Fargodeep Mine: "bundle dots that lie almost on top of each other into one dot, but do
+-- not let that dot get too big") Objective dots closer on screen than BUNDLE_PX (about 0.8 of a dot) are one dot
+-- at their middle, a little larger (BundleScale by count, at most 1.3), no number. On the minimap the
+-- distances between pins only depend on the scale (pixels per yard), not on where you stand or look, so the
+-- bundles are made when the pins are made or the zoom changes, in world yards on a grid (cell = threshold),
+-- never per frame. Quest givers, turn-ins and entrances are never bundled.
+local BUNDLE_PX = 0.8 * DOT_SIZE
+ns.MinimapBundleScale = function(n) return ns.BundleScale(n) end -- (tests; the sizes are in MapPins.lua)
+-- (1.3.5, Daniel 10.10., a quest field: about 40 dots on the minimap) At most MINIMAP_BUDGET objective markers
+-- in view: above it the bundling distance grows (ns.ThinObjectivePoints). The nearest spot of each objective
+-- (the ANCHORS nearest objectives) stays a single dot, and near you dots join less willingly than far ones
+-- (half the distance next to you, the full one at the edge of the view), so far spots are bundled first.
+local MINIMAP_BUDGET, ANCHORS = 16, 8
+ns.MINIMAP_OBJECTIVE_BUDGET = MINIMAP_BUDGET
 -- (1.3.4) Daniel 08.10., Zephras Isle: on the minimap a Questdon "!" stood on
 -- top of the game's own "!". The game puts a blip on every quest giver near
 -- you that offers you a quest (or takes a finished one), and that blip is not
@@ -35,6 +55,8 @@ local QUEST_SIZE, DOT_SIZE = 14, 9
 -- Questdon draws as before. Dots of quest mobs stay.
 local NEAR_GIVER_YARDS = 80
 local NEAR_GIVER2 = NEAR_GIVER_YARDS * NEAR_GIVER_YARDS
+-- (1.3.5) dungeon entrances: on the minimap only within this many yards (the mark always)
+local DUNGEON2 = (ns.DUNGEON_PIN_MINIMAP_YARDS or 300) ^ 2
 
 -- Minimap view in yards (diameter) per zoom level 0-5, used only when the
 -- client has no C_Minimap.GetViewRadius.
@@ -44,6 +66,7 @@ local DIAMETER = {
 }
 
 local container
+local nearAt             -- (1.3.5) where and for which radius the dots were made: { c, n, w, r }
 local free = {}          -- buttons not in use
 local entries = {}       -- { pin = displayPin, c, n, w (world position), btn = button while shown }
 local curMap, lastSig
@@ -167,7 +190,10 @@ local function PinTooltip(self)
   local pin = self.pin
   if not pin then return end
   local title, lines, hint
-  if pin.group then title, lines, hint = ns.QuestGroupTooltip(pin)
+  if self.members and #self.members > 1 then title, lines, hint = ns.ObjectiveBundleTooltip(self.members) -- (1.3.5) a bundle
+  elseif pin.kind == "entrance" then title, lines, hint = ns.EntrancePinTooltip(pin) -- (1.3.5)
+  elseif pin.kind == "dungeon" then title, lines, hint = ns.DungeonPinTooltip(pin)
+  elseif pin.group then title, lines, hint = ns.QuestGroupTooltip(pin)
   elseif pin.kind == "objective" then title, lines, hint = ns.ObjectivePinTooltip(pin)
   else title, lines, hint = ns.QuestPinTooltip(pin) end
   ns.Style.Tooltip(self, title, lines, hint, "auto")
@@ -176,6 +202,18 @@ end
 
 local function PinClick(self, button)
   local pin = self.pin
+  -- (1.3.5) a dungeon entrance: a click opens the dungeon journal, right-click marks it (or removes the mark)
+  if pin and pin.kind == "dungeon" then
+    if button == "RightButton" then ns.DungeonPinRightClick(pin.inst)
+    elseif button == "LeftButton" then ns.OpenDungeonJournal(pin.inst) end
+    return
+  end
+  -- (round 8) the mark: a click opens the dungeon journal (the arrow already points there), right-click removes it
+  if pin and pin.kind == "entrance" then
+    if button == "RightButton" then ns.RemoveEntranceMark("pin")
+    elseif button == "LeftButton" then ns.OpenDungeonJournal(pin.inst) end
+    return
+  end
   -- (1.1) Alt-click: "no quest here" (NotHere.lua)
   if button == "LeftButton" and pin and ns.True(ns.Value(IsAltKeyDown)) and ns.ReportPin then
     if pin.kind ~= "turnin" and pin.kind ~= "objective" and pin.kind ~= "focus" then ns.ReportPin(pin) end
@@ -209,7 +247,7 @@ local function NewPin()
   end
   b.ring:SetVertexColor(0, 0, 0, 0.85)
   b.ring:Hide()
-  b:RegisterForClicks("LeftButtonUp")
+  b:RegisterForClicks("LeftButtonUp", "RightButtonUp") -- (1.3.5) right-click removes an entrance mark
   b:SetScript("OnEnter", ns.Guard("minimap tooltip", PinTooltip))
   b:SetScript("OnLeave", function(self) ns.Style.HideTooltip(self) if ns.SetHoverTooltip then ns.SetHoverTooltip(nil) end end)
   b:SetScript("OnClick", ns.Guard("minimap click", PinClick))
@@ -225,16 +263,26 @@ local function Give(e)
   local b = e.btn
   if not b then return end
   b:Hide()
-  b.pin = nil
+  b.pin, b.members = nil, nil
   e.btn = nil
   free[#free + 1] = b
 end
 
-local function Look(b, pin)
+local function Look(b, pin, scale)
   b.pin = pin
   stats.dressed = stats.dressed + 1
-  if pin.kind == "objective" then
+  if pin.kind == "entrance" or pin.kind == "dungeon" then
+    -- (1.3.5) the game's dungeon entrance icon; the mark a bit larger than a quest marker, the others smaller
+    b.ring:Hide()
+    local size = pin.kind == "entrance" and QUEST_SIZE + 4 or QUEST_SIZE
+    b:SetSize(size, size)
+    local ok, res = false, nil
+    if b.icon.SetAtlas then ok, res = pcall(b.icon.SetAtlas, b.icon, "Dungeon", false) end
+    if not ok or res == false then b.icon:SetTexture("Interface\\Icons\\INV_Misc_Key_03") end
+    b.icon:SetVertexColor(1, 1, 1)
+  elseif pin.kind == "objective" then
     local d = pin.small and math.max(5, math.floor(DOT_SIZE * 0.75 + 0.5)) or DOT_SIZE -- (1.2) many spawns: smaller dots
+    d = math.min(math.floor(d * (scale or 1) + 0.5), math.floor(d * 1.3)) -- (1.3.5) a bundle: a little larger, never above 1.3 times
     b:SetSize(d, d)
     b.icon:SetTexture("Interface\\COMMON\\Indicator-Yellow")
     b.icon:SetVertexColor(ns.QuestColor(pin.questID))
@@ -245,7 +293,7 @@ local function Look(b, pin)
     b:SetSize(QUEST_SIZE, QUEST_SIZE)
     SetQuestIcon(b.icon, pin.iconKind or pin.kind) -- (1.2) the picked quest of the zone list
   end
-  b:SetAlpha(pin.dimmed and 0.35 or 1)
+  b:SetAlpha(pin.dimmed and 0.35 or (pin.kind == "dungeon" and 0.8) or 1)
   b.kind = pin.kind
 end
 
@@ -261,20 +309,103 @@ end
 ---------------------------------------------------------------------------
 -- Pin list for the player's map
 ---------------------------------------------------------------------------
+-- The pins of the minimap: the map's quest pins (ns.PinsForMapBase) and (1.3.5) the quest mob
+-- dots near the player.
+local function MinimapPins(mapID)
+  local base = ns.PinsForMapBase(mapID)
+  nearAt = nil
+  if not ns.db.objectivePins then return base end
+  local _, px, py = PlayerOnZone()
+  local pc, pn, pw
+  if px then pc, pn, pw = ns.WorldPos(mapID, px, py) end
+  local radius = ns.MinimapRadius()
+  if not (pc and radius) then return base end
+  local pins = {}
+  for i, p in ipairs(base) do pins[i] = p end
+  for _, o in ipairs(ns.ObjectivePointsNear(mapID, pc, pn, pw, radius * NEAR_REACH)) do
+    o.kind = "objective"
+    pins[#pins + 1] = o
+  end
+  nearAt = { c = pc, n = pn, w = pw, r = radius }
+  return pins
+end
+
+-- (1.3.5) Bundles for k pixels per yard: e.head = the entry drawn for it (itself or another), the head
+-- keeps its members (pins) and draws at their middle (e.dn, e.dw), e.scale its size. Round 7: with more
+-- than MINIMAP_BUDGET markers in view (radius around where the dots were made) the dots are thinned.
+local bundledFor, bundledK -- the entries list and the scale the bundles were made for
+local function Bundle(k, radius)
+  bundledFor, bundledK = entries, k
+  local objs = {}
+  for _, e in ipairs(entries) do
+    e.head, e.members, e.scale, e.dn, e.dw = e, nil, 1, e.n, e.w
+    if e.pin.kind == "objective" then objs[#objs + 1] = e end
+  end
+  local n = #objs
+  local T = ns.ThinBuffer(n)
+  for i, e in ipairs(objs) do T.x[i], T.y[i], T.q[i], T.g[i] = e.n, e.w, e.pin.questID or 0, e.c end
+  local at = nearAt
+  local budget = ns.db.thinObjectives ~= false and at and radius and MINIMAP_BUDGET or nil
+  local inView, prepare
+  if budget then
+    local r2 = radius * radius
+    inView = function(B, i) return B.g[i] == at.c and (B.mx[i] - at.n) ^ 2 + (B.my[i] - at.w) ^ 2 <= r2 end
+    -- over the budget: nearest first, the nearest spot of each objective an anchor, near spots join less
+    prepare = function(B)
+      local d = {}
+      for i = 1, n do
+        local e = objs[i]
+        d[i] = e.c == at.c and math.sqrt((e.n - at.n) ^ 2 + (e.w - at.w) ^ 2) or math.huge
+        B.f[i] = 0.5 + 0.5 * math.min(1, d[i] / radius)
+      end
+      -- nearest first; the same distance: the list's own order (the same pins give the same list)
+      table.sort(B.order, function(a, b) local da, db = d[a], d[b] if da ~= db then return da < db end return a < b end)
+      local seen, anchors = {}, 0
+      for k2 = 1, n do
+        local i = B.order[k2]
+        if anchors >= ANCHORS or d[i] > radius then break end
+        local key = B.q[i] * 64 + (tonumber(objs[i].pin.index) or 0)
+        if not seen[key] then seen[key] = true B.a[i] = true anchors = anchors + 1 end
+      end
+    end
+  end
+  local level = ns.ThinObjectivePoints(BUNDLE_PX / k, budget, inView, prepare)
+  local shown, heads = 0, 0
+  for i = 1, n do
+    local h = T.head[i]
+    local e = objs[i]
+    if h == i then
+      heads = heads + 1
+      e.dn, e.dw = T.mx[i], T.my[i]
+      if T.cnt[i] > 1 then e.scale = ns.BundleScale(T.cnt[i]) end
+      if not inView or inView(T, i) then shown = shown + 1 end
+    else
+      local he = objs[h]
+      e.head = he
+      local m = he.members
+      if not m then m = { he.pin } he.members = m end
+      m[#m + 1] = e.pin
+    end
+  end
+  stats.bundled = n - heads
+  stats.thinLevel, stats.objMarkers = level, shown
+end
+ns.MinimapEntries = function() return entries end -- (tests)
+
 local function Rebuild(force)
   if not Enabled() or not curMap then
     HideAll()
     entries, lastSig = {}, nil
     return
   end
-  local pins = ns.PinsForMap(curMap)
+  local pins = MinimapPins(curMap)
   local sig = ns.PinsSignature(curMap, pins)
   if not force and lastSig and sig == lastSig then stats.skipped = stats.skipped + 1 return end
   lastSig = sig
   for _, e in ipairs(entries) do Give(e) end
   entries = {}
   -- available quests first (they are what you look for), then turn-ins, then dots
-  local order = { focus = 0, available = 1, turnin = 2, objective = 3 }
+  local order = { entrance = 0, focus = 0, dungeon = 1, available = 1, turnin = 2, objective = 3 }
   local display = ns.DisplayQuestPins(pins, ns.MINIMAP_OVERLAP) -- (1.25) no second "!" where the game draws one; (1.3.3) overlapping markers merge
   table.sort(display, function(a, b)
     local oa, ob = order[a.kind] or 4, order[b.kind] or 4
@@ -310,6 +441,12 @@ local function Update()
     facing = ns.Num(ns.Value(GetPlayerFacing))
     if not facing then if stats.shown > 0 then HideAll() end return end -- cannot place them right
   end
+  -- (1.3.5) moved on or zoomed out: the dots near you again
+  if nearAt and (nearAt.c ~= pc or radius > nearAt.r * 1.05
+      or (pn - nearAt.n) ^ 2 + (pw - nearAt.w) ^ 2 > (REBUILD_MOVE * nearAt.r) ^ 2) then
+    stats.moved = (stats.moved or 0) + 1
+    Rebuild(false)
+  end
   if not dirty and last.n == pn and last.w == pw and last.facing == facing and last.radius == radius and last.size == size then
     return
   end
@@ -317,6 +454,13 @@ local function Update()
   dirty = false
   stats.updates = stats.updates + 1
   local half = size / 2
+  -- (1.3.5) new pins or another zoom: bundle again (the dressed buttons follow)
+  local k = half / radius
+  if bundledFor ~= entries or bundledK ~= k then
+    for _, e in ipairs(entries) do Give(e) end
+    Bundle(k, radius)
+    stats.bundles = (stats.bundles or 0) + 1
+  end
   local shape = MinimapShape()
   -- cheap cut before the rotation: farther than the view's corner (square minimap)
   local reach = radius * 1.5
@@ -325,12 +469,14 @@ local function Update()
   local leaveNear = ns.db.skipGameGivers
   for _, e in ipairs(entries) do
     local x, y, inView
-    if n < MAX_SHOWN and e.c == pc then
-      local dn, de = e.n - pn, -(e.w - pw)
+    if n < MAX_SHOWN and e.c == pc and e.head == e then
+      local dn, de = e.dn - pn, -(e.dw - pw)
       local d2 = dn * dn + de * de
       local kind = e.pin.kind
       if leaveNear and d2 <= NEAR_GIVER2 and (kind == "available" or kind == "turnin") then
         near = near + 1 -- the game's own blip marks this giver
+      elseif kind == "dungeon" and (ns.db.dungeonPinsMinimap == false or d2 > DUNGEON2) then
+        -- (1.3.5) entrances only close by (and with their option on): no clutter at the edge
       elseif d2 <= reach2 then
         x, y = ns.MinimapOffset(dn, de, radius, half, facing)
         inView = ns.OnMinimap(x, y, half, 4, shape)
@@ -342,7 +488,8 @@ local function Update()
       if not b then
         b = Take()
         e.btn = b
-        Look(b, e.pin)
+        Look(b, e.pin, e.scale)
+        b.members = e.members
       end
       b:ClearAllPoints()
       b:SetPoint("CENTER", container, "CENTER", x, y)

@@ -1,6 +1,16 @@
 local _, ns = ...
 local L = ns.L
 
+-- (1.3.5, Daniel 10.10.) Repeatable quests (hand in more cloth, again and again) are never
+-- turned in automatically: the dialog comes back after each turn-in, so it would hand in every
+-- stack. The data's flag or the client's own "repeatable" answer.
+local function Repeatable(questID, clientFlag)
+  if clientFlag ~= nil and (not ns.Usable(clientFlag) or clientFlag == true) then return true end
+  questID = ns.Num(questID)
+  return questID ~= nil and questID > 0 and ns.IsRepeatableQuest and ns.IsRepeatableQuest(questID) or false
+end
+ns.SkipAutoTurnIn = Repeatable
+
 -- Gossip window (modern NPC dialog with quest list)
 ns.On("GOSSIP_SHOW", function()
   if ns.IsPaused() or not C_GossipInfo then return end
@@ -10,7 +20,7 @@ ns.On("GOSSIP_SHOW", function()
     for _, q in ipairs(ns.Value(C_GossipInfo.GetActiveQuests) or {}) do
       -- (1.23) secret flags count as "no" (like everywhere else)
       local id = type(q) == "table" and ns.True(q.isComplete) and ns.Num(q.questID)
-      if id and id > 0 then
+      if id and id > 0 and not Repeatable(id, q.repeatable) then
         C_GossipInfo.SelectActiveQuest(id)
         return
       end
@@ -41,7 +51,7 @@ ns.On("QUEST_GREETING", function()
   if ns.Active("autoTurnIn") then
     for i = 1, ns.Num(ns.Value(GetNumActiveQuests)) or 0 do
       local ok, _, isComplete = pcall(GetActiveTitle, i)
-      if ok and ns.True(isComplete) then
+      if ok and ns.True(isComplete) and not Repeatable(ns.Value(GetActiveQuestID, i)) then
         SelectActiveQuest(i)
         return
       end
@@ -96,6 +106,7 @@ end)
 ns.On("QUEST_PROGRESS", function()
   if ns.IsPaused() or not ns.Active("autoTurnIn") then return end
   if not ns.True(ns.Value(IsQuestCompletable)) then return end
+  if Repeatable(ns.Value(GetQuestID)) then return end -- (1.3.5) left to you
   -- Never spend gold automatically (unreadable cost: leave it to the player)
   if GetQuestMoneyToGet then
     local money = ns.Num(ns.Value(GetQuestMoneyToGet))
@@ -106,6 +117,7 @@ end)
 
 ns.On("QUEST_COMPLETE", function()
   if ns.IsPaused() or not ns.Active("autoTurnIn") then return end
+  if Repeatable(ns.Value(GetQuestID)) then return end -- (1.3.5) left to you
   local choices = ns.Num(ns.Value(GetNumQuestChoices))
   if not choices or choices > 1 then return end -- Rewards.lua decides (or the player)
   GetQuestReward(choices)

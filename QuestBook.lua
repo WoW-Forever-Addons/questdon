@@ -33,6 +33,7 @@ local C = Style.COLORS
 -- day totals, the last seven days).
 local W, H = 980, 640
 local HEADER_H = 42
+local GEAR_SIZE, GEAR_GAP = 18, 8 -- (round 8b) the options gear in the title bar, next to the X (14 px)
 local SIDE_W = 232
 local HERO_H = 116
 local JHERO_H = 188 -- journal: round map and four statistic cards
@@ -715,8 +716,9 @@ local EntryKind = {
       f.title:SetPoint("RIGHT", f, "RIGHT", -rightW, 0)
     end
     local focus = ns.zoneFocus and ns.zoneFocus.questID
-    if e.q and focus == e.q then f.active:Show() else f.active:Hide() end
-    f.onClick = e.q and function() ns.QuestBookShowQuest(e.q, Shift()) end or nil
+    if e.q and (focus == e.q or ns.QuestBookDetailID() == e.q) then f.active:Show() else f.active:Hide() end
+    -- (1.3.5) click: the detail card; Shift-click: also arrow and world map
+    f.onClick = e.q and function() ns.QuestBookShowQuest(e.q, Shift() and "map" or nil) end or nil
     f.tooltip = Fmt.EntryTooltip(e)
     f.questTip = e.q ~= nil
   end,
@@ -914,66 +916,174 @@ local ZoneKind = {
   end,
 }
 
--- (1.3.4) A dungeon as a "ready" card: level badge coloured by how well it
--- fits you, what is in your log, what you can pick up and where, a route
--- button (arrow from quest giver to quest giver) and show/hide.
-local DungeonKind = {
+-- (1.3.5) The chosen dungeon in plain words: "3 / 6 ready" large on the left with a gold bar, the sentences
+-- (what is ready, what needs quests first, what opens later) on the right.
+local DunSumKind = {
   create = function(list)
-    local f = CreateFrame("Button", nil, list)
+    local f = CreateFrame("Frame", nil, list)
     Card(f, 4, 4)
-    Clickable(f)
-    f.disc = Icon(f, 38, CIRCLE, "ARTWORK")
-    f.disc:SetPoint("CENTER", f, "LEFT", 34, 0)
-    f.ring = Icon(f, 46, MEDIA .. "BookRing", "OVERLAY")
-    f.ring:SetPoint("CENTER", f.disc, "CENTER", 0, 0)
-    f.level = Text(f, 14, "textPrimary", "CENTER", "OVERLAY")
-    f.level:SetPoint("CENTER", f.disc, "CENTER", 0, 0)
-    f.name = Text(f, 16, "goldLight", "LEFT")
-    f.name:SetPoint("TOPLEFT", f, "TOPLEFT", 64, -11)
-    f.fit = Text(f, 11, "good", "LEFT")
-    f.fit:SetPoint("LEFT", f.name, "RIGHT", 10, -1)
-    f.line1 = Text(f, 12, "textSecondary", "LEFT")
-    f.line1:SetPoint("TOPLEFT", f, "TOPLEFT", 64, -32)
-    f.line2 = Text(f, 11, "textHint", "LEFT")
-    f.line2:SetPoint("TOPLEFT", f, "TOPLEFT", 64, -49)
-    f.route = Chip(f, function() if f.onRoute then ns.SafeCall("quest book", f.onRoute) end end)
-    f.route:SetPoint("RIGHT", f, "RIGHT", -70, 0)
-    f.toggleText = Text(f, 11, "textHint", "RIGHT")
-    f.toggleText:SetPoint("RIGHT", f, "RIGHT", -18, 0)
+    f.big = Text(f, 26, "goldLight", "CENTER")
+    f.big:SetPoint("TOP", f, "TOPLEFT", 74, -12)
+    f.bigLabel = Text(f, 11, "textSecondary", "CENTER")
+    f.bigLabel:SetPoint("TOP", f.big, "BOTTOM", 0, -3)
+    f.track = Tex(f, "ARTWORK", "barBackground")
+    f.track:SetSize(110, 4)
+    f.track:SetPoint("TOP", f.bigLabel, "BOTTOM", 0, -6)
+    f.fill = Tex(f, "OVERLAY", "gold")
+    f.fill:SetPoint("TOPLEFT", f.track, "TOPLEFT", 0, 0)
+    f.fill:SetPoint("BOTTOMLEFT", f.track, "BOTTOMLEFT", 0, 0)
+    f.sep = Tex(f, "ARTWORK", "gold", 0.35)
+    f.sep:SetWidth(1)
+    f.sep:SetPoint("TOPLEFT", f, "TOPLEFT", 146, -12)
+    f.sep:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 146, 12)
+    f.fit = Text(f, 12, "good", "LEFT")
+    f.fit:SetPoint("TOPLEFT", f, "TOPLEFT", 162, -12)
+    f.lines = {}
+    for i = 1, 4 do
+      local t = Text(f, 13, "textPrimary", "LEFT")
+      t:SetPoint("TOPLEFT", f, "TOPLEFT", 162, -12 - 17 * i)
+      f.lines[i] = t
+    end
     return f
   end,
   render = function(f, it)
-    f:SetCardLook(it.open and "card" or "cardLow", "cardLow", 0.95, "gold", it.open and 0.7 or 0.4)
-    f.level:SetText(it.minL and tostring(it.minL) or "?")
+    f:SetCardLook("card", "cardLow", 0.97, "gold", 0.7)
+    f.big:SetText(("%d / %d"):format(it.ready or 0, math.max(it.open or 0, it.ready or 0)))
+    f.bigLabel:SetText((it.open or 0) == 0 and L["all done"] or L["ready"])
+    local frac = (it.total or 0) > 0 and ((it.ready or 0) + (it.done or 0)) / it.total or 0
+    if frac > 0 then f.fill:SetWidth(math.max(1, 110 * math.min(1, frac))) f.fill:Show() else f.fill:Hide() end
+    local room = RowW(f) - 162 - 16
+    f.fit:SetText((it.fitText or "") .. ((it.done or 0) > 0 and Colorize("  ·  " .. L["%d of %d done"]:format(it.done, it.total), "textHint") or ""))
+    SetColor(f.fit, it.fitColor or "textHint")
+    Fit(f.fit, room, f)
+    for i, t in ipairs(f.lines) do
+      t:SetText(it.lines and it.lines[i] or "")
+      Fit(t, room, f)
+    end
+  end,
+}
+
+-- (1.3.5) One line of text under a quest: the way to it in colours, or the colour legend.
+local DunPathKind = {
+  create = function(list)
+    local f = CreateFrame("Frame", nil, list)
+    f.text = Text(f, 11, "textSecondary", "LEFT")
+    return f
+  end,
+  render = function(f, it)
+    f.text:ClearAllPoints()
+    if it.legend then
+      f.text:SetPoint("LEFT", f, "LEFT", 14, 0)
+      SetColor(f.text, "textHint")
+    else
+      f.text:SetPoint("LEFT", f, "LEFT", (it.indent or 0) + 4, 2)
+      SetColor(f.text, "textSecondary")
+    end
+    f.text:SetText(it.text or "")
+    Fit(f.text, RowW(f) - (it.indent or 0) - 20, f)
+  end,
+}
+
+-- (1.3.5, Daniel 10.10.: "a small fitting picture of the instance"; "the number is completely off-centre")
+-- The round badge of a dungeon: its picture (Dungeons.lua: the game client's own art, nothing shipped),
+-- masked round inside the gold ring. Without a picture the level, in a box as large as the circle and
+-- centred in it both ways (before, the text only had its CENTER point on the circle).
+local function BadgeParts(f, disc, size)
+  f.pic = f:CreateTexture(nil, "ARTWORK", nil, 1)
+  f.pic:SetSize(size - 2, size - 2)
+  f.pic:SetPoint("CENTER", disc, "CENTER", 0, 0)
+  if f.CreateMaskTexture then
+    local ok, mask = pcall(f.CreateMaskTexture, f)
+    if ok and mask then
+      pcall(mask.SetTexture, mask, CIRCLE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+      mask:SetAllPoints(f.pic)
+      if f.pic.AddMaskTexture then pcall(f.pic.AddMaskTexture, f.pic, mask) end
+      f.picMask = mask
+    end
+  end
+  f.pic:Hide()
+  f.level:ClearAllPoints()
+  f.level:SetPoint("CENTER", disc, "CENTER", 0, 0)
+  if f.level.SetSize then f.level:SetSize(size, size) end
+  f.level:SetJustifyH("CENTER")
+  if f.level.SetJustifyV then f.level:SetJustifyV("MIDDLE") end
+  f.badgeSize = size
+end
+-- Picture of inst, else levelText. true when the picture shows.
+local function SetBadge(f, inst, levelText, quiet)
+  local tex, source
+  if inst then tex, source = ns.DungeonIcon(inst) end
+  local shown = false
+  if tex then
+    -- (round 8) an icon of the icon set: without its dark frame, so the ring holds only the picture
+    if f.pic.SetTexCoord then
+      if source == "icon" then f.pic:SetTexCoord(0.08, 0.92, 0.08, 0.92) else f.pic:SetTexCoord(0, 1, 0, 1) end
+    end
+    local ok, res = pcall(f.pic.SetTexture, f.pic, tex)
+    local got = f.pic.GetTexture and f.pic:GetTexture()
+    if ok and res ~= false and (res == true or got ~= nil) then shown = true else ns.DungeonIconFailed(inst) end
+  end
+  if shown then
+    if f.pic.SetDesaturated then f.pic:SetDesaturated(quiet and true or false) end
+    f.pic:Show()
+    f.level:Hide()
+  else
+    f.pic:Hide()
+    f.level:SetText(levelText or "?")
+    f.level:Show()
+  end
+  f.picShown = shown
+  return shown
+end
+ns.QuestBookSetBadge = SetBadge -- (tests)
+ns.QuestBookBadgeParts = BadgeParts -- (tests)
+
+-- (1.3.5) A line of the dungeon dropdown: picture (or level) in a gold ring, name, fit, what is ready.
+local DunPickKind = {
+  create = function(list)
+    local f = CreateFrame("Button", nil, list)
+    Clickable(f)
+    f.sel = Tex(f, "BACKGROUND", "rowActive", nil, 2)
+    f.sel:SetAllPoints(f)
+    f.disc = Icon(f, 26, CIRCLE, "ARTWORK")
+    f.disc:SetPoint("CENTER", f, "LEFT", 22, 0)
+    f.ring = Icon(f, 32, MEDIA .. "BookRing", "OVERLAY")
+    f.ring:SetPoint("CENTER", f.disc, "CENTER", 0, 0)
+    f.level = Text(f, 11, "textPrimary", "CENTER", "OVERLAY")
+    BadgeParts(f, f.disc, 26)
+    f.name = Text(f, 13, "goldLight", "LEFT")
+    f.name:SetPoint("TOPLEFT", f, "TOPLEFT", 44, -5)
+    f.fit = Text(f, 11, "good", "LEFT")
+    f.fit:SetPoint("LEFT", f.name, "RIGHT", 8, 0)
+    f.sub = Text(f, 11, "textHint", "LEFT")
+    f.sub:SetPoint("TOPLEFT", f, "TOPLEFT", 44, -22)
+    -- (1.3.5) a tick when all your quests of the dungeon are done
+    f.tick = Icon(f, 16, "Interface\\RAIDFRAME\\ReadyCheck-Ready", "ARTWORK")
+    f.tick:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+    return f
+  end,
+  render = function(f, it)
+    if it.selected then f.sel:Show() else f.sel:Hide() end
+    if it.done then f.tick:Show() else f.tick:Hide() end
+    f.name:SetAlpha(it.quiet and 0.6 or 1)
+    SetBadge(f, it.inst, it.minL and tostring(it.minL) or "?", it.quiet)
     local c = RGB(it.fitColor or "textHint")
     f.disc:SetVertexColor(c[1] * 0.45, c[2] * 0.45, c[3] * 0.45, 1)
     f.level:SetTextColor(c[1], c[2], c[3], 1)
     f.name:SetText(it.text or "")
     f.fit:SetText(it.fitText or "")
     SetColor(f.fit, it.fitColor or "textHint")
-    f.line1:SetText(it.line1 or "")
-    f.line2:SetText(it.line2 or "")
-    f.toggleText:SetText(it.right or "")
-    local rw = RowW(f)
-    local routeW = 0
-    if it.onRoute then
-      f.route:Set(L["Route"], false)
-      f.route:Show()
-      routeW = (ns.Num(f.route:GetWidth()) or 60) + 12
-    else
-      f.route:Hide()
-    end
-    Fit(f.toggleText, 60, f)
-    local room = rw - 64 - routeW - 80
-    Fit(f.name, room * 0.7, f)
-    Fit(f.fit, room - TextWidth(f.name) - 10, f)
-    Fit(f.line1, room, f) Fit(f.line2, room, f)
-    f.onRoute = it.onRoute
+    f.sub:SetText(it.sub or "")
+    local room = RowW(f) - 44 - 12 - (it.done and 22 or 0)
+    Fit(f.name, room * 0.65, f)
+    Fit(f.fit, room - TextWidth(f.name) - 8, f)
+    Fit(f.sub, room, f)
     f.onClick, f.tooltip = it.onClick, it.tooltip
   end,
 }
 
-local KINDS = { head = HeadKind, empty = EmptyKind, entry = EntryKind, quest = QuestKind, zone = ZoneKind, dungeon = DungeonKind }
+local KINDS = { head = HeadKind, empty = EmptyKind, entry = EntryKind, quest = QuestKind, zone = ZoneKind,
+  dsum = DunSumKind, dpath = DunPathKind, dpick = DunPickKind }
 
 ---------------------------------------------------------------------------
 -- Zones
@@ -1140,7 +1250,7 @@ local function QuestSubText(e)
   if e.group == "later" then return e.text end
   if e.group == "done" then return nil end
   local givers = ns.QuestGiverIDs(e.questID)
-  local giver = givers and ns.CreatureName(givers[1])
+  local giver = givers and ns.LocalNpcName(givers[1])
   local learned = ns.db.learned and ns.db.learned[e.questID]
   giver = giver or (learned and learned.start and learned.start.npc)
   return giver and (L["Quest giver"] .. ": " .. giver) or nil
@@ -1164,8 +1274,10 @@ local function QuestItem(e, extra)
   local pill, color = Pill(e)
   local it = { kind = "quest", h = ROW_H, questID = e.questID, level = e.level, title = e.title or ns.QuestTitle(e.questID),
     sub = QuestSub(e), pill = pill, pillColor = color, quiet = e.group == "done" or e.group == "later",
-    active = FocusID() == e.questID, tooltip = ns.ZoneQuestTooltip(e) }
-  it.onClick = function() ns.QuestBookShowQuest(e.questID, Shift()) end -- (1.3.4) arrow, map mark and the detail card
+    active = FocusID() == e.questID or ns.QuestBookDetailID() == e.questID, tooltip = ns.ZoneQuestTooltip(e) }
+  -- (1.3.5, Daniel 08.10. Merkliste) a click shows the detail card only, the arrow stays where it
+  -- was; the card's buttons point the arrow and open the map. Shift-click: all at once.
+  it.onClick = function() ns.QuestBookShowQuest(e.questID, Shift() and "map" or nil) end
   if extra then for k, v in pairs(extra) do it[k] = v end end
   return it
 end
@@ -1432,7 +1544,6 @@ end
 -- (1.3.3) Dungeons: per dungeon its quests for you; under an open quest the
 -- quests still to do before it, deepest first (the order you walk them).
 ---------------------------------------------------------------------------
-local dunOpen = {} -- instanceID -> true/false (nil: open when it fits your level)
 
 -- (1.3.4) What to do in a quest in one line: Wowhead's objective sentence, else the
 -- objective mobs and items of the data ("Kobold Digger, Riverpaw Miner"); nil if unknown.
@@ -1450,7 +1561,7 @@ function ns.QuestTodo(id)
       end
       if #(type(o[2]) == "table" and o[2] or {}) == 0 then
         for _, c in ipairs(type(o[1]) == "table" and o[1] or {}) do
-          local n = ns.CreatureName(c)
+          local n = ns.LocalNpcName(c)
           if n and not seen[n] then seen[n] = true names[#names + 1] = n end
           break
         end
@@ -1504,116 +1615,284 @@ function ns.DungeonQuestChain(id, stop)
 end
 
 local DUN_RANK = { log = 1, available = 2, later = 3, done = 4 }
-local function DungeonItems()
-  local items = {}
-  local player = ns.PlayerLevel() or 1
+-- (1.3.5, Daniel 10.10.: "a dropdown with the dungeons, then their quests and what each needs first, more than
+-- 'later', readable for anyone") one dungeon at a time, chosen at the top; below it in plain words what you can
+-- do now, what to do first (numbered, with what it unlocks), what is not yet and why (with the way to it), done.
+local dunSel -- instanceID chosen in the dropdown (nil: the one that fits you)
+
+-- (1.3.5) sorted by their level range (Dungeons.lua: the game's, else Data/Dungeon_Levels.lua)
+local function DungeonInsts()
   local insts = {}
   for inst in pairs(ns.ATT_DUNGEONS or {}) do
     if #ns.DungeonQuestIDs(inst) > 0 then insts[#insts + 1] = inst end
   end
+  local lo, hi = {}, {}
+  for _, inst in ipairs(insts) do
+    local a, b = ns.DungeonLevelRange(inst)
+    lo[inst], hi[inst] = a or 99, b or a or 99
+  end
   table.sort(insts, function(a, b)
-    local la, lb = ns.DungeonMinLevel(a) or 99, ns.DungeonMinLevel(b) or 99
-    if la ~= lb then return la < lb end
+    if lo[a] ~= lo[b] then return lo[a] < lo[b] end
+    if hi[a] ~= hi[b] then return hi[a] < hi[b] end
     return a < b
   end)
-  for _, inst in ipairs(insts) do
-    local entries, done = {}, 0
-    for _, id in ipairs(ns.DungeonQuestIDs(inst)) do
-      local e = QuestEntry(id)
-      if e then
-        entries[#entries + 1] = e
-        if e.group == "done" then done = done + 1 end
-      end
+  return insts
+end
+
+-- Your quests of a dungeon: entries (QuestEntry) and how many are done.
+local function DungeonEntries(inst)
+  local entries, done = {}, 0
+  for _, id in ipairs(ns.DungeonQuestIDs(inst)) do
+    local e = QuestEntry(id)
+    if e then
+      entries[#entries + 1] = e
+      if e.group == "done" then done = done + 1 end
     end
-    if #entries > 0 then
-      local minL = ns.DungeonMinLevel(inst)
-      local open = dunOpen[inst]
-      if open == nil then open = done < #entries and minL ~= nil and player >= minL - 3 and player <= minL + 10 end
-      -- (1.3.4) the "ready" card: in the log, to pick up (with the steps before), later; where to pick up
-      local n = { log = 0, available = 0, later = 0 }
-      local pick, pickSeen, zones, zoneSeen = {}, {}, {}, {}
-      local ownIDs = {}
-      for _, e in ipairs(entries) do ownIDs[e.questID] = true end
-      local function Pick(id)
-        if pickSeen[id] then return end
-        pickSeen[id] = true
-        pick[#pick + 1] = id
-        local z = StartZone(id)
-        if z and not zoneSeen[z] then zoneSeen[z] = true zones[#zones + 1] = z end
-      end
-      for _, e in ipairs(entries) do
-        if n[e.group] then n[e.group] = n[e.group] + 1 end
-        if e.group == "available" then Pick(e.questID) end
-        if e.group ~= "done" then
-          for _, p in ipairs(ns.DungeonQuestChain(e.questID, ownIDs)) do if p.group == "available" then Pick(p.questID) end end
-        end
-      end
-      local parts = {}
-      if n.log > 0 then parts[#parts + 1] = Colorize(L["%d in log"]:format(n.log), "warning") end
-      if #pick > 0 then parts[#parts + 1] = Colorize(L["%d to pick up"]:format(#pick), "accent") end
-      if n.later > 0 then parts[#parts + 1] = L["%d later"]:format(n.later) end
-      parts[#parts + 1] = L["%d of %d done"]:format(done, #entries)
-      local fitText, fitColor
-      if minL and player < minL - 2 then fitText, fitColor = L["too early"], "critical"
-      elseif minL and player > minL + 12 then fitText, fitColor = L["low level"], "textHint"
-      elseif minL then fitText, fitColor = L["fits your level"], "good" end
-      items[#items + 1] = { kind = "dungeon", h = 72, inst = inst, text = ns.DungeonName(inst), minL = minL,
-        fitText = fitText, fitColor = fitColor,
-        line1 = table.concat(parts, Colorize("  ·  ", "textHint")),
-        line2 = #zones > 0 and L["Pick up in: %s"]:format(table.concat(zones, ", ")) or nil,
-        open = open, right = open and L["hide"] or L["show"],
-        onClick = function() dunOpen[inst] = not open Refresh() end,
-        onRoute = #pick > 0 and function() ns.QuestBookRoute(pick) end or nil }
-      if open then
-        table.sort(entries, function(a, b)
-          local ra, rb = DUN_RANK[a.group] or 5, DUN_RANK[b.group] or 5
-          if ra ~= rb then return ra < rb end
-          local la, lb = a.level > 0 and a.level or 999, b.level > 0 and b.level or 999
-          if la ~= lb then return la < lb end
-          return a.questID < b.questID
-        end)
-        local own, listed = {}, {}
-        for _, e in ipairs(entries) do own[e.questID] = true end
-        for _, e in ipairs(entries) do
-          if e.group ~= "done" then
-            -- (1.3.4) the dungeon quest as the goal: what to do there, then its steps in order
-            local it = QuestItem(e, { goal = true, h = 62 })
-            local todo = ns.QuestTodo(e.questID)
-            it.sub = WithZone(todo or QuestSub(e), e.questID)
-            items[#items + 1] = it
-            local chain = {}
-            for _, p in ipairs(ns.DungeonQuestChain(e.questID, own)) do
-              -- (1.3.4) a step shared by two quests of the dungeon: only under the first
-              if not listed[p.questID] then
-                listed[p.questID] = true
-                chain[#chain + 1] = p
-              end
-            end
-            -- step number: 1 + the highest step among its prerequisites in the chain (parallel quests share one)
-            local stepOf = {}
-            for _, p in ipairs(chain) do
-              local n = 1
-              for _, pre in ipairs(ns.QuestPrereqs(p.questID) or {}) do if stepOf[pre] then n = math.max(n, stepOf[pre] + 1) end end
-              stepOf[p.questID] = n
-            end
-            for i, p in ipairs(chain) do
-              local c = QuestItem(p, { indent = 10, step = stepOf[p.questID], firstStep = i == 1, lastStep = i == #chain })
-              local ptodo = ns.QuestTodo(p.questID)
-              if ptodo then
-                c.sub = WithZone(ptodo, p.questID)
-              else
-                c.sub = WithZone(QuestSubText(p), p.questID)
-              end
-              items[#items + 1] = c
-            end
-          end
-        end
-        if done == #entries then items[#items + 1] = { kind = "empty", h = 40, text = L["All quests of this dungeon done."] } end
+  end
+  return entries, done
+end
+
+-- (1.3.5) In plain words against the dungeon's level range: fits, in n levels (red), below your level
+-- (Dungeons.lua, the same words as the entrance pins).
+local function LevelsToGo(n) return n == 1 and L["in 1 level"] or L["in %d levels"]:format(n) end
+local function FitOf(inst) return ns.DungeonFitText(inst, ns.PlayerLevel() or 1) end
+local function RangeOf(inst)
+  local lo, hi = ns.DungeonLevelRange(inst)
+  if not lo then return nil end
+  return L["Level %d-%d"]:format(lo, hi or lo)
+end
+
+-- The dungeon shown: the chosen one, else the one you are in, else the first that fits you with quests left,
+-- else the next one up, else the first.
+local function SelectedDungeon(insts)
+  insts = insts or DungeonInsts()
+  local have = {}
+  for _, inst in ipairs(insts) do have[inst] = true end
+  if dunSel and have[dunSel] then return dunSel end
+  -- (1.3.5) chosen on the map (an entrance pin): also a dungeon without quests for you
+  if dunSel and ns.ATT_DUNGEONS and ns.ATT_DUNGEONS[dunSel] then return dunSel end
+  local here = ns.CurrentDungeon and ns.CurrentDungeon()
+  if here and have[here] then return here end
+  -- (1.3.5) the first one of your level with quests left, else the next one up
+  local player = ns.PlayerLevel() or 1
+  local nextUp
+  for _, inst in ipairs(insts) do
+    local entries, done = DungeonEntries(inst)
+    local fit = ns.DungeonFit(inst, player)
+    if done < #entries then
+      if fit == "fits" then return inst end
+      if not nextUp and fit == "later" then nextUp = inst end
+    end
+  end
+  return nextUp or insts[1]
+end
+ns.QuestBookSelectedDungeon = function() return SelectedDungeon() end -- (tests)
+function ns.QuestBookSelectDungeon(inst) dunSel = inst if Refresh then Refresh(true) end end
+
+-- A title without what it shares with the one before ("The Defias Brotherhood (2/7)" after (1/7): "(2/7)").
+local function ShortAfter(prev, title)
+  local base = title:match("^(.-)%s*%(%d+/%d+%)$")
+  local pbase = prev and prev:match("^(.-)%s*%(%d+/%d+%)$")
+  if base and pbase and base == pbase then return title:match("(%(%d+/%d+%))$") end
+  return title
+end
+
+-- The way to a dungeon quest, done steps too: "Defias Brotherhood (1/7) » (2/7) » ... » this quest", each step
+-- in the colour of its state.
+local PATH_COLOR = { done = "good", log = "warning", available = "accent", later = "textHint" }
+local function DungeonPath(id)
+  local out, seen = {}, { [id] = true }
+  local function Walk(q, depth)
+    if depth > 12 then return end
+    for _, pre in ipairs(ns.QuestPrereqs(q) or {}) do
+      if not seen[pre] then
+        seen[pre] = true
+        Walk(pre, depth + 1)
+        local e = QuestEntry(pre)
+        if e then out[#out + 1] = e end
       end
     end
   end
-  if #items == 0 then items[1] = { kind = "empty", h = 60, text = L["No dungeon quests known for you."] } end
+  Walk(id, 0)
+  if #out == 0 then return nil end
+  local parts, prev = {}, nil
+  for _, e in ipairs(out) do
+    local t = Plain(e.title or ns.QuestTitle(e.questID) or "?")
+    parts[#parts + 1] = Colorize(ShortAfter(prev, t), PATH_COLOR[e.group] or "textHint")
+    prev = t
+  end
+  parts[#parts + 1] = Colorize(L["this quest"], "gold")
+  return table.concat(parts, Colorize("  »  ", "textHint"))
+end
+ns.QuestBookDungeonPath = DungeonPath -- (tests)
+
+local function DungeonItems()
+  local items = {}
+  local insts = DungeonInsts()
+  if #insts == 0 then
+    items[1] = { kind = "empty", h = 60, text = L["No dungeon quests known for you."] }
+    return items
+  end
+  local inst = SelectedDungeon(insts)
+  local entries, done = DungeonEntries(inst)
+  local own = {}
+  for _, e in ipairs(entries) do own[e.questID] = true end
+  table.sort(entries, function(a, b)
+    local ra, rb = DUN_RANK[a.group] or 5, DUN_RANK[b.group] or 5
+    if ra ~= rb then return ra < rb end
+    local la, lb = a.level > 0 and a.level or 999, b.level > 0 and b.level or 999
+    if la ~= lb then return la < lb end
+    return a.questID < b.questID
+  end)
+  -- the steps before the dungeon quests: each once, with the dungeon quests it unlocks
+  local steps, stepIdx, unlocks = {}, {}, {}
+  for _, e in ipairs(entries) do
+    if e.group ~= "done" then
+      for _, p in ipairs(ns.DungeonQuestChain(e.questID, own)) do
+        if not stepIdx[p.questID] then
+          steps[#steps + 1] = p
+          stepIdx[p.questID] = #steps
+          unlocks[p.questID] = {}
+        end
+        local u = unlocks[p.questID]
+        u[#u + 1] = Plain(e.title or ns.QuestTitle(e.questID) or "?")
+      end
+    end
+  end
+  local stepOf = {}
+  for _, p in ipairs(steps) do
+    local n = 1
+    for _, pre in ipairs(ns.QuestPrereqs(p.questID) or {}) do if stepOf[pre] then n = math.max(n, stepOf[pre] + 1) end end
+    stepOf[p.questID] = n
+  end
+  local n = { log = 0, available = 0, later = 0 }
+  local laterLevel, afterQuest, firstLevel = 0, 0, nil
+  for _, e in ipairs(entries) do
+    if n[e.group] then n[e.group] = n[e.group] + 1 end
+    if e.group == "later" then
+      if #ns.DungeonQuestChain(e.questID, own) > 0 then afterQuest = afterQuest + 1
+      else
+        laterLevel = laterLevel + 1
+        local lv = ns.QuestMinLevel and ns.QuestMinLevel(e.questID) or e.level
+        if lv and lv > 0 and (not firstLevel or lv < firstLevel) then firstLevel = lv end
+      end
+    end
+  end
+  local ready, open = n.log + n.available, #entries - done
+  -- the summary in plain words
+  local lines = {}
+  if #entries == 0 then
+    lines[1] = L["No quests of this dungeon for you."]
+  elseif open == 0 then
+    lines[1] = L["All quests of this dungeon done."]
+  else
+    if ready == 0 then lines[#lines + 1] = L["Nothing to take right now."]
+    elseif ready == 1 then lines[#lines + 1] = L["1 quest is ready (in your log or to take)."]
+    else lines[#lines + 1] = L["%d quests are ready (in your log or to take)."]:format(ready) end
+    if afterQuest == 1 then lines[#lines + 1] = L["1 needs other quests first: see Do these first."]
+    elseif afterQuest > 1 then lines[#lines + 1] = L["%d need other quests first: see Do these first."]:format(afterQuest) end
+    if laterLevel == 1 then lines[#lines + 1] = L["1 opens later (from level %d)."]:format(firstLevel or 0)
+    elseif laterLevel > 1 then lines[#lines + 1] = L["%d open later (the first from level %d)."]:format(laterLevel, firstLevel or 0) end
+  end
+  local fitText, fitColor = FitOf(inst)
+  items[#items + 1] = { kind = "dsum", h = 34 + 17 * #lines, inst = inst, ready = ready, open = open, done = done,
+    total = #entries, lines = lines, fitText = fitText, fitColor = fitColor }
+  -- take now: in the log first, then to pick up
+  local now = {}
+  for _, e in ipairs(entries) do if e.group == "log" or e.group == "available" then now[#now + 1] = e end end
+  if #now > 0 then
+    items[#items + 1] = { kind = "head", h = 30, text = L["Take now"], color = "good", count = #now }
+    for _, e in ipairs(now) do
+      local it = QuestItem(e, { goal = true, h = 62 })
+      local todo = ns.QuestTodo(e.questID)
+      if e.group == "log" then
+        it.sub = Colorize(L["In your log"], "warning") .. (todo and ("  ·  " .. todo) or "")
+      else
+        it.sub = WithZone(QuestSubText(e) or todo, e.questID)
+      end
+      items[#items + 1] = it
+    end
+  end
+  -- do these first: numbered, each with what it unlocks
+  if #steps > 0 then
+    items[#items + 1] = { kind = "head", h = 30, text = L["Do these first"], color = "warning", count = #steps }
+    for i, p in ipairs(steps) do
+      local c = QuestItem(p, { indent = 4, step = stepOf[p.questID], firstStep = i == 1, lastStep = i == #steps })
+      local what = L["Unlocks: %s"]:format(table.concat(unlocks[p.questID], ", "))
+      if p.group == "later" then
+        c.sub = Colorize(p.text or L["not yet"], "textHint") .. "  ·  " .. what
+      else
+        c.sub = WithZone(what, p.questID)
+      end
+      items[#items + 1] = c
+    end
+  end
+  -- not yet: why, and the way to it
+  local later = {}
+  for _, e in ipairs(entries) do if e.group == "later" then later[#later + 1] = e end end
+  if #later > 0 then
+    items[#items + 1] = { kind = "head", h = 30, text = L["Not yet"], color = "textSecondary", count = #later }
+    for _, e in ipairs(later) do
+      local it = QuestItem(e, { goal = true, h = 62 })
+      local chain = ns.DungeonQuestChain(e.questID, own)
+      if #chain > 0 then
+        local first = chain[1]
+        it.sub = L["Opens after: %s"]:format(Plain(first.title or ns.QuestTitle(first.questID) or "?"))
+      else
+        it.sub = e.text or L["not yet"]
+      end
+      items[#items + 1] = it
+      local path = DungeonPath(e.questID)
+      if path then items[#items + 1] = { kind = "dpath", h = 24, text = path, indent = 52 } end
+    end
+  end
+  if done > 0 then
+    items[#items + 1] = { kind = "head", h = 30, text = L["Done"], color = "good", count = done }
+    for _, e in ipairs(entries) do
+      if e.group == "done" then items[#items + 1] = QuestItem(e, { h = 40 }) end
+    end
+  end
+  items[#items + 1] = { kind = "dpath", h = 30, legend = true,
+    text = L["Colours: %s done, %s in your log, %s to take, %s not yet."]:format(Colorize(L["green"], "good"),
+      Colorize(L["yellow"], "warning"), Colorize(L["blue"], "accent"), Colorize(L["grey"], "textHint")) }
   return items
+end
+
+-- The dropdown's lines, (1.3.5, Daniel 10.10.) in groups by your level: "Your level (n)" (inside the
+-- dungeon's range), "Coming up" (each "in n levels" in red), then "Below your level" and "All quests done"
+-- in grey. Each line: name, its level range, how many of its quests are done, a tick when all are done.
+local DUN_GROUPS = { "fits", "later", "below", "done" }
+function ns.QuestBookDungeonChoices()
+  local out = {}
+  local sel = SelectedDungeon()
+  local player = ns.PlayerLevel() or 1
+  local groups = { fits = {}, later = {}, below = {}, done = {} }
+  for _, inst in ipairs(DungeonInsts()) do
+    local entries, done = DungeonEntries(inst)
+    local ready = 0
+    for _, e in ipairs(entries) do if e.group == "log" or e.group == "available" then ready = ready + 1 end end
+    local fit, n = ns.DungeonFit(inst, player)
+    local allDone = #entries > 0 and done == #entries
+    local key = allDone and "done" or fit or "later"
+    local lo = ns.DungeonLevelRange(inst)
+    local sub = L["%d of %d quests done"]:format(done, #entries)
+    if fit == "later" and not allDone then sub = Colorize(LevelsToGo(n), "critical") .. "  ·  " .. sub
+    elseif ready > 0 then sub = sub .. "  ·  " .. L["%d ready"]:format(ready) end
+    local quiet = key == "below" or key == "done"
+    table.insert(groups[key], { kind = "dpick", h = 40, inst = inst, text = ns.DungeonName(inst), minL = lo,
+      fitText = RangeOf(inst), fitColor = quiet and "textHint" or (fit == "later" and "critical" or "good"), selected = inst == sel,
+      quiet = quiet, done = allDone, sub = sub, group = key, fit = fit, toGo = n, total = #entries, doneCount = done,
+      onClick = function() dunSel = inst if P.dunDrop then P.dunDrop:Hide() end Refresh(true) end })
+  end
+  local titles = { fits = L["Your level (%d)"]:format(player), later = L["Coming up"], below = L["Below your level"], done = L["All quests done"] }
+  for _, key in ipairs(DUN_GROUPS) do
+    if #groups[key] > 0 then
+      out[#out + 1] = { kind = "head", h = 26, text = titles[key], count = #groups[key],
+        color = (key == "below" or key == "done") and "textHint" or (key == "later" and "warning" or "good") }
+      for _, it in ipairs(groups[key]) do out[#out + 1] = it end
+    end
+  end
+  return out
 end
 ns.QuestBookDungeonItems = DungeonItems -- (tests)
 
@@ -1652,7 +1931,7 @@ local function RouteNext()
     return
   end
   local id = route.ids[route.i]
-  ns.QuestBookShowQuest(id)
+  ns.QuestBookShowQuest(id, "arrow") -- the route leads the arrow
   ns.Print(L["Route %d/%d: %s"]:format(route.i, #route.ids, ns.QuestTitle(id)))
 end
 function ns.QuestBookRoute(ids)
@@ -2195,11 +2474,165 @@ local function CreateSearchPage(page)
   lists.search = list
 end
 
+-- (1.3.5) the dungeon chosen in a dropdown at the top (own frames), the route button beside it
+local DUN_BAR_H = 56
+local UpdateDungeonBar -- (1.3.5) the mark button updates the bar
 local function CreateDungeonPage(page)
+  local bar = CreateFrame("Button", nil, page)
+  bar:SetPoint("TOPLEFT", page, "TOPLEFT", 10, -8)
+  bar:SetSize(470, 46)
+  Card(bar, 0, 0)
+  Clickable(bar)
+  bar.disc = Icon(bar, 30, CIRCLE, "ARTWORK")
+  bar.disc:SetPoint("CENTER", bar, "LEFT", 26, 0)
+  bar.ring = Icon(bar, 37, MEDIA .. "BookRing", "OVERLAY")
+  bar.ring:SetPoint("CENTER", bar.disc, "CENTER", 0, 0)
+  bar.level = Text(bar, 12, "textPrimary", "CENTER", "OVERLAY")
+  BadgeParts(bar, bar.disc, 30)
+  bar.name = Text(bar, 16, "goldLight", "LEFT")
+  bar.name:SetPoint("TOPLEFT", bar, "TOPLEFT", 52, -6)
+  bar.sub = Text(bar, 11, "textSecondary", "LEFT")
+  bar.sub:SetPoint("TOPLEFT", bar, "TOPLEFT", 52, -26)
+  bar.caret = Style.IconButton(bar, "expand")
+  bar.caret:SetPoint("RIGHT", bar, "RIGHT", -10, 0)
+  bar.hint = Text(bar, 11, "textHint", "RIGHT")
+  bar.hint:SetPoint("TOPRIGHT", bar, "TOPRIGHT", -30, -8) -- (1.3.5) on the name's line: the second line gets the whole width
+  local function Toggle() if P.dunDrop:IsShown() then P.dunDrop:Hide() else P.dunDrop:Show() lists.dunPick:SetItems(ns.QuestBookDungeonChoices()) end end
+  bar.onClick = Toggle
+  bar.caret:SetOnClick(Toggle)
+  P.dunBar = bar
+  -- (1.3.5, Daniel 10.10.) "Mark entrance": arrow and a pin on the map and the minimap; again: "Remove mark"
+  local markChip = Chip(page, function(self)
+    if self.disabled or not self.inst then return end
+    ns.ToggleEntranceMark(self.inst)
+    if P.dunBar and P.dunBar.inst then UpdateDungeonBar() end
+  end)
+  markChip:SetPoint("LEFT", bar, "RIGHT", 12, 0)
+  local chipEnter = markChip:GetScript("OnEnter")
+  markChip:SetScript("OnEnter", function(self)
+    if chipEnter then chipEnter(self) end
+    if self.tipTitle then Style.Tooltip(self, self.tipTitle, self.tipLines, nil, "ANCHOR_RIGHT") end
+  end)
+  P.dunMark = markChip
+  -- (1.3.5, Daniel 10.10.) "Show on map": the world map on the entrance, its pin pulsing for a moment
+  local showChip = Chip(page, function(self)
+    if self.disabled or not self.inst then return end
+    ns.ShowEntranceOnMap(self.inst)
+  end)
+  showChip:SetPoint("LEFT", markChip, "RIGHT", 8, 0)
+  local showEnter = showChip:GetScript("OnEnter")
+  showChip:SetScript("OnEnter", function(self)
+    if showEnter then showEnter(self) end
+    if self.tipTitle then Style.Tooltip(self, self.tipTitle, self.tipLines, nil, "ANCHOR_RIGHT") end
+  end)
+  P.dunShow = showChip
+  P.dunRoute = Chip(page, function() if P.dunRoute.run then ns.SafeCall("quest book", P.dunRoute.run) end end)
+  P.dunRoute:SetPoint("LEFT", showChip, "RIGHT", 8, 0)
   local list = NewList(page, KINDS, W - 2 - 10 - 8)
-  list:SetPoint("TOPLEFT", page, "TOPLEFT", 6, -8)
+  list:SetPoint("TOPLEFT", page, "TOPLEFT", 6, -8 - DUN_BAR_H)
   ListBR(list, page, "BOTTOMRIGHT", -4, 6)
   lists.dungeons = list
+  -- the dropdown: over the list, closes on a choice or a second click
+  local drop = CreateFrame("Frame", nil, page)
+  drop:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -4)
+  drop:SetSize(470, 380)
+  local lvl = ns.Num(list.GetFrameLevel and list:GetFrameLevel())
+  if lvl and drop.SetFrameLevel then drop:SetFrameLevel(lvl + 20) end
+  if drop.EnableMouse then drop:EnableMouse(true) end
+  Card(drop, 0, 0)
+  drop:SetCardLook("cardLow", "cardLow", 0.99, "gold", 0.8)
+  local pick = NewList(drop, KINDS, 470 - 12)
+  pick:SetPoint("TOPLEFT", drop, "TOPLEFT", 4, -6)
+  pick:SetPoint("BOTTOMRIGHT", drop, "BOTTOMRIGHT", -4, 6)
+  lists.dunPick = pick
+  drop:Hide()
+  P.dunDrop = drop
+end
+
+-- the dropdown bar and the route button for the dungeon shown
+function UpdateDungeonBar()
+  local bar = P.dunBar
+  if not bar then return end
+  local inst = ns.QuestBookSelectedDungeon()
+  if not inst then bar:Hide() P.dunRoute:Hide() if P.dunMark then P.dunMark:Hide() end if P.dunShow then P.dunShow:Hide() end return end
+  bar:Show()
+  local minL = ns.DungeonLevelRange(inst)
+  local entries = {}
+  for _, id in ipairs(ns.DungeonQuestIDs(inst)) do entries[#entries + 1] = id end
+  SetBadge(bar, inst, minL and tostring(minL) or "?")
+  -- (1.3.5) name; the range, how many of your quests are done, how it fits you; the zone of the entrance
+  local fitText, fitColor = FitOf(inst)
+  fitColor = fitColor or "textHint"
+  local c = RGB(fitColor)
+  bar.disc:SetVertexColor(c[1] * 0.45, c[2] * 0.45, c[3] * 0.45, 1)
+  bar.level:SetTextColor(c[1], c[2], c[3], 1)
+  bar.name:SetText(ns.DungeonName(inst) or "?")
+  local mine, done = DungeonEntries(inst)
+  local zone = ns.DungeonEntrance and select(1, ns.DungeonEntrance(inst))
+  local zname = zone and MapName(ZoneOf(zone) or zone)
+  local parts = {}
+  if RangeOf(inst) then parts[#parts + 1] = RangeOf(inst) end
+  parts[#parts + 1] = L["%d of %d quests done"]:format(done, #mine)
+  if fitText then parts[#parts + 1] = Colorize(fitText, fitColor) end
+  local base = table.concat(parts, "  ·  ")
+  -- the zone of the entrance only where it still fits
+  local subW = 470 - 52 - 40
+  bar.sub:SetText(zname and (base .. "  ·  " .. zname) or base)
+  if zname and TextWidth(bar.sub) > subW then bar.sub:SetText(base) end
+  bar.inst, bar.rangeText, bar.doneText = inst, RangeOf(inst), L["%d of %d quests done"]:format(done, #mine)
+  bar.hint:SetText(L["Choose a dungeon"])
+  Fit(bar.hint, 120, bar)
+  Fit(bar.name, 470 - 52 - 30 - 8 - TextWidth(bar.hint), bar)
+  Fit(bar.sub, subW, bar)
+  -- (1.3.5) the entrance mark of this dungeon: set, remove, or nothing known
+  local markChip = P.dunMark
+  if markChip then
+    local m = ns.EntranceMark and ns.EntranceMark()
+    local known = ns.DungeonEntrance(inst) ~= nil
+    markChip.inst = inst
+    markChip.disabled = not known
+    local on = m ~= nil and m.inst == inst
+    markChip:Set(on and L["Remove mark"] or L["Mark entrance"], on)
+    markChip:SetAlpha(known and 1 or 0.45)
+    if known then
+      markChip.tipTitle = on and L["Remove mark"] or L["Mark entrance"]
+      markChip.tipLines = { L["The arrow points to the entrance, and a mark stands on the world map and the minimap. It goes away when you get there, after 30 minutes, or with a right-click on it."] }
+    else
+      markChip.tipTitle, markChip.tipLines = L["Mark entrance"], { L["No entrance known for this dungeon."] }
+    end
+    markChip:Show()
+  end
+  local showChip = P.dunShow
+  if showChip then
+    local known = ns.DungeonEntrance(inst) ~= nil
+    showChip.inst, showChip.disabled = inst, not known
+    showChip:Set(L["Show on map"], false)
+    showChip:SetAlpha(known and 1 or 0.45)
+    showChip.tipTitle = L["Show on map"]
+    showChip.tipLines = { known and L["Opens the world map at the entrance and lets its marker pulse for a moment."] or L["No entrance known for this dungeon."] }
+    showChip:Show()
+  end
+  -- route: the quest givers of what you can take now (dungeon quests and the steps before them)
+  local pickIDs, seen = {}, {}
+  local own = {}
+  for _, id in ipairs(entries) do own[id] = true end
+  for _, id in ipairs(entries) do
+    local e = QuestEntry(id)
+    if e and e.group == "available" and not seen[id] then seen[id] = true pickIDs[#pickIDs + 1] = id end
+    if e and e.group ~= "done" then
+      for _, p in ipairs(ns.DungeonQuestChain(id, own)) do
+        if p.group == "available" and not seen[p.questID] then seen[p.questID] = true pickIDs[#pickIDs + 1] = p.questID end
+      end
+    end
+  end
+  if #pickIDs > 0 then
+    P.dunRoute:Set(L["Route: pick up %d"]:format(#pickIDs), false)
+    P.dunRoute.run = function() ns.QuestBookRoute(pickIDs) end
+    P.dunRoute:Show()
+  else
+    P.dunRoute.run = nil
+    P.dunRoute:Hide()
+  end
 end
 
 ---------------------------------------------------------------------------
@@ -2226,7 +2659,7 @@ local function ObjectiveTexts(id)
       local o = objs[k]
       local names = {}
       for _, c in ipairs(type(o) == "table" and type(o[1]) == "table" and o[1] or {}) do
-        local n = ns.CreatureName(c)
+        local n = ns.LocalNpcName(c)
         if n then names[#names + 1] = n end
         if #names >= 3 then break end
       end
@@ -2243,6 +2676,39 @@ local function ObjectiveTexts(id)
     end
   end
   return out
+end
+
+-- (1.3.5, Daniel 08.10. Merkliste) Where the objectives are: inside the dungeon for a dungeon
+-- quest, else the (at most two) maps with the most places of its objectives (data points, spawns,
+-- learned and shared spots).
+function ns.QuestObjectiveWhere(id)
+  local inst = ns.QuestDungeon and ns.QuestDungeon(id)
+  if inst then return L["Inside the dungeon: %s"]:format(ns.DungeonName(inst)) end
+  local count, order = {}, {}
+  local function Count(m)
+    m = ns.Num(m)
+    if not m then return end
+    if not count[m] then count[m] = 0 order[#order + 1] = m end
+    count[m] = count[m] + 1
+  end
+  local objs = ns.ATT_OBJECTIVES and ns.ATT_OBJECTIVES[id]
+  for _, o in pairs(type(objs) == "table" and objs or {}) do
+    if type(o) == "table" then
+      local pts = type(o[3]) == "table" and o[3] or {}
+      for i = 1, #pts, 3 do Count(pts[i]) end
+      for _, cr in ipairs(type(o[1]) == "table" and o[1] or {}) do
+        if ns.EachCreatureSpawn then ns.EachCreatureSpawn(cr, Count) end
+      end
+    end
+  end
+  for _, spots in pairs(ns.ObjectiveSpots and ns.ObjectiveSpots(id) or {}) do
+    if type(spots) == "table" then for i = 1, #spots, 3 do Count(spots[i]) end end
+  end
+  if #order == 0 then return nil end
+  table.sort(order, function(a, b) if count[a] ~= count[b] then return count[a] > count[b] end return a < b end)
+  local names = {}
+  for i = 1, math.min(2, #order) do names[#names + 1] = MapName(order[i]) or ("Map " .. order[i]) end
+  return L["Where: %s"]:format(table.concat(names, ", "))
 end
 
 local function Where(m, x, y)
@@ -2263,13 +2729,21 @@ function ns.QuestBookDetail(id)
   local qt0 = ns.QuestText and ns.QuestText(id)
   -- where to get it
   local givers = ns.QuestGiverIDs(id)
-  local giver = givers and ns.CreatureName(givers[1])
+  local giver, src
+  if givers then giver, src = ns.LocalNpcName(givers[1]) end
+  -- (1.3.5) the English data name only when nothing in the game language is known
+  if src == "data" and qt0 and qt0.s then giver = qt0.s end
   local learned = ns.db.learned and ns.db.learned[id]
   giver = giver or (learned and learned.start and learned.start.npc) or (qt0 and qt0.s)
   local m, x, y = ns.QuestStart(id)
   local start = {}
   if giver then start[#start + 1] = { giver, "textPrimary" } end
   if m then start[#start + 1] = { Where(m, x, y), "textSecondary" } end
+  -- (1.3.5) from which level it can be taken (the data, or the lowest level it was offered at)
+  local minLv = ns.QuestMinLevel(id)
+  local offered = learned and ns.Num(learned.offeredAt)
+  if offered and offered > 0 and (not minLv or offered < minLv) then minLv = offered end
+  if minLv and minLv > 0 then start[#start + 1] = { L["Minimum level: %d"]:format(minLv), "textSecondary" } end
   if ns.IsItemStartQuest and ns.IsItemStartQuest(id) then start[#start + 1] = { L["Starts from an item."], "textSecondary" } end
   Section(L["Quest giver"], start)
   -- what to do
@@ -2285,15 +2759,24 @@ function ns.QuestBookDetail(id)
     for _, l in ipairs(own) do todo[#todo + 1] = l end
   end
   if #todo == 0 then todo = { { L["No details known yet."], "textHint" } } end
+  local where = ns.QuestObjectiveWhere(id)
+  if where then todo[#todo + 1] = { where, "textSecondary" } end
   Section(L["To do"], todo)
   -- where to turn it in
   local fin = ns.QUEST_ENDS and ns.QUEST_ENDS[id]
-  local endNpc = (learned and learned.finish and learned.finish.npc) or (fin and fin[4] and ns.CreatureName(fin[4])) or (qt0 and qt0.e)
+  local endName, endSrc
+  if fin and fin[4] then endName, endSrc = ns.LocalNpcName(fin[4]) end
+  if endSrc == "data" and qt0 and qt0.e then endName = qt0.e end
+  local endNpc = (learned and learned.finish and learned.finish.npc) or endName or (qt0 and qt0.e)
   local tm, tx, ty = ns.TurnInPoint(id)
   local turnin = {}
   if endNpc then turnin[#turnin + 1] = { endNpc, "textPrimary" } end
   if tm then turnin[#turnin + 1] = { Where(tm, tx and tx * 100, ty and ty * 100), "textSecondary" } end
   Section(L["Turn in"], turnin)
+  -- (1.3.5) rewards, as the game tells them for a quest in the log
+  local rewards = {}
+  for _, r in ipairs(ns.QuestRewardLines and ns.QuestRewardLines(id) or {}) do rewards[#rewards + 1] = { r, "textPrimary" } end
+  Section(L["Rewards"], rewards)
   -- chain
   local chain = {}
   for _, pre in ipairs(ns.QuestPrereqs(id) or {}) do
@@ -2431,15 +2914,19 @@ PlaceDetail = function()
   RenderDetail()
 end
 
--- Show a quest: arrow, map mark and the detail card (nil closes the card).
-function ns.QuestBookShowQuest(id, openMap)
-  if id then ns.FocusQuest(id, openMap) end
+-- Show a quest in the detail card (nil closes the card). (1.3.5) focus: nil = the card only,
+-- "arrow" = also arrow and map mark, "map" = also open the world map there.
+function ns.QuestBookShowQuest(id, focus)
+  if id and focus then ns.FocusQuest(id, focus == "map") end
+  local changed = detailID ~= id
   detailID = id
   local open = id ~= nil
   if open ~= detailOpen then detailOpen = open ApplyDetailRoom() end
   PlaceDetail()
+  if changed and not focus and Refresh then Refresh(false) end -- the clicked line stands out
 end
 function ns.QuestBookDetailID() return detailID end
+function ns.QuestBookDetailPane() return P.detail end -- (tests)
 
 local function TabButton(parent, key)
   local b = CreateFrame("Button", nil, parent)
@@ -2517,17 +3004,27 @@ local function Create()
   close:SetPoint("RIGHT", header, "RIGHT", -10, 0)
   close:SetTooltip(L["Close"])
   close:SetOnClick(function() book:Hide() end) -- OnHide drops the focus
+  -- (1.3.5, Daniel 05.10.) the options right from the book (the window is off for new players)
+  -- (round 8b, Daniel 10.10.: "could be a bit bigger and does not sit centred") The gear's glyph fills less
+  -- of its box than the X: a larger box (GEAR_SIZE), its centre on the X's centre line, GEAR_GAP between them.
+  local gear = Style.IconButton(header, "options")
+  gear:SetSize(GEAR_SIZE, GEAR_SIZE)
+  local closeW = tonumber(close.GetWidth and close:GetWidth()) or 14
+  gear:SetPoint("CENTER", close, "CENTER", -(closeW / 2 + GEAR_GAP + GEAR_SIZE / 2), 0)
+  gear:SetTooltip(L["Options"], nil, L["/qd opens them too."])
+  gear:SetOnClick(function() if ns.OpenOptions then ns.OpenOptions() end end)
+  P.gear = gear
   P.tabs = {}
   local prev = close
   for i = #TABS, 1, -1 do
     local b = TabButton(header, TABS[i])
-    if prev == close then b:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", -44, 0) else b:SetPoint("BOTTOMRIGHT", prev, "BOTTOMLEFT", -4, 0) end
+    if prev == close then b:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", -64, 0) else b:SetPoint("BOTTOMRIGHT", prev, "BOTTOMLEFT", -4, 0) end
     P.tabs[TABS[i]] = b
     prev = b
   end
   -- (i18n) tabs as wide as their text needs (at least 118 px); the subtitle gets what is left
   local titleW = TextWidth(title)
-  local each = math.floor((W - 2 - 14 - titleW - 10 - 60 - 38) / #TABS) - 50
+  local each = math.floor((W - 2 - 14 - titleW - 10 - 60 - 58) / #TABS) - 50
   local tabsW = 0
   for _, key in ipairs(TABS) do
     local b = P.tabs[key]
@@ -2538,7 +3035,7 @@ local function Create()
     b.icon:SetPoint("RIGHT", b, "CENTER", -TextWidth(b.text) / 2 + 2, 0)
     tabsW = tabsW + w
   end
-  Fit(sub, W - 2 - 14 - titleW - 10 - tabsW - 38 - 16, header)
+  Fit(sub, W - 2 - 14 - titleW - 10 - tabsW - 58 - 16, header)
   header:SetScript("OnEnter", function(self) ShowCut(self) end)
   header:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
 
@@ -2692,6 +3189,8 @@ local function RenderSearch(reset)
 end
 
 local function RenderDungeons(reset)
+  UpdateDungeonBar()
+  if P.dunDrop and P.dunDrop:IsShown() then lists.dunPick:SetItems(ns.QuestBookDungeonChoices(), true) end
   lists.dungeons:SetItems(DungeonItems(), not reset)
 end
 
@@ -2755,6 +3254,8 @@ function ns.ToggleJournal() Toggle("journal") end
 function ns.ToggleQuestBook() Toggle(nil) end
 function ns.ZoneQuestsFrame() return book end
 function ns.QuestBookTab() return tab end
+function ns.QuestBookGear() return P.gear end -- (tests)
+function ns.QuestBookDungeonBar() return P.dunBar, P.dunMark, P.dunShow end -- (tests)
 function ns.QuestBookZone() return ShownZone() end
 -- For /qd diag: where the picture of the zone came from.
 function ns.QuestBookArt()

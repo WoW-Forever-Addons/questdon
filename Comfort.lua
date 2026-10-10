@@ -58,27 +58,37 @@ local function CollectJunk()
         local price = ns.GetSellPrice(info.itemID) or 0
         local value = price * (info.stackCount or 1)
         total = total + value
-        list[#list + 1] = { bag = bag, slot = slot, value = value }
+        list[#list + 1] = { bag = bag, slot = slot, value = value, itemID = info.itemID }
       end
     end
   end
   return list, total
 end
 
+-- (1.3.5, Daniel 10.10.) The slot may hold something else by the time its turn comes (items
+-- moved or looted while selling): sell only when the same grey item is still there.
+local function StillJunk(entry)
+  local info = C_Container.GetContainerItemInfo(entry.bag, entry.slot)
+  return type(info) == "table" and info.itemID == entry.itemID and info.quality == POOR
+    and not info.hasNoValue and not info.isLocked
+end
+ns.JunkStillThere = StillJunk -- (tests)
+
 -- after: runs once all junk is sold while the merchant is still open.
 local function SellJunk(list, after)
   if ticker then ticker:Cancel() ticker = nil end
   if #list == 0 then return end
 
-  local i, earned = 0, 0
+  local i, earned, sold = 0, 0, 0
   ticker = ns.NewTicker(0.15, function(t)
     i = i + 1
     local entry = list[i]
+    while entry and not StillJunk(entry) do i = i + 1 entry = list[i] end -- changed slots are left alone
     if not entry or not (MerchantFrame and MerchantFrame:IsShown()) then
       t:Cancel()
       ticker = nil
-      if i > 1 then
-        ns.Print(L["Sold %d junk items for %s."]:format(i - 1, ns.Money(earned)))
+      if sold > 0 then
+        ns.Print(L["Sold %d junk items for %s."]:format(sold, ns.Money(earned)))
       end
       if after and not entry then
         -- give the server a moment to book the money
@@ -90,6 +100,7 @@ local function SellJunk(list, after)
     end
     C_Container.UseContainerItem(entry.bag, entry.slot)
     earned = earned + entry.value
+    sold = sold + 1
   end, #list + 1)
 end
 

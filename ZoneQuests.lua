@@ -95,6 +95,7 @@ end
 ZoneStatusFor = function(questID, client, confirmed)
   if client or ns.CanTakeQuest(questID) then
     if ns.IsLowLevelQuest(questID) then return "available", L["low level"], "textHint" end
+    if ns.IsRepeatableQuest and ns.IsRepeatableQuest(questID) then return "available", L["repeatable"], "textHint" end -- (1.3.5)
     if not confirmed and ns.UnconfirmedNoLevel and ns.UnconfirmedNoLevel(questID) then
       return "later", L["level unknown"], "textHint"
     end
@@ -202,7 +203,7 @@ function ns.ZoneQuestTooltip(e)
     lines[#lines + 1] = { L["Level"], level and tostring(level) or L["unknown"], level and nil or "textHint" }
     lines[#lines + 1] = { L["Status"], e.text, e.color }
     local givers = ns.QuestGiverIDs(e.questID)
-    local giver = givers and ns.CreatureName(givers[1])
+    local giver = givers and ns.LocalNpcName(givers[1])
     local learned = ns.db.learned and ns.db.learned[e.questID]
     giver = giver or (learned and learned.start and learned.start.npc)
     if giver then lines[#lines + 1] = { L["Quest giver"], giver } end
@@ -213,7 +214,7 @@ function ns.ZoneQuestTooltip(e)
     local follow = #(ns.FollowUpQuests(e.questID) or {})
     if follow > 0 then lines[#lines + 1] = { L["Chain"], L["%d follow-up quests known"]:format(follow) } end
     return ns.QuestTitle(e.questID), lines,
-      L["Click: arrow and mark on the map. Shift-click: also open the map."]
+      L["Click: details. Shift-click: also the arrow and the world map."]
   end
 end
 

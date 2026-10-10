@@ -75,7 +75,8 @@ local function Evaluate()
   if pending then return end -- retried on ITEM_DATA_LOAD_RESULT
   if not index then return end -- all choices worth nothing
 
-  if db.autoPickBest and ns.Active("autoTurnIn") and not ns.IsPaused() then
+  -- (1.3.5) repeatable quests are never turned in automatically (Quests.lua): the marker only
+  if db.autoPickBest and ns.Active("autoTurnIn") and not ns.IsPaused() and not (ns.SkipAutoTurnIn and ns.SkipAutoTurnIn(ns.Value(GetQuestID))) then
     GetQuestReward(index)
     return
   end

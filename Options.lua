@@ -31,7 +31,7 @@ local PAGES = {
     { header = "Accept and turn in" },
     { key = "autoAccept", name = "Auto accept quests", tip = "Accepts offered quests and escort confirmations. Hold Shift to pause.", blockedBy = QuestieBlocks("autoAccept") },
     { key = "skipTrivial", name = "Ignore grey quests", tip = "Do not auto accept quests that are trivial for your level.", parent = "autoAccept" },
-    { key = "autoTurnIn", name = "Auto turn in quests", tip = "Turns in completed quests. Quests with several reward choices or a gold cost are left to you.", blockedBy = QuestieBlocks("autoTurnIn") },
+    { key = "autoTurnIn", name = "Auto turn in quests", tip = "Turns in completed quests. Quests with several reward choices or a gold cost, and repeatable quests, are left to you.", blockedBy = QuestieBlocks("autoTurnIn") },
     { header = "Rewards" },
     { key = "highlightBest", name = "Highlight most valuable reward", tip = "Marks the reward with the highest vendor price with a gold coin." },
     { key = "autoPickBest", name = "Auto pick most valuable reward", tip = "Picks the highest vendor price reward when auto turn-in is on. Careful: ignores possible upgrades.", parent = "autoTurnIn" },
@@ -54,6 +54,7 @@ local PAGES = {
     { key = "showNoLevel", name = "Show quests without a level on the map", tip = "Some quests have no level in the data (mostly start zone quests and quests new in Forever), and some of them are only offered later. Off: such a quest is shown only once the game lists it for the map or a quest giver offered it to you. On: always shown, with 'Level unknown'. The next quest prefers quests with a known level either way.", parent = "availablePins", onChange = RefreshLevels },
     -- (1.0) event quests and "confirmed only"
     { key = "hideEventQuests", name = "Hide event quests until confirmed", tip = "Quests of holidays and world events (Darkmoon Faire, Lunar Festival, ...) have quest givers who are only there while the event runs. On: such a quest is shown only once the game lists it or a quest giver offered it to you, so the arrow never leads to an empty spot. Off: shown like any other quest.", parent = "availablePins", onChange = RefreshLevels },
+    { key = "hideRepeatable", name = "Hide repeatable quests", tip = "Repeatable quests (turn in more of the same items, again and again) are always available, so their ! would never leave the map. On: they are not shown on the map, the minimap, the nameplates and in the panel; the zone list still names them as repeatable. Off: shown like any other quest.", parent = "availablePins", onChange = RefreshLevels },
     { key = "confirmedOnly", name = "Only quests confirmed by the game", tip = "Shows only quests the game itself lists for the map or a quest giver has offered you. Safest, but a quest giver you have not met yet shows nothing until the game or the quest giver confirms it. Off: the data decides, with a note 'data only, not confirmed' in the tooltip.", parent = "availablePins", onChange = RefreshLevels },
     -- (1.25) no second "!" where the game draws its own
     { key = "skipGameGivers", name = "No second ! or ? where the game shows one", tip = "The game draws its own ! for quests it lists as available on the map, and on the minimap for every quest giver near you. Questdon then leaves those quest givers to the game on the world map and the minimap, so there is only one !. The panel, the nameplates and the tooltips still name the quests. The same for the ? of a finished quest: where the game marks the turn-in, Questdon draws no learned turn-in point.", parent = "availablePins", onChange = RefreshPins },
@@ -62,17 +63,22 @@ local PAGES = {
     { header = "Quest mobs and objectives" },
     { key = "objectivePins", name = "Show quest mobs and objectives on the map", tip = "Coloured dots where the mobs and objects for your unfinished quest objectives are (one colour per quest). Mouse over for details.", onChange = RefreshPins },
     { key = "objectivePinsTrackedOnly", name = "Only for tracked quests", tip = "Shows the coloured dots only for quests you track in the quest tracker, so the map stays clear.", parent = "objectivePins", onChange = RefreshPins },
+    { key = "thinObjectives", name = "Thin out dense objective dots", tip = "Where many dots lie close together, spots near each other become one slightly larger dot, so the map and the minimap stay readable. On the minimap the spots nearest to you stay single dots. Mouse over a bundled dot to see its quests and how many spots it stands for.", parent = "objectivePins", onChange = RefreshPins },
     { key = "objectivePinSize", kind = "slider", name = "Size of the objective dots", tip = "Size of the coloured dots on the world map.", min = 8, max = 24, step = 1, format = Pixels, parent = "objectivePins", onChange = RefreshPins },
     { header = "Minimap and nameplates" },
     { key = "minimapPins", name = "Show the pins on the minimap too", tip = "The same pins as on the world map (available quests, quest mobs and objectives, learned turn-ins) for the zone you are in, also on the minimap. The options above apply there too. A quest giver with several quests is one pin. Mouse over for details, click to point the arrow there.", onChange = RefreshPins },
     { key = "minimapButton", name = "Minimap button", tip = "A Questdon button on the edge of the minimap. Left click: quest book. Right click: a menu with the most used switches and all options. Mouse over: quests here, dungeon quests and your quest log. Drag it around the minimap.", onChange = function() if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end end },
     { key = "nameplateIcons", name = "Quest icons on nameplates", tip = "A small mark above the nameplate: a dot in the quest's colour for mobs of your open objectives, a yellow ! for NPCs with a quest you can pick up now, a ? where a finished quest is turned in (learned NPC). Nameplates must be switched on in the game. If the game hides who a nameplate belongs to (Midnight rules), that nameplate gets no icon.", onChange = function() if ns.RefreshNameplates then ns.RefreshNameplates() end end },
+    -- (1.3.5) dungeon entrances
+    { header = "Dungeon entrances" },
+    { key = "dungeonPins", name = "Dungeon entrances on the map", tip = "The entrance of every dungeon and raid Questdon knows, on the world map. Mouse over: level range and your quests there. Click: the dungeon in the quest book. Right-click: the arrow leads you there.", onChange = RefreshPins },
+    { key = "dungeonPinsMinimap", name = "Dungeon entrances on the minimap", tip = "The same entrances on the minimap, but only when you are within about 300 yards, so the edge of the minimap stays clear.", onChange = RefreshPins },
     { header = "Learning" },
     { key = "learnQuests", name = "Learn quest locations", tip = "Remembers where you accept and turn in quests and where your objective counters went up (account wide), so your other characters see them on the map too." },
     { key = "shareLearned", name = "Share learned data with guild and group", tip = "Sends what you learned and the data does not have yet (only numbers: quest, NPC, map and item numbers, coordinates) to Questdon players in your guild and group. What two or more players reported is used by everyone, also when this is off.", parent = "learnQuests" },
     { key = "shareChannel", name = "Share with all Questdon players (channel)", tip = "Also sends and receives through the hidden channel QuestdonNet, so data comes from every Questdon player, not only your guild and group. Only numbers are sent. Anybody can join a channel: a fact from there is used only when three players reported it (or two through guild or group). Addon messages never show in your chat; the game may show one line when the channel is joined.", parent = "shareLearned", onChange = function() if ns.ApplyShareChannel then ns.ApplyShareChannel() end end },
-    { key = "learnPins", name = "Show learned turn-in points on the map", tip = "Shows where you turned in a quest before (also on other characters), once that quest is finished.", onChange = RefreshPins },
-    { key = "pinsOnlyUnknown", name = "Only quests Questie does not know", tip = "Hides learned pins for quests that Questie already shows.", parent = "learnPins", onChange = RefreshPins },
+    { key = "learnPins", name = "Show turn-ins on the map", tip = "A ? where you hand in a finished quest: where you turned it in before (also on other characters), what other Questdon players reported, or the turn-in NPC of the quest data. Not where the game shows its own ?.", onChange = RefreshPins },
+    { key = "pinsOnlyUnknown", name = "Only quests Questie does not know", tip = "Hides this ? for quests that Questie already shows.", parent = "learnPins", onChange = RefreshPins },
   } },
   { title = "Appearance", tip = "Panel, direction arrow and XP bar: show, lock, size, background opacity, dimming in combat and position. The same options in all our addons.", items = {
     { header = "Panel" },
@@ -86,6 +92,7 @@ local PAGES = {
     { header = "Direction arrow" },
     { key = "arrow", name = "Show window", tip = "Arrow with distance to the quest you track in the quest log or tracker (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = ArrowLook },
     { key = "arrowLocked", name = "Lock window", tip = "The arrow can no longer be dragged.", parent = "arrow" },
+    { key = "arrowNext", name = "Move on to the next quest by itself", tip = "When no quest is tracked (after a turn-in, or after you arrived at a clicked target), the arrow points to the nearest turn-in of a finished quest, or to an open objective close by when that is nearer. Click the arrow to put it aside until your quest log changes.", parent = "arrow", onChange = function() ns.UpdateArrowTarget() end },
     { key = "arrowCorpse", name = "Lead to your corpse when dead", tip = "After you released your spirit, the arrow points to your corpse until you are alive again. Then it goes back to your quest.", parent = "arrow" },
     { key = "arrowScale", kind = "slider", name = "Size", tip = "Size of the direction arrow and its text.", min = SMIN, max = SMAX, step = 0.05, parent = "arrow", onChange = ArrowLook },
     { key = "arrowAlpha", kind = "slider", name = "Background opacity", tip = "How dark the plate behind the target and distance is.", min = 0, max = 1, step = 0.05, parent = "arrow", onChange = ArrowLook },
@@ -124,6 +131,7 @@ local PAGES = {
     { key = "fastLoot", name = "Fast loot", tip = "Loots everything instantly when auto loot applies. Items that bind on pickup and quest items are left to the game's own auto loot." },
     { key = "questItemButton", name = "Quest item button", tip = "Shows a button for the usable item of your tracked quest. Shift-drag to move. Key binding under Key Bindings > AddOns.", blockedBy = QuestieBlocks("questItemButton"), onChange = RefreshItemButton },
     { key = "itemButtonScale", kind = "slider", name = "Quest item button size", tip = "Size of the quest item button (changes after combat).", min = 0.6, max = 2, step = 0.05, parent = "questItemButton", onChange = RefreshItemButton },
+    { key = "starterNotice", name = "Notice for quest-starting items", tip = "When you loot an item that starts a quest (a book, a letter), a small note above the quest item button shows it, with a quiet sound and a line in the chat. A click on the quest button opens the quest; a click on the note only closes it.", parent = "questItemButton" },
     { header = "Targeting and waypoints" },
     { key = "targetButton", name = "Target button", tip = "Shows a button that targets a mob of your tracked quest with one click. Questdon learns the mob names from nameplates and your target, so a mob must have been seen once. The macro stays under 255 bytes. Shift-drag to move. Key binding under Key Bindings > AddOns.", onChange = RefreshTargetButton },
     { key = "exportBlizzardWaypoint", name = "Set Blizzard map pin", tip = "Also places the spot the arrow points at as the map pin of the game (visible on the world map and the minimap). The arrow keeps working as before.", onChange = SyncWaypoint },
@@ -179,7 +187,7 @@ local TOOLS = {
     end, "Questdon hides a quest when its quest giver did not offer it at 3 different levels, or when you reported it (Alt-click on the !, or /qd nothere with the NPC targeted). This shows them all again. /qd nothere list shows them, /qd nothere undo takes back the last report." },
   { "Export learned data", "Export", function()
       if ns.OpenExport then ns.OpenExport(false) end
-    end, "Shows what Questdon learned and the bundled data does not have yet, as text to copy into a GitHub issue. Helps to improve the quest data for everyone. Only numbers, no names. /qd export (or /qd export all for everything)." },
+    end, "Shows what Questdon learned and the bundled data does not have yet, as text to copy into a GitHub issue. Helps to improve the quest data for everyone. Numbers, plus the names of NPCs as your game shows them; no names of characters, guilds or players. /qd export (or /qd export all for everything)." },
   { "Diagnostics", "Show", function()
       if ns.OpenDiag then ns.OpenDiag() end
     end, "Report for bug reports: client version, which game functions exist, a few live checks and errors Questdon caught. Only numbers, no names. /qd diag" },
@@ -194,10 +202,16 @@ local TOOLS = {
         wipe(ns.db.learned)
         if ns.db.learnedObj then wipe(ns.db.learnedObj) end
         if ns.db.learnedItems then wipe(ns.db.learnedItems) end
-        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "shared", "shareSent", "notHere", "exportSent" }) do
+        -- (1.3.5) the NPC names the game showed too (/qd export M lines)
+        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "shareSent", "shareSentAt", "notHere", "exportSent", "npcNames" }) do
           if type(ns.db[k]) == "table" then wipe(ns.db[k]) end
         end
         if ns.db.guessedItems then wipe(ns.db.guessedItems) end
+        -- (1.3.5, Daniel 10.10.) and every cache built from it: shared facts (count, spots), the
+        -- creature index of tooltips and nameplates (learned credit), the objective points
+        if ns.ResetShared then ns.ResetShared() elseif type(ns.db.shared) == "table" then wipe(ns.db.shared) end
+        if ns.ResetCreatureIndex then ns.ResetCreatureIndex() end
+        if ns.LearnedChanged then ns.LearnedChanged() end
         RefreshPins()
         ns.Print(L["Learned quest data deleted."])
       end

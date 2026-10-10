@@ -392,6 +392,14 @@ function ns.IsEventQuest(questID)
   return q and q[FLAGS] and q[FLAGS]:find("e", 1, true) ~= nil or false
 end
 
+-- (1.3.5, Daniel 09.10.: "More Al'Aketh Ears" stood on the map for good) repeatable quests (flag "r")
+-- are always available: hidden unless the player wants them (they stay in the zone list as "repeatable")
+function ns.IsRepeatableQuest(questID)
+  local q = Q[questID]
+  return q and q[FLAGS] and q[FLAGS]:find("r", 1, true) ~= nil or false
+end
+local function HiddenRepeatable(id) return ns.db.hideRepeatable ~= false and ns.IsRepeatableQuest(id) end
+
 function ns.IsItemStartQuest(questID)
   local q = Q[questID]
   return q and not q[GIVERS] and q[FLAGS] and q[FLAGS]:find("i", 1, true) ~= nil or false
@@ -473,6 +481,7 @@ function ns.ShowAsAvailable(questID, player)
   if not client and not ns.CanTakeQuest(questID, player) then return false end
   if not ns.db.showLowLevel and ns.IsLowLevelQuest(questID, player) then return false end
   if ns.NoLevelHidden(questID, player) then return false end
+  if HiddenRepeatable(questID) then return false end -- (1.3.5) nameplates follow the map
   return true
 end
 
@@ -617,6 +626,27 @@ function ns.TurnInPoint(questID, giver)
   end
 end
 
+-- (1.3.5, Daniel 10.10.) Where a finished quest is handed in, from what is known for sure: where
+-- you turned it in, what two or more other players reported, the turn-in NPC of the data. Not the
+-- guesses of ns.TurnInPoint (giver of the next quest, own giver). mapID, x, y (0-1), NPC name (or
+-- nil), source ("learned", "shared", "data"), NPC creature ID (or nil).
+function ns.KnownTurnIn(questID)
+  local e = ns.db.learned[questID]
+  local f = e and e.finish
+  if type(f) == "table" and f.map and f.x and f.y then return f.map, f.x, f.y, f.npc, "learned", ns.Num(f.npcID) end
+  if ns.SharedTurnIn then
+    local sm, sx, sy, _, sid = ns.SharedTurnIn(questID)
+    sid = ns.Num(sid)
+    if sid and sid <= 0 then sid = nil end
+    if sm then return sm, sx, sy, sid and ns.LocalNpcName(sid) or nil, "shared", sid end
+  end
+  local fin = ns.QUEST_ENDS and ns.QUEST_ENDS[questID]
+  if fin and fin[1] and fin[2] and fin[3] then
+    local id = ns.Num(fin[4])
+    return fin[1], fin[2] / 100, fin[3] / 100, id and ns.LocalNpcName(id) or nil, "data", id
+  end
+end
+
 -- Questie (or Forever Quest Pins) already draws this, so we do not.
 local function DrawnElsewhere(questID, what)
   if ns.db.questieFirst and ns.AddOnLoaded("Questie") and ns.QuestieKnows(questID) == true then
@@ -670,6 +700,7 @@ function AvailableOnMap(mapID, upcoming)
   local function Add(id)
     if seen[id] then return end
     seen[id] = true
+    if HiddenRepeatable(id) then return end
     local listed = Listed(id)
     local entry
     if listed or ns.CanTakeQuest(id, player) then
@@ -715,7 +746,7 @@ function AvailableOnMap(mapID, upcoming)
       local ok
       if Q[id] then
         -- known to ATT (maybe with another start map): use its rules
-        ok = (Listed(id) or ns.CanTakeQuest(id, player)) and (ns.db.showLowLevel or not ns.IsLowLevelQuest(id, player))
+        ok = not HiddenRepeatable(id) and (Listed(id) or ns.CanTakeQuest(id, player)) and (ns.db.showLowLevel or not ns.IsLowLevelQuest(id, player))
           and (Listed(id) or not ns.NoLevelHidden(id, player))
           and (Listed(id) or ns.OfferConfirmed(id, player.level) or not (ns.db.confirmedOnly or (ns.db.hideEventQuests and ns.IsEventQuest(id))))
       else
@@ -1032,10 +1063,120 @@ end
 -- (1.2) points per objective and per map (all quests): enough to see where
 -- the mobs are, few enough for the map, the minimap and the refresh signature
 local MAX_OBJ_POINTS, MANY_POINTS, MAX_MAP_POINTS = 80, 25, 400
-function ns.ObjectivePointsOnMap(mapID)
-  local list = {}
-  local total = 0
-  if not mapID then return list end
+-- (1.3.5, Daniel 10.10.) The bench showed about 1.7 MB of garbage per refresh here: a table for
+-- every spawn point of the map, thinned to 80 only afterwards, on every quest log update. Now the
+-- places of one objective on one map are worked out once and kept (CachedObjective): the learned
+-- and data points as they are, the spawns only as their flat arrays (no table per point), and the
+-- thinned points for the world map are made only for the points that are kept. The entry is used
+-- again while the objective's data, the learned and the shared spots stay the same.
+local MAX_NEAR = 100 -- (1.3.5) minimap: the nearest places per objective, no thinning
+local objCache, objCacheSize = {}, 0
+local objStats = { built = 0, reused = 0, uncached = 0 }
+function ns.ObjectiveCacheStats() return objStats end
+
+-- Cheap fingerprint of a flat spot list (own + shared spots are a fresh copy when both exist).
+local function SpotsPrint(spots)
+  local sum = 0
+  for i = 1, #spots do sum = sum + (tonumber(spots[i]) or 0) end
+  return #spots, sum
+end
+
+-- The places of a kill or collect objective on mapID, in the order ns.ObjectiveTargets gives
+-- them: { keep = { {x, y, creature} (0-1) }, sources = { {arr, first, cr, n} } (flat spawn
+-- arrays), total = spawn points on the map }.
+local function BuildObjective(questID, index, o, spots, mapID)
+  local e = { keep = {}, sources = {}, total = 0 }
+  local pts = o[3] or {}
+  -- 1. spots this account (and others) saw the counter go up (0-1)
+  for i = 1, #spots, 3 do
+    if spots[i] == mapID and spots[i + 1] and spots[i + 2] then e.keep[#e.keep + 1] = { x = spots[i + 1], y = spots[i + 2] } end
+  end
+  -- 2. the data's objective coordinates (0-100)
+  local first = o[1] and o[1][1]
+  for i = 1, #pts, 3 do
+    if pts[i] == mapID and pts[i + 1] and pts[i + 2] then
+      e.keep[#e.keep + 1] = { x = pts[i + 1] / 100, y = pts[i + 2] / 100, creature = first }
+    end
+  end
+  -- 3. where the creatures are: Wowhead's spawns, else the data's creature points
+  local function AddSource(cr)
+    local arr, from = Spawns(cr), 1
+    if not arr then arr, from = NPC[cr], 2 end
+    if not arr then return end
+    local n = 0
+    for i = from, #arr, 3 do if arr[i] == mapID then n = n + 1 end end
+    if n > 0 then
+      e.sources[#e.sources + 1] = { arr = arr, first = from, cr = cr, n = n }
+      e.total = e.total + n
+    end
+  end
+  for _, cr in ipairs(o[1] or {}) do
+    if Spawns(cr) or #pts == 0 then AddSource(cr) end
+  end
+  local known = {}
+  for _, cr in ipairs(o[1] or {}) do known[cr] = true end
+  for _, cr in ipairs(ns.LearnedObjectiveCreatures and ns.LearnedObjectiveCreatures(questID, index, #(o[1] or {}) > 0) or {}) do
+    if not known[cr] and Spawns(cr) then AddSource(cr) end
+  end
+  return e
+end
+
+local function CachedObjective(questID, index, o, spots, mapID)
+  o, spots = o or {}, spots or {}
+  local n, sum = SpotsPrint(spots)
+  local lv = ns.LearnVersion and ns.LearnVersion() or 0
+  local sv = ns.SharedVersion and ns.SharedVersion() or 0
+  local byQuest = objCache[questID]
+  local key = index * 100000 + mapID
+  local e = byQuest and byQuest[key]
+  if e and e.o == o and e.n == n and e.sum == sum and e.lv == lv and e.sv == sv then
+    objStats.reused = objStats.reused + 1
+    return e
+  end
+  e = BuildObjective(questID, index, o, spots, mapID)
+  e.o, e.n, e.sum, e.lv, e.sv = o, n, sum, lv, sv
+  if not byQuest then
+    -- quests that left the log stay until the cache is full, then it starts over
+    if objCacheSize >= 60 then objCache, objCacheSize = {}, 0 end
+    byQuest = {}
+    objCache[questID] = byQuest
+    objCacheSize = objCacheSize + 1
+  end
+  byQuest[key] = e
+  objStats.built = objStats.built + 1
+  return e
+end
+
+-- The spawn points of an entry thinned evenly to room (world map), made once per entry: the
+-- same points as before (the k-th spawn for k = 1, 1 + step, ...; step = total / room).
+local function Thinned(e, room, mapID)
+  if e.thinned and e.room == room then return e.thinned end
+  local out = {}
+  if room > 0 and e.total > 0 then
+    local step = e.total > room and e.total / room or 1
+    local k, seen = 1, 0
+    local want = 1
+    for _, src in ipairs(e.sources) do
+      local arr = src.arr
+      for i = src.first, #arr, 3 do
+        if arr[i] == mapID then
+          seen = seen + 1
+          while seen == want do
+            out[#out + 1] = { x = arr[i + 1] / 100, y = arr[i + 2] / 100, creature = src.cr }
+            k = k + step
+            want = k <= e.total + 0.0001 and math.floor(k) or -1
+          end
+        end
+      end
+    end
+  end
+  e.thinned, e.room = out, room
+  return out
+end
+
+-- The objectives the map shows: fn(id, index, o, spots, text, dimmed) per open objective of a
+-- quest in the log with data (optional objectives dimmed, only while a real one is open).
+local function EachMapObjective(fn)
   local learnedObj = ns.db.learnedObj or {}
   for _, info in ipairs(ns.QuestLogEntries()) do
     local id = info.questID
@@ -1049,36 +1190,137 @@ function ns.ObjectivePointsOnMap(mapID)
       for _, index in ipairs(open) do
         local state = client[index]
         local text = type(state) == "table" and type(state.text) == "string" and ns.Usable(state.text) and state.text or nil
-        local targets, _, usePts = ns.ObjectiveTargets(id, index, objs[index], learned[index], mapID)
-        -- (1.2) all spawns (Wowhead), thinned out evenly above MAX_OBJ_POINTS;
-        -- many points: smaller dots (map and minimap)
-        -- learned spots, data points and the place of use always; the spawns
-        -- (many) thinned out evenly to what is left of MAX_OBJ_POINTS
-        local keep, spawns = {}, {}
-        for _, p in ipairs(targets) do
-          if p.mapID == mapID then if p.spawn then spawns[#spawns + 1] = p else keep[#keep + 1] = p end end
-        end
-        for _, p in ipairs(usePts or {}) do if p.mapID == mapID then keep[#keep + 1] = p end end
-        local many = (#keep + #spawns > MANY_POINTS) or nil
-        local function Put(p)
-          if total >= MAX_MAP_POINTS then return end
-          total = total + 1
-          list[#list + 1] = { questID = id, index = index, x = p.x, y = p.y, text = text, creature = p.creature,
-            needsItem = p.needsItem, dimmed = p.dimmed or dimIndex[index] or nil, small = many, optional = dimIndex[index] }
-        end
-        for _, p in ipairs(keep) do Put(p) end
-        local room = math.max(0, MAX_OBJ_POINTS - #keep)
-        if room > 0 and #spawns > 0 then
-          local step = #spawns > room and #spawns / room or 1
-          local k = 1
-          while k <= #spawns + 0.0001 do
-            Put(spawns[math.floor(k)])
-            k = k + step
-          end
-        end
+        fn(id, index, objs[index], learned[index], text, dimIndex[index])
       end
     end
   end
+end
+
+-- "Use an item at a place" depends on the bags: worked out each time as before. The points of
+-- mapID, split into the ones always shown and the spawns.
+local function IsUse(o) return o ~= nil and o[USE] == "u" and #(o[2] or {}) > 0 end
+local function UseObjective(id, index, o, spots, mapID)
+  local targets, _, usePts = ns.ObjectiveTargets(id, index, o, spots, mapID)
+  local keep, spawns = {}, {}
+  for _, p in ipairs(targets) do
+    if p.mapID == mapID then if p.spawn then spawns[#spawns + 1] = p else keep[#keep + 1] = p end end
+  end
+  for _, p in ipairs(usePts or {}) do if p.mapID == mapID then keep[#keep + 1] = p end end
+  objStats.uncached = objStats.uncached + 1
+  return keep, spawns
+end
+
+local function ObjectivePin(id, index, p, text, dim, many)
+  return { questID = id, index = index, x = p.x, y = p.y, text = text, creature = p.creature,
+    needsItem = p.needsItem, dimmed = p.dimmed or dim or nil, small = many, optional = dim }
+end
+
+function ns.ObjectivePointsOnMap(mapID)
+  local list = {}
+  local total = 0
+  if not mapID then return list end
+  EachMapObjective(function(id, index, o, spots, text, dim)
+    local keep, spawns, nSpawns
+    local use = IsUse(o)
+    if use then
+      keep, spawns = UseObjective(id, index, o, spots, mapID)
+      nSpawns = #spawns
+    else
+      local e = CachedObjective(id, index, o, spots, mapID)
+      keep, nSpawns = e.keep, e.total
+      spawns = Thinned(e, math.max(0, MAX_OBJ_POINTS - #keep), mapID)
+    end
+    -- learned spots, data points and the place of use always; (1.2) many points: smaller dots
+    local many = (#keep + nSpawns > MANY_POINTS) or nil
+    local function Put(p)
+      if total >= MAX_MAP_POINTS then return end
+      total = total + 1
+      list[#list + 1] = ObjectivePin(id, index, p, text, dim, many)
+    end
+    for _, p in ipairs(keep) do Put(p) end
+    if use then
+      -- the spawns (many) thinned out evenly to what is left of MAX_OBJ_POINTS
+      local room = math.max(0, MAX_OBJ_POINTS - #keep)
+      if room > 0 and #spawns > 0 then
+        local step = #spawns > room and #spawns / room or 1
+        local k = 1
+        while k <= #spawns + 0.0001 do
+          Put(spawns[math.floor(k)])
+          k = k + step
+        end
+      end
+    else
+      for _, p in ipairs(spawns) do Put(p) end
+    end
+  end)
+  return list
+end
+
+-- (1.3.5, Daniel 05.10.: "only 2 dots in a field") The minimap shows about 470 yards, so the 80
+-- points of a whole zone left only a few in view. It takes its own points: every place of an
+-- open objective within reach yards of the player (world position pc, pn, pw), the nearest
+-- MAX_NEAR per objective and the nearest MAX_NEAR_TOTAL in all (the minimap shows at most 150
+-- pins anyway). The candidates live in reused tables: only the kept points become pins.
+-- Same fields as ns.ObjectivePointsOnMap.
+local MAX_NEAR_TOTAL = 200
+local pool, kept, part = {}, {}, {}
+local function ByDistance(a, b) return a.d2 < b.d2 end
+function ns.ObjectivePointsNear(mapID, pc, pn, pw, reach)
+  local list = {}
+  if not (mapID and pc and pn and pw and reach) then return list end
+  -- the map's corners once, every point after that is arithmetic (a map is a rectangle in the world)
+  local c0, n0, w0 = ns.WorldPos(mapID, 0, 0)
+  local c1, n1, w1 = ns.WorldPos(mapID, 1, 0)
+  local c2, n2, w2 = ns.WorldPos(mapID, 0, 1)
+  if not (c0 and c1 and c2) or c0 ~= pc or c1 ~= c0 or c2 ~= c0 then return list end
+  local nx, wx, ny, wy = n1 - n0, w1 - w0, n2 - n0, w2 - w0
+  local reach2 = reach * reach
+  local used, nk = 0, 0 -- pool entries in use, kept entries
+  local meta, first
+  local function Cand(x, y, creature, needsItem, dimmed)
+    local dn, dw = n0 + x * nx + y * ny - pn, w0 + x * wx + y * wy - pw
+    local d2 = dn * dn + dw * dw
+    if d2 > reach2 then return end
+    used = used + 1
+    local c = pool[used]
+    if not c then c = {} pool[used] = c end
+    c.x, c.y, c.creature, c.needsItem, c.dimmed, c.d2, c.meta = x, y, creature, needsItem, dimmed, d2, meta
+  end
+  EachMapObjective(function(id, index, o, spots, text, dim)
+    meta = { id = id, index = index, text = text, dim = dim }
+    first = used + 1
+    if IsUse(o) then
+      local keep, spawns = UseObjective(id, index, o, spots, mapID)
+      for _, p in ipairs(keep) do Cand(p.x, p.y, p.creature, p.needsItem, p.dimmed) end
+      for _, p in ipairs(spawns) do Cand(p.x, p.y, p.creature, p.needsItem, p.dimmed) end
+    else
+      local e = CachedObjective(id, index, o, spots, mapID)
+      for _, p in ipairs(e.keep) do Cand(p.x, p.y, p.creature) end
+      for _, src in ipairs(e.sources) do
+        local arr, cr = src.arr, src.cr
+        for i = src.first, #arr, 3 do
+          if arr[i] == mapID then Cand(arr[i + 1] / 100, arr[i + 2] / 100, cr) end
+        end
+      end
+    end
+    local nc = used - first + 1
+    if nc <= 0 then return end
+    meta.many = nc > MANY_POINTS or nil
+    -- the nearest MAX_NEAR of this objective
+    for k = first, used do part[k - first + 1] = pool[k] end
+    for k = nc + 1, #part do part[k] = nil end
+    if nc > MAX_NEAR then table.sort(part, ByDistance) end
+    for k = 1, math.min(nc, MAX_NEAR) do nk = nk + 1 kept[nk] = part[k] end
+  end)
+  for k = nk + 1, #kept do kept[k] = nil end
+  if nk > MAX_NEAR_TOTAL then table.sort(kept, ByDistance) end
+  for k = 1, math.min(nk, MAX_NEAR_TOTAL) do
+    local p, m = kept[k], kept[k].meta
+    list[#list + 1] = { questID = m.id, index = m.index, x = p.x, y = p.y, text = m.text, creature = p.creature,
+      needsItem = p.needsItem, dimmed = p.dimmed or m.dim or nil, small = m.many, optional = m.dim }
+  end
+  for k = 1, nk do kept[k] = nil end
+  for k = 1, used do pool[k].meta = nil end
   return list
 end
 
@@ -1274,6 +1516,102 @@ end
 function ns.CreatureName(creatureID)
   local c = NPC[creatureID]
   return c and c[1]
+end
+
+---------------------------------------------------------------------------
+-- (1.3.5) NPC names in the game language. Daniel 09.10.: names straight from
+-- the game where it knows them, else the shipped translations, else English.
+--   1. learned: the name the game showed for this NPC (quest dialog, target,
+--      mouse over), per locale in QuestdonDB.npcNames, also in /qd export
+--   2. the game's tooltip for the creature (only NPCs the client has seen;
+--      for others it asks the server and may answer a moment later)
+--   3. ns.NPC_NAMES from Data/Quest_Texts.lua (Wowhead, the client language)
+--   4. the English name of the data (ATT)
+---------------------------------------------------------------------------
+local tip, tipBroken
+local tipNames, tipTries, tipNext = {}, {}, {}
+local TIP_TRIES = 3   -- an unknown NPC: the client asks the server, so try again
+local TIP_WAIT = 2    -- seconds later, at most 3 times
+
+local function TipName(id)
+  local cached = tipNames[id]
+  if cached then return cached end
+  if tipBroken or (tipTries[id] or 0) >= TIP_TRIES then return nil end
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if tipNext[id] and now < tipNext[id] then return nil end
+  tipNext[id] = now + TIP_WAIT
+  if not tip then
+    if type(CreateFrame) ~= "function" then tipBroken = true return nil end
+    local ok, t = pcall(CreateFrame, "GameTooltip", "QuestdonNameTip", nil, "GameTooltipTemplate")
+    if not ok or type(t) ~= "table" or type(t.SetHyperlink) ~= "function" then tipBroken = true return nil end
+    tip = t
+  end
+  tipTries[id] = (tipTries[id] or 0) + 1
+  pcall(tip.SetOwner, tip, WorldFrame or UIParent, "ANCHOR_NONE")
+  local ok = pcall(tip.SetHyperlink, tip, ("unit:Creature-0-0-0-0-%d-0000000000"):format(id))
+  if not ok then tipBroken = true return nil end  -- the client does not know unit links
+  local line = _G and _G["QuestdonNameTipTextLeft1"]
+  local name = line and ns.Value(line.GetText, line)
+  pcall(tip.Hide, tip)
+  if type(name) == "string" and name ~= "" and not name:find("^Creature%-") then
+    tipNames[id] = name
+    -- (09.10.) Daniel's test: the game answers the second time. Kept like a learned name
+    -- (next sessions, /qd export M lines).
+    if ns.NoteNpcName then ns.NoteNpcName(id, name) end
+    return name
+  end
+  -- the client asked the server: look again by itself, so the name is there next time
+  if (tipTries[id] or 0) < TIP_TRIES and C_Timer and C_Timer.After then
+    pcall(C_Timer.After, TIP_WAIT + 0.1, function() pcall(TipName, id) end)
+  end
+  return nil
+end
+
+local function LearnedNames()
+  if not ns.db then return nil end
+  if type(ns.db.npcNames) ~= "table" then ns.db.npcNames = {} end
+  local loc = ns.Locale and ns.Locale() or "enUS"
+  if type(ns.db.npcNames[loc]) ~= "table" then ns.db.npcNames[loc] = {} end
+  return ns.db.npcNames[loc]
+end
+
+-- The name the game showed for a creature (quest dialog, target, mouse over).
+function ns.NoteNpcName(creatureID, name)
+  creatureID = ns.Num(creatureID)
+  if not creatureID or creatureID <= 0 or type(name) ~= "string" or name == "" or #name > 80 then return end
+  if name:find("[%c|]") then return end
+  local t = LearnedNames()
+  if t and t[creatureID] ~= name then t[creatureID] = name end
+end
+
+-- Name of a creature in the game language, or nil. source: "learned", "game", "shipped", "data".
+function ns.LocalNpcName(creatureID)
+  creatureID = ns.Num(creatureID)
+  if not creatureID then return nil end
+  local t = LearnedNames()
+  if t and type(t[creatureID]) == "string" then return t[creatureID], "learned" end
+  local g = TipName(creatureID)
+  if g then return g, "game" end
+  local s = ns.NPC_NAMES and ns.NPC_NAMES[creatureID]
+  if type(s) == "string" and s ~= "" then return s, "shipped" end
+  local d = ns.CreatureName(creatureID)
+  if d then return d, "data" end
+  return nil
+end
+
+-- (1.3.5) /qd npcname <id>: what every source knows about this NPC (test for the tooltip way).
+function ns.NpcNameReport(creatureID)
+  creatureID = ns.Num(creatureID)
+  if not creatureID then return nil end
+  local t = LearnedNames()
+  tipTries[creatureID], tipNext[creatureID] = nil, nil
+  local g = TipName(creatureID)
+  local name, source = ns.LocalNpcName(creatureID)
+  return {
+    id = creatureID, name = name, source = source,
+    learned = t and t[creatureID], game = g, gameBroken = tipBroken and true or false,
+    shipped = ns.NPC_NAMES and ns.NPC_NAMES[creatureID], data = ns.CreatureName(creatureID),
+  }
 end
 
 ---------------------------------------------------------------------------

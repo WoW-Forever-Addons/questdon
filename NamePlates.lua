@@ -22,6 +22,10 @@ local _, ns = ...
 -- again. With the option off, nothing runs.
 ---------------------------------------------------------------------------
 local QUEST_SIZE, DOT_SIZE = 16, 10
+-- (1.3.5, Daniel 10.10.: "the dot could stand out more") quest mobs get a pin in the quest colour with a gold
+-- rim and a soft halo, pointing at the mob; the old dot if the client cannot load the textures
+local PIN_SIZE, PIN_GLOW = 20, 34
+local MEDIA = "Interface\\AddOns\\Questdon\\Media\\"
 
 local units = {}  -- [unit token] = icon frame or false (no icon)
 local free = {}
@@ -50,16 +54,19 @@ local function ObjectiveOpen(questID, index)
   return true
 end
 
--- Turn-ins learned with the NPC: [npcID] = questID, for finished quests in the log.
+-- Turn-in NPCs of the finished quests in the log: [npcID] = questID.
+-- (1.3.5, Daniel 10.10.) not only learned ones: also the NPC other players reported and the
+-- turn-in NPC of the data (ns.KnownTurnIn: learned > shared > data).
 local turnins
 local function TurnIns()
   if turnins then return turnins end
   turnins = {}
   for _, info in ipairs(ns.QuestLogEntries()) do
     local id = info.questID
-    local e = ns.db.learned[id]
-    local npc = e and e.finish and ns.Num(e.finish.npcID)
-    if npc and ns.IsQuestComplete(id) then turnins[npc] = id end
+    if ns.IsQuestComplete(id) and not (ns.IsAutoComplete and ns.IsAutoComplete(id)) then
+      local _, _, _, _, _, npc = ns.KnownTurnIn(id)
+      if npc and npc > 0 and not turnins[npc] then turnins[npc] = id end
+    end
   end
   return turnins
 end
@@ -101,8 +108,13 @@ local function Take()
   local f = table.remove(free)
   if f then return f end
   f = CreateFrame("Frame", nil, UIParent)
-  f.icon = f:CreateTexture(nil, "OVERLAY")
+  f.glow = f:CreateTexture(nil, "BACKGROUND")
+  f.glow:SetPoint("CENTER", f, "CENTER", 0, 0)
+  if f.glow.SetBlendMode then pcall(f.glow.SetBlendMode, f.glow, "ADD") end
+  f.icon = f:CreateTexture(nil, "ARTWORK")
   f.icon:SetAllPoints(f)
+  f.rim = f:CreateTexture(nil, "OVERLAY")
+  f.rim:SetAllPoints(f)
   if f.EnableMouse then f:EnableMouse(false) end
   return f
 end
@@ -122,10 +134,27 @@ end
 local function Dress(f, mark)
   f.mark = mark
   if mark.kind == "objective" then
-    f:SetSize(DOT_SIZE, DOT_SIZE)
-    f.icon:SetTexture("Interface\\COMMON\\Indicator-Yellow")
-    f.icon:SetVertexColor(ns.QuestColor(mark.questID))
+    local r, g, b = ns.QuestColor(mark.questID)
+    if f.icon:SetTexture(MEDIA .. "MobMark") ~= false and f.rim:SetTexture(MEDIA .. "MobMark" .. "Rim") ~= false then
+      f:SetSize(PIN_SIZE, PIN_SIZE)
+      f.icon:SetVertexColor(r, g, b)
+      f.rim:SetVertexColor(1, 1, 1)
+      f.rim:Show()
+      if f.glow:SetTexture(MEDIA .. "MobMarkGlow") ~= false then
+        f.glow:SetSize(PIN_GLOW, PIN_GLOW)
+        f.glow:SetVertexColor(r, g, b, 0.75)
+        f.glow:Show()
+      else
+        f.glow:Hide()
+      end
+    else
+      f:SetSize(DOT_SIZE, DOT_SIZE)
+      f.icon:SetTexture("Interface\\COMMON\\Indicator-Yellow")
+      f.icon:SetVertexColor(r, g, b)
+      f.rim:Hide() f.glow:Hide()
+    end
   else
+    f.rim:Hide() f.glow:Hide()
     f:SetSize(QUEST_SIZE, QUEST_SIZE)
     local atlas = mark.kind == "turnin" and "QuestTurnin" or "QuestNormal"
     local ok, res = false, nil

@@ -1,5 +1,20 @@
 # Changes
 
+## 1.3.5
+
+- **Update note:** new files, so restart the game after updating (a /reload is not enough).
+- **Dungeons by your level:** the Dungeons tab sorts every dungeon by you ("Your level", "Coming up", done), with its level range, its picture and how many of its quests you have done. Below: what to take now, what to do first and what is not yet and why. "Mark entrance" leads the arrow there, "Show on map" opens the map at the entrance.
+- **Dungeon entrances on the map:** every dungeon and raid with a known entrance shows on the world map, and on the minimap when you are close. Click: the dungeon in the quest book. Right-click: mark it for the arrow.
+- **Quest mobs on the minimap:** every spawn point of your quest mobs and objects around you. Where a field has many dots, close ones are bundled into one slightly larger dot that lists its quests, on the minimap and the world map. Option "Thin out dense objective dots".
+- **Quest mobs stand out:** a pin in the quest's colour with a golden rim above the nameplate of a mob you need.
+- **Quest items that start a quest:** a looted book or letter that starts a quest now shows on the quest item button once you can take that quest, with a small note above it the first time. One click opens the quest.
+- **Arrow moves on by itself:** after a turn-in, or once you arrived, the arrow points to the next quest to turn in or a nearby open objective.
+- **Quest details for about 4,800 quests in every language:** what to do, who gives and takes the quest, where the objectives are, from which level, and the rewards. NPC names show in your game language.
+- **"?" where you turn in,** also for quests you never turned in before.
+- **Repeatable quests:** no longer turned in automatically and hidden on the map (option to show them).
+- **Shared quest data reaches players who were offline:** what Questdon shares goes out again once a day.
+- **Quest data:** turn-in places of about 2,800 more quests, about 70 corrected quest starts and about 500 more quest mobs with their spawn points.
+
 ## 1.3.4
 
 - **New direction arrow:** a golden compass needle that shines brighter and glows as you get close, a golden seal that pulses gently when you have arrived, and the target on a dark blue plaque with a thin golden line, like the quest book. The distance stands out in gold.

@@ -64,9 +64,22 @@ local function Here()
     -- (1.0.1) a quest giver is a creature or an object (wanted poster, book)
     local kind, id = UnitKindID("npc")
     if kind == "c" then here.npcID = id elseif kind == "o" then here.objID = id end
+    if kind == "c" and ns.NoteNpcName then ns.NoteNpcName(id, npc) end -- (1.3.5)
   end
   return here
 end
+
+-- (1.3.5) NPC names in the game language, from target and mouse over
+-- (QuestData.lua: ns.LocalNpcName, the export's M lines).
+local function NoteUnitName(unit)
+  if Flag(UnitExists, unit) ~= "yes" or (UnitIsPlayer and Flag(UnitIsPlayer, unit) ~= "no") then return end
+  local kind, id = UnitKindID(unit)
+  if kind ~= "c" then return end
+  local name = ns.Value(UnitName, unit)
+  if type(name) == "string" and ns.NoteNpcName then ns.NoteNpcName(id, name) end
+end
+ns.On("PLAYER_TARGET_CHANGED", function() NoteUnitName("target") end)
+ns.On("UPDATE_MOUSEOVER_UNIT", function() NoteUnitName("mouseover") end)
 
 -- (1.0.1) The bag item that starts this quest (C_Container quest info).
 local function StartItem(questID)
@@ -271,6 +284,12 @@ local MAX_SPOTS, MIN_DIST = 60, 0.02 -- (1.2) 60 spots per objective (was 30): s
 local progress = {} -- [questID] = { [index] = numFulfilled }
 local progressReady = false
 
+-- (1.3.5) Changes whenever learned objective data changes (spots, credit): the objective
+-- points of the map and minimap are cached per version (QuestData.lua).
+local learnVersion = 0
+function ns.LearnedChanged() learnVersion = learnVersion + 1 end
+function ns.LearnVersion() return learnVersion end
+
 -- Remember a spot (0-1) for an objective. true if it was new.
 function ns.AddObjectiveSpot(questID, index, map, x, y)
   if not (map and x and y) then return false end
@@ -290,6 +309,7 @@ function ns.AddObjectiveSpot(questID, index, map, x, y)
   spots[#spots + 1] = map
   spots[#spots + 1] = math.floor(x * 1000 + 0.5) / 1000
   spots[#spots + 1] = math.floor(y * 1000 + 0.5) / 1000
+  learnVersion = learnVersion + 1
   return true
 end
 
@@ -395,6 +415,7 @@ local function NoteCredit(questID, index, o)
     if src[1] == "c" and not c.c[src[2]] then newCreature = true end
     Bump(c[src[1]], src[2])
   end
+  learnVersion = learnVersion + 1
   -- (1.2) a mob newly known to count for this objective: nameplates, tooltips,
   -- sightings and the map use it from now on
   if newCreature and ns.ResetCreatureIndex then ns.ResetCreatureIndex() end

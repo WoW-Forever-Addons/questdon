@@ -12,6 +12,7 @@ ns.defaults = {
   useGuildRepair = false,
   fastLoot = true,
   questItemButton = true,
+  starterNotice = true, -- (1.3.5) a small note above the button when a looted item starts a quest
   -- 1.27: target button (macro of mob names, learned), waypoint export (both off)
   targetButton = false,
   targetButtonPos = nil,
@@ -34,11 +35,13 @@ ns.defaults = {
   chainHint = true,
   -- 1.3
   arrow = true,
+  arrowNext = true, -- (1.3.5) nothing tracked: the arrow moves on to the next turn-in or an objective close by
   arrowCorpse = true, -- (1.2) as a ghost the arrow leads to your corpse
   arrowPos = nil,
   -- 1.4
   arrowScale = 1.15,
   objectivePinSize = 12,
+  thinObjectives = true, -- (1.3.5) many objective dots: fewer, bundled markers (minimap and world map)
   panelScale = 1,
   panelAlpha = 0.82, -- 1.19: family default (was 0.75)
   panelWidth = 300, -- 1.15.1: wider for German texts, adjustable
@@ -102,6 +105,8 @@ ns.defaults = {
   -- are only there while the event runs. Hidden until the game or the quest giver
   -- confirms them; off shows them like any other quest.
   hideEventQuests = true,
+  -- 1.3.5: repeatable quests are always available, so their ! would stay on the map for good
+  hideRepeatable = true,
   -- 1.0: only quests the game itself confirmed (its quest lines or the quest
   -- giver's own offer) on the map, minimap, nameplates and panel
   confirmedOnly = false,
@@ -112,6 +117,9 @@ ns.defaults = {
   skipGameGivers = true,
   clusterPins = false, -- (1.28) merge close available pins on the world map
   upcomingLevels = 0,    -- map pins: also quests of the next 0-5 levels, dimmed
+  -- 1.3.5: the entrance of every dungeon with a known entrance: world map; minimap only within 300 yards
+  dungeonPins = true,
+  dungeonPinsMinimap = true,
 }
 
 ---------------------------------------------------------------------------
@@ -517,10 +525,20 @@ end
 
 SLASH_QUESTDON1 = "/qd"
 SLASH_QUESTDON2 = "/questdon"
-ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd zone (quests of the zone), /qd journal (quest journal), /qd search, /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd reset (reset button position)"]
+ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd zone (quests of the zone), /qd journal (quest journal), /qd search [text], /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd reset (reset button position)"]
 SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
-  msg = strtrim and strtrim(msg or ""):lower() or (msg or "")
-  if msg == "reset" then
+  local raw = strtrim and strtrim(msg or "") or (msg or "")
+  msg = raw:lower()
+  -- (1.3.5, Daniel 10.10.) /qd search <text>: the search with that text
+  local text = raw:match("^[Ss][Uu][Cc][Hh][Ee]%s+(.+)$") or raw:match("^[Ss][Ee][Aa][Rr][Cc][Hh]%s+(.+)$")
+  if text then
+    if ns.OpenQuestBook then ns.OpenQuestBook("search") end
+    if ns.JournalSetQuery then ns.JournalSetQuery(text) end
+    return
+  end
+  if msg == "" or msg == "options" or msg == "config" then
+    if ns.OpenOptions then ns.OpenOptions() end
+  elseif msg == "reset" then
     if ns.ResetButtonPosition then ns.ResetButtonPosition() end
   elseif msg == "panel" then
     if ns.TogglePanel then ns.TogglePanel() end
@@ -544,10 +562,26 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
       local n, k = ns.DumpMapSizes()
       print(("|cff3fa9f5Questdon|r: %d maps, %d flight points stored. /reload saves them."):format(n, k))
     end
+  elseif msg:match("^npcname") then
+    -- (1.3.5) test: an NPC's name from every source (does the tooltip way work in this client?)
+    local id = tonumber(msg:match("^npcname%s+(%d+)$") or "")
+    local r = id and ns.NpcNameReport and ns.NpcNameReport(id)
+    if not r then
+      print("|cff3fa9f5Questdon|r: /qd npcname <NPC ID>, e.g. /qd npcname 823")
+    else
+      local function S(v) return v and ('"' .. v .. '"') or "-" end
+      print(("|cff3fa9f5Questdon|r: NPC %d: %s (from %s)"):format(r.id, S(r.name), r.source or "-"))
+      print(("  game tooltip: %s%s, learned: %s, shipped: %s, data: %s"):format(S(r.game), r.gameBroken and " (tooltip way not available)" or "",
+        S(r.learned), S(r.shipped), S(r.data)))
+      if not r.game and not r.gameBroken then print("  The client may ask the server first: try again in a few seconds.") end
+    end
   elseif msg == "diag" then
     if ns.OpenDiag then ns.OpenDiag() end
   elseif msg == "xpcheck" or msg == "xpcheck reset" then
     if ns.OpenXPCheck then ns.OpenXPCheck(msg == "xpcheck reset" and "reset" or nil) end
+  elseif msg == "dungeonlevels" then
+    -- (1.3.5) the level ranges of the data and the game, and the entrances, to check the data
+    if ns.OpenDungeonLevels then ns.OpenDungeonLevels() end
   elseif msg == "dungeons" or msg == "dungeon" then
     if ns.OpenDungeons then ns.OpenDungeons() end
   elseif msg == "group" or msg == "party" then
@@ -569,6 +603,8 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
   elseif msg == "help" then
     ns.Print(ns.HELP)
   else
-    if ns.OpenOptions then ns.OpenOptions() end
+    -- (1.3.5) a typo no longer opens the options without a word
+    ns.Print(L["Unknown command: %s"]:format(raw))
+    ns.Print(ns.HELP)
   end
 end)

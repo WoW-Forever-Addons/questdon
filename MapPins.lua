@@ -27,14 +27,21 @@ local function GameShowsTurnIn(questID)
 end
 ns.GameShowsTurnIn = GameShowsTurnIn
 
-local function LearnedTurnIns(mapID)
+-- (1.3.5, Daniel 10.10.) The "?" of a finished quest: not only where you turned it in before,
+-- also what other players reported and the turn-in NPC of the data (ns.KnownTurnIn), as long as
+-- the game does not mark the turn-in itself. Quests that complete from the log get none.
+local function TurnIns(mapID)
   local list = {}
   if not ns.db.learnPins then return list end
-  for questID, e in pairs(ns.db.learned) do
-    if e.finish and e.finish.map == mapID and ns.InQuestLog(questID) and ns.IsQuestComplete(questID)
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local questID = info.questID
+    if ns.IsQuestComplete(questID) and not (ns.IsAutoComplete and ns.IsAutoComplete(questID))
         and not (ns.db.pinsOnlyUnknown and ns.QuestieKnows(questID) == true)
         and not GameShowsTurnIn(questID) then
-      list[#list + 1] = { kind = "turnin", questID = questID, x = e.finish.x, y = e.finish.y, npc = e.finish.npc }
+      local m, x, y, npc, source = ns.KnownTurnIn(questID)
+      if m == mapID and x and y then
+        list[#list + 1] = { kind = "turnin", questID = questID, x = x, y = y, npc = npc, source = source }
+      end
     end
   end
   return list
@@ -43,11 +50,27 @@ end
 -- Everything for one map (also used by the tests).
 -- (1.23) Once per map and scope: the world map and the minimap of the same
 -- zone share it in the batched refresh. Callers only read the list.
-local BuildPins
+-- (1.3.5) ns.PinsForMapBase: the same without the objective dots (the minimap takes its own).
+local BuildPins, BuildBase
 function ns.PinsForMap(mapID)
   return ns.Memo("pins", mapID, BuildPins)
 end
+function ns.PinsForMapBase(mapID)
+  return ns.Memo("pinsBase", mapID, BuildBase)
+end
 function BuildPins(mapID)
+  local pins = {}
+  if not mapID then return pins end
+  for _, p in ipairs(ns.PinsForMapBase(mapID)) do pins[#pins + 1] = p end
+  if ns.db.objectivePins then
+    for _, o in ipairs(ns.ObjectivePointsOnMap(mapID)) do
+      o.kind = "objective"
+      pins[#pins + 1] = o
+    end
+  end
+  return pins
+end
+function BuildBase(mapID)
   local pins = {}
   if not mapID then return pins end
   if ns.db.availablePins then
@@ -59,23 +82,22 @@ function BuildPins(mapID)
       end
     end
   end
-  for _, t in ipairs(LearnedTurnIns(mapID)) do pins[#pins + 1] = t end
+  for _, t in ipairs(TurnIns(mapID)) do pins[#pins + 1] = t end
   -- (1.2) the quest picked in the zone quest list (ZoneQuests.lua)
   local focus = ns.ZoneFocusPin and ns.ZoneFocusPin(mapID)
   if focus then pins[#pins + 1] = focus end
-  if ns.db.objectivePins then
-    for _, o in ipairs(ns.ObjectivePointsOnMap(mapID)) do
-      o.kind = "objective"
-      pins[#pins + 1] = o
-    end
-  end
+  -- (1.3.5) a marked dungeon entrance (Dungeons.lua), and the entrances of all dungeons
+  local entrance = ns.EntrancePin and ns.EntrancePin(mapID)
+  if entrance then pins[#pins + 1] = entrance end
+  for _, d in ipairs(ns.DungeonEntrancePins and ns.DungeonEntrancePins(mapID) or {}) do pins[#pins + 1] = d end
   return pins
 end
 
 local function GiverText(pin)
   if pin.npc then return pin.npc end
+  if pin.kind == "turnin" then return nil end -- (1.3.5) never the quest giver for a turn-in
   local givers = ns.QuestGiverIDs(pin.questID)
-  local name = givers and ns.CreatureName(givers[1])
+  local name = givers and ns.LocalNpcName(givers[1])
   return name
 end
 
@@ -432,7 +454,7 @@ function ns.QuestPinTooltip(pin)
     lines[#lines + 1] = L["Not offered by the quest giver (level %d)"]:format(pin.notOffered) -- (1.24)
   end
   local giver = GiverText(pin)
-  if giver then KV(L["Quest giver"], giver) end
+  if giver then KV(pin.kind == "turnin" and L["Turn in"] or L["Quest giver"], giver) end -- (1.3.5) the turn-in NPC as such
   if pin.kind ~= "turnin" then
     local follow = #(ns.FollowUpQuests and ns.FollowUpQuests(pin.questID) or {})
     if follow > 0 then KV(L["Chain"], L["%d follow-up quests known"]:format(follow)) end
@@ -502,7 +524,7 @@ end
 function ns.ObjectivePinTooltip(pin)
   local lines = {}
   if pin.text then lines[#lines + 1] = { L["Objective"], pin.text } end
-  local creature = pin.creature and ns.CreatureName(pin.creature)
+  local creature = pin.creature and ns.LocalNpcName(pin.creature)
   if creature then lines[#lines + 1] = { L["Creature"], creature } end
   if pin.needsItem then
     lines[#lines + 1] = { L[pin.dimmed and "Use %s here. First get it." or "Get %s here."]:format(ns.ItemName(pin.needsItem)) }
@@ -511,14 +533,227 @@ function ns.ObjectivePinTooltip(pin)
   return Swatch(pin.questID) .. ns.QuestTitle(pin.questID), lines, L["Click: point the arrow here"]
 end
 
+-- (1.3.5) A bundled dot (minimap, world map): how many spots, every objective it stands for once with its
+-- quest in its colour and its number of spots, and the creatures there.
+function ns.ObjectiveBundleTooltip(pins)
+  pins = pins or {}
+  local seen, list, spots, crSeen, creatures = {}, {}, {}, {}, {}
+  for _, p in ipairs(pins) do
+    local key = tostring(p.questID) .. ":" .. tostring(p.index)
+    if not seen[key] then seen[key] = true list[#list + 1] = p end
+    spots[p.questID or 0] = (spots[p.questID or 0] or 0) + 1
+    local name = p.creature and ns.LocalNpcName(p.creature)
+    if name and not crSeen[name] then crSeen[name] = true creatures[#creatures + 1] = name end
+  end
+  if #pins <= 1 then return ns.ObjectivePinTooltip(pins[1]) end
+  table.sort(list, function(a, b)
+    if (a.questID or 0) ~= (b.questID or 0) then return (a.questID or 0) < (b.questID or 0) end
+    return (tonumber(a.index) or 0) < (tonumber(b.index) or 0)
+  end)
+  local lines, lastQuest = {}, nil
+  for _, p in ipairs(list) do
+    if p.questID ~= lastQuest then
+      lastQuest = p.questID
+      lines[#lines + 1] = { header = Swatch(p.questID) .. ns.QuestTitle(p.questID) .. " (" .. (spots[p.questID or 0] or 1) .. ")" }
+    end
+    if p.text then lines[#lines + 1] = { L["Objective"], p.text } end
+  end
+  if #creatures > 0 then lines[#lines + 1] = { L["Creature"], table.concat(creatures, ", ") } end
+  return L["%d objective spots"]:format(#pins), lines, L["Click: point the arrow here"]
+end
+
+---------------------------------------------------------------------------
+-- (1.3.5, Daniel 10.10., a quest field in Dun Morogh: "can be clustered more, or thinned, with that many")
+-- Dense objective dots: a budget of markers. First the dots that lie on top of each other become one (the
+-- round 5 rule, any quests). While more markers than the budget are left, the bundling distance grows by GROW
+-- per step: up to SAME_STEPS steps only spots of the same quest join (the colour still tells the quest), then
+-- MIX_STEPS more steps where any spots join. A bundle is the same dot a little larger (ns.BundleScale, at most
+-- 1.3 times) at the middle of its spots; its tooltip names the quests and how many spots each has.
+-- Points: { x, y (the same unit on both axes), q = quest, g = group (only the same group joins), f = how
+-- willing it is to join (0.5-1; the minimap: near the player less), anchor = true: from the second step on it
+-- joins nothing and takes only dots on top of it (the minimap: the nearest spot of each objective), pin }.
+-- inView(point) says whether a marker counts for the budget (nil: all). Once per refresh or zoom step, never per
+-- frame; a grid of cells, so 500 spots cost a few milliseconds at most. The same input gives the same output.
+---------------------------------------------------------------------------
+local GROW, SAME_STEPS, MIX_STEPS = 1.5, 8, 4
+ns.THIN_GROW, ns.THIN_SAME_STEPS, ns.THIN_MIX_STEPS = GROW, SAME_STEPS, MIX_STEPS -- (tests)
+local floor = math.floor
+
+function ns.BundleScale(n)
+  if n <= 1 then return 1 end
+  if n <= 3 then return 1.1 end
+  if n <= 6 then return 1.2 end
+  return 1.3
+end
+
+-- The points live in reused arrays (ns.ThinBuffer), not in tables of their own: Daniel's minimap rebuilds a few
+-- times a second while you walk, and fields added to its entries made every entry table larger. T.n points,
+-- T.x, T.y, T.q, T.g, T.f (default 1), T.a (anchor) per point; T.order: the order they are taken in.
+-- Out: T.head[i] = the point that draws point i, T.mx/T.my/T.cnt for heads.
+local T = { n = 0, x = {}, y = {}, q = {}, g = {}, f = {}, a = {}, order = {}, head = {}, mx = {}, my = {}, sx = {}, sy = {}, cnt = {}, nxt = {} }
+local grid, gridKeys = {}, {}
+function ns.ThinBuffer(n)
+  T.n = n
+  local f, a, order = T.f, T.a, T.order
+  for i = 1, n do f[i], a[i], order[i] = 1, false, i end
+  for i = #order, n + 1, -1 do order[i] = nil end -- a longer list before: the order is sorted whole
+  return T
+end
+local function Pass(base, level)
+  local cell = base * GROW ^ level
+  local mixed = level > SAME_STEPS
+  local inv = 1 / cell
+  local base2 = base * base
+  local X, Y, Q, G, F, A, head, MX, MY, SX, SY, CNT, NXT = T.x, T.y, T.q, T.g, T.f, T.a, T.head, T.mx, T.my, T.sx, T.sy, T.cnt, T.nxt
+  for i = 1, #gridKeys do grid[gridKeys[i]] = nil gridKeys[i] = nil end
+  local order = T.order
+  for k = 1, T.n do
+    local i = order[k]
+    local x, y = X[i], Y[i]
+    head[i], MX[i], MY[i], SX[i], SY[i], CNT[i], NXT[i] = i, x, y, x, y, 1, false
+    local cx, cy = floor(x * inv), floor(y * inv)
+    local join
+    if not (A[i] and level > 0) then -- an anchor joins nothing (it only takes dots on top of it)
+      local r = level == 0 and cell or math.max(base, cell * F[i])
+      local r2 = r * r
+      local g, q = G[i], Q[i]
+      for gx = cx - 1, cx + 1 do
+        for gy = cy - 1, cy + 1 do
+          local h = grid[gx * 1048576 + gy]
+          while h and not join do
+            if G[h] == g then
+              local d2 = (MX[h] - x) ^ 2 + (MY[h] - y) ^ 2
+              -- on top of each other: one; farther: same quest (later any quest), never into an anchor
+              if d2 <= base2 or (level > 0 and d2 <= r2 and not A[h] and (mixed or Q[h] == q)) then join = h end
+            end
+            h = NXT[h]
+          end
+        end
+      end
+    end
+    if join then
+      head[i] = join
+      local n = CNT[join] + 1
+      CNT[join] = n
+      SX[join], SY[join] = SX[join] + x, SY[join] + y
+      MX[join], MY[join] = SX[join] / n, SY[join] / n
+    else
+      local key = cx * 1048576 + cy
+      local first = grid[key]
+      if not first then gridKeys[#gridKeys + 1] = key end
+      NXT[i] = first or false
+      grid[key] = i
+    end
+  end
+end
+
+-- Thins the points of the buffer (ns.ThinBuffer, filled by the caller). Returns the step used; T.head etc.
+-- tell the result. budget nil: only the dots on top of each other. inView(T, i) says whether a head counts
+-- for the budget (nil: all). prepare(T): called once before the first thinning step (order, anchors, f), so
+-- a list within its budget costs one pass as in round 5.
+function ns.ThinObjectivePoints(base, budget, inView, prepare)
+  local level = 0
+  local head = T.head
+  while true do
+    Pass(base, level)
+    if not budget then break end
+    local shown = 0
+    for i = 1, T.n do if head[i] == i and (not inView or inView(T, i)) then shown = shown + 1 end end
+    if shown <= budget or level >= SAME_STEPS + MIX_STEPS then break end
+    if level == 0 and prepare then prepare(T) end
+    -- the first step over the budget jumps by a guess from the area of a cell (the square of its size), rounded
+    -- down so it seldom goes too far (fewer passes for 500 spots)
+    local jump = level == 0 and math.floor(0.5 * math.log(shown / budget) / math.log(GROW)) or 1
+    level = math.min(SAME_STEPS + MIX_STEPS, level + math.max(1, jump))
+  end
+  for i = 1, #gridKeys do grid[gridKeys[i]] = nil gridKeys[i] = nil end
+  return level
+end
+
+-- (1.3.5) World map: about WORLD_BUDGET objective markers on a zone map seen whole; zoomed in (the canvas scale,
+-- in the half steps of ns.ClusterBucket) the budget grows with the area (bucket squared), so about as many are
+-- on screen. Distances in canvas pixels of a zone map (1002 x 668, so y counts 1/1.5 of x).
+local WORLD_BUDGET, CANVAS_W, CANVAS_ASPECT = 50, 1002, 1.5
+ns.WORLD_OBJECTIVE_BUDGET = WORLD_BUDGET
+local worldStats = { thinned = 0, level = 0, before = 0, after = 0 }
+function ns.WorldThinStats() return worldStats end
+-- pins: the display list of the world map; objective dots in it become fewer markers, everything else as it is.
+function ns.ThinWorldObjectives(pins, bucket, dotSize)
+  worldStats.before, worldStats.after, worldStats.level, worldStats.thinned = 0, 0, 0, 0
+  if ns.db.thinObjectives == false then return pins end
+  bucket = bucket or 1
+  local objs, out = {}, {}
+  for _, p in ipairs(pins) do
+    if p.kind == "objective" and tonumber(p.x) and tonumber(p.y) then objs[#objs + 1] = p else out[#out + 1] = p end
+  end
+  local n = #objs
+  worldStats.before = n
+  if n == 0 then return pins end
+  local B = ns.ThinBuffer(n)
+  for i, p in ipairs(objs) do B.x[i], B.y[i], B.q[i], B.g[i] = p.x, p.y / CANVAS_ASPECT, p.questID or 0, 0 end
+  -- over the budget: quest by quest (then objective, place), so the same pins always give the same markers
+  local function Prepare(T)
+    table.sort(T.order, function(a, b)
+      local pa, pb = objs[a], objs[b]
+      if T.q[a] ~= T.q[b] then return T.q[a] < T.q[b] end
+      local ia, ib = tonumber(pa.index) or 0, tonumber(pb.index) or 0
+      if ia ~= ib then return ia < ib end
+      if pa.x ~= pb.x then return pa.x < pb.x end
+      if pa.y ~= pb.y then return pa.y < pb.y end
+      return a < b
+    end)
+  end
+  local base = 0.8 * (dotSize or 12) / (CANVAS_W * bucket)
+  local level = ns.ThinObjectivePoints(base, WORLD_BUDGET * bucket * bucket, nil, Prepare)
+  local members = {}
+  for i = 1, n do
+    local h = B.head[i]
+    if h ~= i then
+      local m = members[h]
+      if not m then m = { objs[h] } members[h] = m end
+      m[#m + 1] = objs[i]
+    end
+  end
+  local heads = 0
+  for i = 1, n do
+    if B.head[i] == i then
+      heads = heads + 1
+      local m = members[i]
+      if m then
+        -- the bundle's colour: the quest with the most spots in it (the first of them on a tie)
+        local count, best = {}, nil
+        local dimmed, small = true, true
+        for _, mp in ipairs(m) do
+          local q = mp.questID or 0
+          count[q] = (count[q] or 0) + 1
+          if not best or count[q] > count[best] then best = q end
+          if not mp.dimmed then dimmed = false end
+          if not mp.small then small = false end
+        end
+        local p = objs[i]
+        out[#out + 1] = { kind = "objective", questID = best, index = p.index, x = B.mx[i], y = B.my[i] * CANVAS_ASPECT,
+          members = m, scale = ns.BundleScale(#m), dimmed = dimmed or nil, small = small or nil, text = p.text, creature = p.creature }
+      else
+        out[#out + 1] = objs[i]
+      end
+    end
+  end
+  worldStats.after, worldStats.level = heads, level
+  worldStats.thinned = n - heads
+  return out
+end
+
 -- (1.17) Signature of a pin set: refreshes from events skip the rebuild when
 -- nothing visible changed (same map, same pins, same texts).
 local lastSig, precomputed
 local clusterBucket = 1 -- (1.28) zoom step the pins were last built for
+local objBucket, objThinned = 1, false -- (1.3.5) zoom step of the objective thinning; true: another zoom can change the dots
 local stats = { builds = 0, skipped = 0 }
 local function PinKey(p)
   local extra = ""
-  if p.kind ~= "objective" then
+  if p.kind == "entrance" or p.kind == "dungeon" then
+    extra = tostring(p.name) .. tostring(p.inst)
+  elseif p.kind ~= "objective" then
     extra = ns.QuestTitle(p.questID)
     if p.kind == "turnin" and ns.QuestRewardLines then extra = extra .. table.concat(ns.QuestRewardLines(p.questID) or {}, ",") end
     if p.kind ~= "turnin" and ns.PartyMemberCount and ns.PartyMemberCount() > 0 then
@@ -551,6 +786,7 @@ end
 function ns.MapPinStats() return stats end
 
 local setupFailed = false
+local builtMap -- (1.3.5) the map whose pins are drawn now (kept in combat)
 local Setup
 function Setup()
   if provider or setupFailed then return end
@@ -560,7 +796,51 @@ function Setup()
   -- Quest start / turn-in: Blizzard's POI pin look ("!" and "?").
   QuestdonQuestPinMixin = BaseMapPoiPinMixin:CreateSubPin("PIN_FRAME_LEVEL_AREA_POI")
   local QuestPin = QuestdonQuestPinMixin
+  -- (1.3.5, Daniel 10.10.) "Show on map": the entrance's pin pulses for a few seconds (our own glow
+  -- texture on our own pin; pooled pins hide it again for anything else)
+  local function ApplyHighlight(self, pin)
+    local on = pin and (pin.kind == "dungeon" or pin.kind == "entrance") and ns.EntranceHighlighted and ns.EntranceHighlighted(pin.inst)
+    if on and not self.qdGlow and self.CreateTexture then
+      local g = self:CreateTexture(nil, "BACKGROUND")
+      g:SetPoint("CENTER", self, "CENTER", 0, 0)
+      g:SetSize(52, 52)
+      g:SetTexture("Interface\\AddOns\\Questdon\\Media\\ArrowSealGlow")
+      if g.SetBlendMode then pcall(g.SetBlendMode, g, "ADD") end
+      g:SetVertexColor(1, 0.85, 0.5)
+      if g.CreateAnimationGroup then
+        local ok, group = pcall(g.CreateAnimationGroup, g)
+        if ok and group then
+          group:SetLooping("BOUNCE")
+          local fade = group:CreateAnimation("Alpha")
+          if fade then fade:SetFromAlpha(0.25) fade:SetToAlpha(1) fade:SetDuration(0.6) end
+          self.qdPulse = group
+        end
+      end
+      self.qdGlow = g
+    end
+    if self.qdGlow then
+      if on then self.qdGlow:Show() if self.qdPulse then self.qdPulse:Play() end
+      else self.qdGlow:Hide() if self.qdPulse then self.qdPulse:Stop() end end
+    end
+    self.qdHighlighted = on and true or false
+  end
   function QuestPin:OnAcquired(pin)
+    ApplyHighlight(self, pin)
+    -- (1.3.5) a marked dungeon entrance: the game's dungeon entrance icon
+    if pin.kind == "entrance" then
+      local name = L["Entrance: %s"]:format(pin.name or "?")
+      BaseMapPoiPinMixin.OnAcquired(self, { name = name, atlasName = "Dungeon", position = CreateVector2D(pin.x, pin.y) })
+      self.qdName, self.qdDesc, self.qdPin = name, L["Click: dungeon journal, right-click: remove the mark"], pin
+      if self.SetAlpha then pcall(self.SetAlpha, self, 1) end
+      return
+    end
+    -- (1.3.5) the entrance of a dungeon (always there): the same icon, a little quieter than the mark
+    if pin.kind == "dungeon" then
+      BaseMapPoiPinMixin.OnAcquired(self, { name = pin.name or "?", atlasName = "Dungeon", position = CreateVector2D(pin.x, pin.y) })
+      self.qdName, self.qdDesc, self.qdPin = pin.name or "?", L["Click: dungeon journal, right-click: arrow"], pin
+      if self.SetAlpha then pcall(self.SetAlpha, self, 0.8) end
+      return
+    end
     local title = ns.QuestTitle(pin.questID)
     -- (1.22) "[?]" for a quest without a known level (never guessed)
     -- (1.26) the level in its difficulty colour, as in the panel and the tooltips
@@ -581,6 +861,18 @@ function Setup()
   end
   -- Left click: point the arrow there.
   function QuestPin:OnMouseClickAction(button)
+    -- (1.3.5) a dungeon entrance: a click opens the dungeon journal, right-click marks it (or removes the mark)
+    if self.qdPin and self.qdPin.kind == "dungeon" then
+      if button == "RightButton" then ns.DungeonPinRightClick(self.qdPin.inst)
+      elseif button == "LeftButton" then ns.OpenDungeonJournal(self.qdPin.inst) end
+      return
+    end
+    -- (round 8) the mark's pin: a click opens the dungeon journal too (the arrow already points there)
+    if self.qdPin and self.qdPin.kind == "entrance" then
+      if button == "RightButton" then ns.RemoveEntranceMark("pin")
+      elseif button == "LeftButton" then ns.OpenDungeonJournal(self.qdPin.inst) end
+      return
+    end
     -- (1.1) Alt-click: "no quest here" (NotHere.lua)
     if button == "LeftButton" and self.qdPin and self.qdPin.kind ~= "focus" and ns.True(ns.Value(IsAltKeyDown)) and ns.ReportPin then
       ns.ReportPin(self.qdPin)
@@ -590,6 +882,14 @@ function Setup()
       local label = self.qdPin.group and ns.QuestGroupTitle(self.qdPin) or ns.QuestTitle(self.qdPin.questID)
       ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.qdPin.x, self.qdPin.y, label)
     end
+  end
+  -- (1.3.5, Daniel 10.10.: "right-click on a dungeon entrance zooms out of the map") The map canvas lets
+  -- right-clicks of every pin pass through to the map (zoom out) unless the pin says otherwise; it asks
+  -- after OnAcquired. Entrance pins keep their right-click (the arrow mark); quest pins zoom out as before.
+  function QuestPin:ShouldMouseButtonBePassthrough(button)
+    local kind = self.qdPin and self.qdPin.kind
+    if button == "RightButton" and (kind == "dungeon" or kind == "entrance") then return false end
+    return button == "RightButton"
   end
   -- (1.2) map canvases that call OnClick instead of OnMouseClickAction
   QuestPin.OnClick = ns.Guard("map click", function(self, button) self:OnMouseClickAction(button) end)
@@ -601,7 +901,8 @@ function Setup()
   -- (1.19) own tooltip in the family structure (our mixin, our pins only)
   QuestPin.OnMouseEnter = ns.Guard("map tooltip", function(self)
     if not self.qdPin then return end
-    local tip = self.qdPin.group and ns.QuestGroupTooltip or ns.QuestPinTooltip
+    local tip = self.qdPin.kind == "entrance" and ns.EntrancePinTooltip or self.qdPin.kind == "dungeon" and ns.DungeonPinTooltip
+      or self.qdPin.group and ns.QuestGroupTooltip or ns.QuestPinTooltip
     local title, lines, hint = tip(self.qdPin)
     ns.Style.Tooltip(self, title, lines, hint)
     ns.SetHoverTooltip(self, self.OnMouseEnter) -- (1.3.4) Shift redraws it
@@ -619,6 +920,7 @@ function Setup()
     self.pin = pin
     local size = ns.db.objectivePinSize or 12
     if pin.small then size = math.max(6, math.floor(size * 0.7 + 0.5)) end -- (1.2) many spawns: smaller dots
+    if pin.scale then size = math.min(math.floor(size * pin.scale + 0.5), math.floor(size * 1.3)) end -- (1.3.5) a bundle, at most 1.3 times
     self:SetSize(size, size)
     self:SetPosition(pin.x, pin.y)
     if self.Dot then self.Dot:SetVertexColor(QuestColor(pin.questID)) end
@@ -627,7 +929,9 @@ function Setup()
   end
   ObjPin.OnMouseEnter = ns.Guard("map tooltip", function(self)
     if not self.pin then return end
-    local title, lines, hint = ns.ObjectivePinTooltip(self.pin)
+    local title, lines, hint
+    if self.pin.members then title, lines, hint = ns.ObjectiveBundleTooltip(self.pin.members) -- (1.3.5) a bundle
+    else title, lines, hint = ns.ObjectivePinTooltip(self.pin) end
     ns.Style.Tooltip(self, title, lines, hint)
   end)
   function ObjPin:OnMouseLeave() ns.Style.HideTooltip(self) end
@@ -641,13 +945,23 @@ function Setup()
   -- The map canvas calls these: protected, so an error here never breaks the map.
   local p = CreateFromMixins(MapCanvasDataProviderMixin)
   p.RemoveAllData = ns.Guard("map", function(self)
-    lastSig = nil
+    lastSig, builtMap = nil, nil
     self:GetMap():RemoveAllPinsByTemplate(QUEST_TEMPLATE)
     self:GetMap():RemoveAllPinsByTemplate(OBJECTIVE_TEMPLATE)
   end)
   p.RefreshAllData = ns.Guard("map", function(self)
+    -- (1.3.5, Daniel 10.10.: "entrance pins are not shown on the map in combat") New pins cannot be made in
+    -- combat: the map canvas calls SetPassThroughButtons on every pin it hands out, and that may not be called
+    -- by addon code in combat (#nocombat since 10.1.5). So the pins of the map last drawn stay as they are
+    -- when that map is opened again in combat; only another map's pins go (they would stand in wrong places).
+    -- Entering combat with the map closed, the player's zone is drawn beforehand (PLAYER_REGEN_DISABLED below).
+    if InCombatLockdown() then
+      local m = ns.Num(self:GetMap():GetMapID())
+      if m and m == builtMap then stats.keptInCombat = (stats.keptInCombat or 0) + 1 return end
+      self:RemoveAllData()
+      return
+    end
     self:RemoveAllData()
-    if InCombatLockdown() then return end
     local mapID = ns.Num(self:GetMap():GetMapID())
     if not mapID then precomputed = nil return end
     local pins, sig
@@ -661,20 +975,34 @@ function Setup()
     -- (1.21) quest givers with several quests: one pin (display only)
     -- (1.25) and no second "!" where the game draws one
     local map = self:GetMap()
-    local scale = ns.db.clusterPins and map.GetCanvasScale and ns.Value(map.GetCanvasScale, map) or nil
+    local canvas = map.GetCanvasScale and ns.Value(map.GetCanvasScale, map) or nil
+    local scale = ns.db.clusterPins and canvas or nil
     clusterBucket = ns.ClusterBucket(scale)
-    for _, pin in ipairs(ns.DisplayQuestPins(pins, ns.ClusterDistance(scale))) do
-      self:GetMap():AcquirePin(pin.kind == "objective" and OBJECTIVE_TEMPLATE or QUEST_TEMPLATE, pin)
+    -- (1.3.5) dense objective dots: fewer markers (quest givers and turn-ins are never thinned)
+    objBucket = ns.ClusterBucket(canvas)
+    local display = ns.ThinWorldObjectives(ns.DisplayQuestPins(pins, ns.ClusterDistance(scale)), objBucket, ns.db.objectivePinSize or 12)
+    local ts = ns.WorldThinStats()
+    objThinned = ts.before > ts.after or ts.before > ns.WORLD_OBJECTIVE_BUDGET
+    for _, pin in ipairs(display) do
+      -- (1.3.5) dungeon entrances only with their option (the minimap has its own)
+      if not (pin.kind == "dungeon" and ns.db.dungeonPins == false) then
+        self:GetMap():AcquirePin(pin.kind == "objective" and OBJECTIVE_TEMPLATE or QUEST_TEMPLATE, pin)
+      end
     end
     stats.builds = stats.builds + 1
+    builtMap = mapID
     lastSig = sig or ns.PinsSignature(mapID, pins)
   end)
   -- (1.28) zoomed: only with "Merge markers" on, and only when the rounded zoom step changed
+  -- (1.3.5) and when objective dots were thinned for another zoom step (the budget follows the zoom)
   p.OnCanvasScaleChanged = ns.Guard("map", function(self)
-    if not ns.db.clusterPins or InCombatLockdown() or not self:GetMap() then return end
+    if InCombatLockdown() or not self:GetMap() then return end
+    local thin = objThinned and ns.db.thinObjectives ~= false
+    if not ns.db.clusterPins and not thin then return end
     local map = self:GetMap()
     local scale = map.GetCanvasScale and ns.Value(map.GetCanvasScale, map) or nil
-    if ns.ClusterBucket(scale) ~= clusterBucket then self:RefreshAllData() end
+    local bucket = ns.ClusterBucket(scale)
+    if (ns.db.clusterPins and bucket ~= clusterBucket) or (thin and bucket ~= objBucket) then self:RefreshAllData() end
   end)
   local ok = pcall(WorldMapFrame.AddDataProvider, WorldMapFrame, p)
   if ok then provider = p else setupFailed = true end
@@ -690,13 +1018,13 @@ end
 
 -- (1.2) A click on a pin points the arrow there and switches the arrow on if
 -- it was off (before, the click set the target of a hidden arrow).
-function ns.PointArrowFromPin(mapID, x, y, label)
+function ns.PointArrowFromPin(mapID, x, y, label, kind)
   if not (mapID and x and y and ns.SetArrowTarget) then return end
   if not ns.db.arrow then
     ns.db.arrow = true
     if ns.ApplyArrow then ns.ApplyArrow() end
   end
-  ns.SetArrowTarget(mapID, x, y, label)
+  ns.SetArrowTarget(mapID, x, y, label, kind)
 end
 
 function ns.RefreshPins()
@@ -752,6 +1080,17 @@ loader:SetScript("OnEvent", ns.Guard("ADDON_LOADED", function(self, _, name)
   end
 end))
 ns.On("PLAYER_REGEN_ENABLED", Queue)
+-- (1.3.5) Combat starts (the lockdown begins right after this event): with the world map closed and set to
+-- the player's zone, its pins are drawn now, unless they are drawn already, so the map opened in combat
+-- shows them (entrances included).
+ns.On("PLAYER_REGEN_DISABLED", function()
+  if not provider or InCombatLockdown() or WorldMapFrame:IsShown() or not provider:GetMap() then return end
+  local m = ns.Num(provider:GetMap():GetMapID())
+  local zone = C_Map and C_Map.GetBestMapForUnit and ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
+  if not m or m ~= zone or m == builtMap then return end
+  stats.preCombat = (stats.preCombat or 0) + 1
+  provider:RefreshAllData()
+end)
 ns.On("QUEST_LOG_UPDATE", Queue)
 ns.On("QUEST_DATA_LOAD_RESULT", Queue)
 ns.On("QUESTLINE_UPDATE", Queue)

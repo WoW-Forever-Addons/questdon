@@ -292,7 +292,7 @@ local function EntryTooltip(e)
     if e.q then
       local status, text, color = ns.ZoneQuestStatus(e.q)
       if status then lines[#lines + 1] = { L["Status"], text, color } end
-      return EntryTitle(e), lines, L["Click: arrow and mark on the map. Shift-click: also open the map."]
+      return EntryTitle(e), lines, L["Click: details. Shift-click: also the arrow and the world map."]
     end
     return EntryTitle(e), lines
   end

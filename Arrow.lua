@@ -304,11 +304,57 @@ function ns.ArrowInArea()
     and (ns.ArrowTarget and ns.ArrowTarget() == auto) or false
 end
 
+-- (1.3.5, Daniel 09.10.: after a turn-in the arrow was gone and a new target had to be picked) nothing
+-- tracked: the arrow moves on by itself, to the nearest turn-in of a finished quest, or to an open
+-- objective close by when that is nearer. A click on the arrow puts this aside until the quest log changes.
+local NEXT_NEAR = 400 -- yards: an open objective counts as "close by"
+local nextDismissed -- quest log signature when the player clicked the "next" target away
+local function LogSignature()
+  local parts = {}
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local id = info.questID
+    if id then parts[#parts + 1] = id .. (ns.IsQuestComplete(id) and "c" or "") end
+  end
+  return table.concat(parts, ",")
+end
+local nextCache, nextAt, nextSig = nil, -10, nil
+local function NextAuto()
+  if ns.db.arrowNext == false then return nil end
+  local sig = LogSignature()
+  if nextDismissed and nextDismissed == sig then return nil end
+  nextDismissed = nil
+  -- every quest's places: at most every 2 seconds, at once when the log changed
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if sig == nextSig and now - nextAt < 2 then return nextCache end
+  nextSig, nextAt = sig, now
+  nextCache = nil
+  local best, bestD, bestID
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local id = info.questID
+    if id and not ns.IsQuestFailed(id) then
+      local points, special = QuestPoints(id)
+      if special ~= "autocomplete" then
+        local p, d = Nearest(points)
+        if p and d then
+          local finished = p.kind == "turnin" or p.kind == "guess"
+          if (finished or d <= NEXT_NEAR) and (not bestD or d < bestD) then best, bestD, bestID = p, d, id end
+        end
+      end
+    end
+  end
+  if not best then return nil end
+  local title = ns.QuestTitle(bestID)
+  local label = (best.kind == "turnin" or best.kind == "guess") and L["Turn in: %s"]:format(title) or title
+  nextCache = { mapID = best.mapID, x = best.x, y = best.y, label = L["Next: %s"]:format(label), questID = bestID, next = true }
+  return nextCache
+end
+function ns.DismissNextTarget() nextDismissed = LogSignature() end
+
 local function BuildAuto()
   auto = nil
   if not (ns.db.arrow and C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID) then return end
   local questID = ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
-  if not questID or questID == 0 or not ns.InQuestLog(questID) then return end
+  if not questID or questID == 0 or not ns.InQuestLog(questID) then auto = NextAuto() return end
   local points, special = QuestPoints(questID)
   if special == "autocomplete" then
     auto = { label = L["%s: complete it from the quest log"]:format(ns.QuestTitle(questID)), questID = questID }
@@ -351,8 +397,9 @@ local function Tracked()
   local id = C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
   return id or 0
 end
-function ns.SetArrowTarget(mapID, x, y, label)
-  manual = { mapID = mapID, x = x, y = y, label = label, tracked = Tracked() }
+-- (1.3.5) kind (optional): what the target is ("entrance": a marked dungeon entrance, Dungeons.lua)
+function ns.SetArrowTarget(mapID, x, y, label, kind)
+  manual = { mapID = mapID, x = x, y = y, label = label, tracked = Tracked(), kind = kind }
   if arrow and ns.db.arrow then arrow:Show() end
 end
 
@@ -645,7 +692,11 @@ local function Create()
   arrow:RegisterForClicks("RightButtonUp")
   arrow:SetScript("OnDragStart", function(self) if not ns.db.arrowLocked then self:StartMoving() end end)
   arrow:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() SavePosition() end)
-  arrow:SetScript("OnClick", ns.Guard("arrow", function() ns.ClearArrow() ns.UpdateArrowTarget() end))
+  arrow:SetScript("OnClick", ns.Guard("arrow", function()
+    local t = Target()
+    if t and t == auto and auto.next then ns.DismissNextTarget() end
+    ns.ClearArrow() ns.UpdateArrowTarget()
+  end))
   arrow:SetScript("OnEnter", ns.Guard("arrow", Tooltip))
   arrow:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
   ApplyPosition()
