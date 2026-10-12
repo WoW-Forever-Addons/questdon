@@ -397,6 +397,7 @@ ns.On("MODIFIER_STATE_CHANGED", function(key)
   if type(key) == "string" and not key:find("SHIFT", 1, true) then return end
   local tt = GameTooltip
   local ok, owned = pcall(tt and tt.IsOwned or function() return false end, tt, hover.owner)
+  if ns.PinCardOwned and ns.PinCardOwned(hover.owner) then ok, owned = true, true end -- (1.3.6) our hover card
   if ok and owned then ns.SafeCall("tooltip details", hover.fn, hover.owner) else hover.owner, hover.fn = nil, nil end
 end)
 
@@ -445,7 +446,7 @@ function ns.QuestPinTooltip(pin)
   -- title carries the level; source and confirmation only with Shift held.
   local details = Details()
   if pin.kind == "turnin" then
-    lines[#lines + 1] = L["Turn in here"]
+    -- (1.3.6) the card's "?" and green stripe say "turn in here"; the line stays only when nothing else follows
     for _, r in ipairs(ns.QuestRewardLines and ns.QuestRewardLines(pin.questID) or {}) do KV(L["Reward"], r) end
   elseif pin.upcoming then
     lines[#lines + 1] = L["Not yet: from level %d"]:format(pin.upcoming)
@@ -455,6 +456,8 @@ function ns.QuestPinTooltip(pin)
   end
   local giver = GiverText(pin)
   if giver then KV(pin.kind == "turnin" and L["Turn in"] or L["Quest giver"], giver) end -- (1.3.5) the turn-in NPC as such
+  -- (1.3.6, Daniel) an NPC that walks around: look nearby
+  if ns.QuestNpcWalks and ns.QuestNpcWalks(pin.questID, pin.kind == "turnin") then lines[#lines + 1] = L["Walks around: look nearby"] end
   if pin.kind ~= "turnin" then
     local follow = #(ns.FollowUpQuests and ns.FollowUpQuests(pin.questID) or {})
     if follow > 0 then KV(L["Chain"], L["%d follow-up quests known"]:format(follow)) end
@@ -480,6 +483,7 @@ function ns.QuestPinTooltip(pin)
       lines[#lines + 1] = "|cff737880" .. L["Not confirmed yet"] .. "|r"
     end
   end
+  if pin.kind == "turnin" and #lines == 0 then lines[1] = L["Turn in here"] end
   return ns.LevelTitle(pin.questID), lines, ns.QuestPinHint(pin)
 end
 
@@ -904,10 +908,11 @@ function Setup()
     local tip = self.qdPin.kind == "entrance" and ns.EntrancePinTooltip or self.qdPin.kind == "dungeon" and ns.DungeonPinTooltip
       or self.qdPin.group and ns.QuestGroupTooltip or ns.QuestPinTooltip
     local title, lines, hint = tip(self.qdPin)
-    ns.Style.Tooltip(self, title, lines, hint)
+    -- (1.3.6) our own hover card (PinCard.lua)
+    ns.PinCard(self, title, lines, hint, ns.PinCardKind(self.qdPin.group and self.qdPin.group[1] or self.qdPin))
     ns.SetHoverTooltip(self, self.OnMouseEnter) -- (1.3.4) Shift redraws it
   end)
-  function QuestPin:OnMouseLeave() ns.Style.HideTooltip(self) ns.SetHoverTooltip(nil) end
+  function QuestPin:OnMouseLeave() ns.PinCardHide(self) ns.SetHoverTooltip(nil) end
 
   -- Objective spawns: small coloured dots.
   QuestdonObjectivePinMixin = CreateFromMixins(MapCanvasPinMixin)
@@ -932,9 +937,10 @@ function Setup()
     local title, lines, hint
     if self.pin.members then title, lines, hint = ns.ObjectiveBundleTooltip(self.pin.members) -- (1.3.5) a bundle
     else title, lines, hint = ns.ObjectivePinTooltip(self.pin) end
-    ns.Style.Tooltip(self, title, lines, hint)
+    local first = self.pin.members and self.pin.members[1] or self.pin
+    ns.PinCard(self, title, lines, hint, ns.PinCardKind(nil, first.questID))
   end)
-  function ObjPin:OnMouseLeave() ns.Style.HideTooltip(self) end
+  function ObjPin:OnMouseLeave() ns.PinCardHide(self) end
   function ObjPin:OnMouseClickAction(button)
     if button == "LeftButton" and self.pin then
       ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.pin.x, self.pin.y, ns.QuestTitle(self.pin.questID))

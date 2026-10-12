@@ -27,7 +27,7 @@ local APIS = {
   "C_QuestLine.GetAvailableQuestLines", "C_SuperTrack.GetSuperTrackedQuestID",
   "UnitIsPlayer", "UnitGUID", "UnitXP", "GetXPExhaustion", "GetPlayerFacing",
   "canaccessvalue", "issecretvalue",
-  "C_Map.GetBestMapForUnit", "C_Map.GetPlayerMapPosition", "C_Map.GetWorldPosFromMapPos", "CreateVector2D",
+  "C_Map.GetBestMapForUnit", "C_Map.GetPlayerMapPosition", "C_Map.GetWorldPosFromMapPos", "C_Map.GetMapPosFromWorldPos", "CreateVector2D",
   "WorldMapFrame", "MapCanvasDataProviderMixin", "MapCanvasPinMixin", "BaseMapPoiPinMixin.CreateSubPin",
   "TooltipDataProcessor.AddTooltipPostCall", "Enum.TooltipDataType.Unit",
   "GetQuestLogRewardXP", "GetQuestLogRewardMoney", "GetNumQuestLogRewards", "GetQuestLogRewardInfo",

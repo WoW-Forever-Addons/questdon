@@ -3,11 +3,9 @@ local _, ns = ...
 ---------------------------------------------------------------------------
 -- (1.22) Quest icons on nameplates, like Questie: a small mark above the
 -- nameplate of
---   * an NPC where a finished quest of yours is turned in (learned NPC): "?"
 --   * a mob or object that counts for an open objective of a quest in your
 --     log (ATT data): a dot in the quest's colour, as on the map
---   * an NPC with a quest you can pick up now (same rules as the map: level,
---     faction, race, class, previous quests, low level option): "!"
+--   (1.3.6: no more "?" and "!" over quest givers and turn-ins, the game shows its own)
 --
 -- Midnight rules: the creature is known only through UnitGUID of the
 -- nameplate's unit. When the client hides it (secret value), that nameplate
@@ -54,47 +52,21 @@ local function ObjectiveOpen(questID, index)
   return true
 end
 
--- Turn-in NPCs of the finished quests in the log: [npcID] = questID.
--- (1.3.5, Daniel 10.10.) not only learned ones: also the NPC other players reported and the
--- turn-in NPC of the data (ns.KnownTurnIn: learned > shared > data).
-local turnins
-local function TurnIns()
-  if turnins then return turnins end
-  turnins = {}
-  for _, info in ipairs(ns.QuestLogEntries()) do
-    local id = info.questID
-    if ns.IsQuestComplete(id) and not (ns.IsAutoComplete and ns.IsAutoComplete(id)) then
-      local _, _, _, _, _, npc = ns.KnownTurnIn(id)
-      if npc and npc > 0 and not turnins[npc] then turnins[npc] = id end
-    end
-  end
-  return turnins
-end
-
 -- What the icon of a creature shows: { kind, questID } or false. Also used by the tests.
 function ns.NameplateMark(creatureID)
   if not creatureID then return false end
   local m = marks[creatureID]
   if m ~= nil then return m end
   m = false
-  local t = TurnIns()[creatureID]
-  if t then m = { kind = "turnin", questID = t } end
-  local objectives, gives = ns.CreatureQuestIndex(creatureID)
-  if not m then
-    for _, entry in ipairs(objectives or {}) do
-      local questID, index = ns.ObjectiveEntry(entry)
-      if ObjectiveOpen(questID, index) and not QuestieDrawsNameplates(questID) then
-        m = { kind = "objective", questID = questID }
-        break
-      end
-    end
-  end
-  if not m then
-    for _, questID in ipairs(gives or {}) do
-      if ns.ShowAsAvailable(questID) then -- (1.24) same rule as the map
-        m = { kind = "available", questID = questID }
-        break
-      end
+  -- (1.3.6, Daniel 12.10.: "do we need Questdon's ?! at all, when is there ever no ?! over an NPC") no:
+  -- quest givers and turn-ins carry the game's own ! and ?, ours only doubled them. The pins over the
+  -- mobs of your open objectives stay (the game marks those nowhere).
+  local objectives = ns.CreatureQuestIndex(creatureID)
+  for _, entry in ipairs(objectives or {}) do
+    local questID, index = ns.ObjectiveEntry(entry)
+    if ObjectiveOpen(questID, index) and not QuestieDrawsNameplates(questID) then
+      m = { kind = "objective", questID = questID }
+      break
     end
   end
   marks[creatureID] = m
@@ -181,6 +153,12 @@ end
 
 local function Apply(unit)
   if type(unit) ~= "string" or not ns.Usable(unit) then return end
+  -- (1.3.6, Daniel 12.10.: "everything twice and three times") a guide (Leveldon) marks this NPC as the next
+  -- step: its mark stands alone there, ours goes (QuestdonAPI.SetPlateClaim)
+  if ns.plateClaim then
+    local okC, claimed = pcall(ns.plateClaim, unit)
+    if okC and claimed then Release(unit) units[unit] = false return end
+  end
   local guid = ns.Value(UnitGUID, unit)
   if guid == nil then
     -- secret (Midnight) or gone: no icon, never a guess from the name
@@ -225,7 +203,7 @@ ns.NameplateUnits = Units
 
 -- Work out the marks of all visible nameplates again.
 local function RefreshAll()
-  marks, turnins = {}, nil
+  marks = {}
   stats.refreshes = stats.refreshes + 1
   for _, unit in ipairs(Units()) do
     if Enabled() then Apply(unit) else Release(unit) units[unit] = false end
@@ -256,6 +234,12 @@ function ns.NameplateState()
   for _ in pairs(units) do n = n + 1 end
   return ("on, %d shown of %d nameplates, guid secret %d, no plate %d, failed %d"):format(stats.shown, n,
     stats.secret, stats.noPlate, stats.failed)
+end
+-- (1.3.6) one nameplate again (a guide took or gave back its mark)
+function ns.NameplateApply(unit)
+  if type(unit) ~= "string" then return end
+  if units[unit] == nil then return end -- not a nameplate we know
+  if Enabled() then Apply(unit) end
 end
 -- tests
 function ns.NameplateIcon(unit) return units[unit] or nil end

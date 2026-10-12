@@ -189,8 +189,8 @@ end
 
 ---------------------------------------------------------------------------
 -- (1.3.5) Entrance of a dungeon: the game's own (C_EncounterJournal.GetDungeonEntrancesForMap, the zones of
--- Kalimdor and the Eastern Kingdoms read once per session, matched by name), else the data's
--- (ns.ATT_DUNGEONS). Data entrances on maps that are no zone (Blackrock Mountain 33/35, Ahn'Qiraj 327,
+-- Kalimdor and the Eastern Kingdoms read once per session, matched by name), else (1.3.6) the list of
+-- Data/Dungeon_Entrances.lua, else the data's (ns.ATT_DUNGEONS). Data entrances on maps that are no zone (Blackrock Mountain 33/35, Ahn'Qiraj 327,
 -- Uldaman's 16) are left out: the arrow and the pins need the zone's coordinates.
 ---------------------------------------------------------------------------
 local NOT_ZONE = { [16] = true, [33] = true, [35] = true, [327] = true }
@@ -216,6 +216,12 @@ local function ScanEntrances()
   for _, d in pairs(D) do
     local m = d[EMAP]
     if m and not NOT_ZONE[m] and not seen[m] then seen[m] = true zones[#zones + 1] = m end
+  end
+  for _, list in pairs(ns.DUNGEON_ENTRANCES or {}) do
+    for _, p in ipairs(list) do
+      local m = ns.Num(p[1])
+      if m and not seen[m] then seen[m] = true zones[#zones + 1] = m end
+    end
   end
   table.sort(zones)
   local names = {}
@@ -261,12 +267,65 @@ local function ScanEntrances()
 end
 function ns.ResetDungeonEntrances() ej = nil end -- (tests)
 
--- Entrance: mapID, x, y (0-1), source ("game" or "data"), or nil.
-function ns.DungeonEntrance(inst)
+-- (1.3.6) Every entrance of a dungeon: { { mapID, x, y (0-1), source }, ... }, main one first. The game's
+-- journal, else the list of Data/Dungeon_Entrances.lua (where you walk in, Forever's map coordinates, two
+-- ways in for Uldaman, Stratholme and Blackrock Mountain), else All The Things' point on a zone map.
+-- (1.3.6) Entries carry two more fields: [5] = how many other players confirmed this way in (QuestdonNet,
+-- guild, group; Entrances.lua), [6] = true when the player entered here. A learned spot farther than
+-- LEARN_NEAR from every listed one is another way in: own ("learned") or confirmed by others ("shared").
+local LEARN_NEAR = 0.03
+local function Near(p, m, x, y) return p[1] == m and math.abs(p[2] - x) <= LEARN_NEAR and math.abs(p[3] - y) <= LEARN_NEAR end
+function ns.DungeonEntrances(inst)
+  local out = {}
   local e = inst and ScanEntrances()[inst]
-  if e then return e[1], e[2], e[3], "game" end
-  local d = D[inst]
-  if d and d[EMAP] and d[EX] and d[EY] and not NOT_ZONE[d[EMAP]] then return d[EMAP], d[EX] / 100, d[EY] / 100, "data" end
+  if e then out[1] = { e[1], e[2], e[3], "game" } return out end
+  local list = inst and ns.DUNGEON_ENTRANCES and ns.DUNGEON_ENTRANCES[inst]
+  if type(list) == "table" then
+    for _, p in ipairs(list) do
+      local m, x, y = ns.Num(p[1]), ns.Num(p[2]), ns.Num(p[3])
+      if m and x and y then out[#out + 1] = { m, x / 100, y / 100, "list" } end
+    end
+  end
+  if #out == 0 then
+    local d = D[inst]
+    if d and d[EMAP] and d[EX] and d[EY] and not NOT_ZONE[d[EMAP]] then out[1] = { d[EMAP], d[EX] / 100, d[EY] / 100, "data" } end
+  end
+  -- learned in the game: own, and what others confirmed
+  local function Merge(m, x, y, source, n, mine)
+    for _, p in ipairs(out) do
+      if Near(p, m, x, y) then
+        if mine then p[6] = true end
+        if n then p[5] = math.max(p[5] or 0, n) end
+        return
+      end
+    end
+    out[#out + 1] = { m, x, y, source, n, mine or nil }
+  end
+  local lm, lx, ly
+  if ns.LearnedEntrance then lm, lx, ly = ns.LearnedEntrance(inst) end
+  if lm and lx and ly then Merge(lm, lx, ly, "learned", nil, true) end
+  for _, s in ipairs(ns.SharedEntrances and ns.SharedEntrances(inst) or {}) do Merge(s[1], s[2], s[3], "shared", s[4]) end
+  return out
+end
+
+-- Entrance: mapID, x, y (0-1), source ("game", "list" or "data"), or nil. With several ways in: the
+-- nearest to the player (same continent), else the one on the player's map, else the main one.
+function ns.DungeonEntrance(inst)
+  local all = ns.DungeonEntrances(inst)
+  local best = all[1]
+  if #all > 1 then
+    local here = C_Map and ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
+    local bestD
+    for _, p in ipairs(all) do
+      local dist = ns.DistanceAndBearing and ns.DistanceAndBearing({ mapID = p[1], x = p[2], y = p[3] })
+      dist = ns.Num(dist)
+      if dist and (not bestD or dist < bestD) then best, bestD = p, dist end
+    end
+    if not bestD and here then
+      for _, p in ipairs(all) do if p[1] == here then best = p break end end
+    end
+  end
+  if best then return best[1], best[2], best[3], best[4] end
 end
 
 ---------------------------------------------------------------------------
@@ -388,12 +447,33 @@ function ns.DungeonEntrancePins(mapID)
   -- for the world map (option dungeonPins) and the minimap (dungeonPinsMinimap, which filters by distance)
   if not (mapID and ns.db and (ns.db.dungeonPins ~= false or ns.db.dungeonPinsMinimap ~= false)) then return list end
   for inst in pairs(D) do
-    if not (mark and mark.inst == inst) then
-      local m, x, y = ns.DungeonEntrance(inst)
-      if m == mapID and x and y then list[#list + 1] = { kind = "dungeon", inst = inst, name = ns.DungeonName(inst), x = x, y = y } end
+    for _, p in ipairs(ns.DungeonEntrances(inst)) do
+      local isMark = mark and mark.inst == inst and mark.mapID == p[1] and math.abs(mark.x - p[2]) < 1e-6 and math.abs(mark.y - p[3]) < 1e-6
+      if p[1] == mapID and not isMark then
+        list[#list + 1] = { kind = "dungeon", inst = inst, name = ns.DungeonName(inst), x = p[2], y = p[3],
+          source = p[4], confirmed = p[5], mine = p[6] }
+      end
     end
   end
-  table.sort(list, function(a, b) return a.inst < b.inst end)
+  table.sort(list, function(a, b)
+    if a.inst ~= b.inst then return a.inst < b.inst end
+    return a.x < b.x
+  end)
+  -- (1.3.6) dungeons sharing one way in (Blackrock Mountain: three; the Scarab Gate: two) side by side,
+  -- SPREAD apart on the map, so each keeps its own pin and tooltip
+  local SPREAD = 0.012
+  local groups, order = {}, {}
+  for _, p in ipairs(list) do
+    local k = math.floor(p.x * 200 + 0.5) .. ":" .. math.floor(p.y * 200 + 0.5)
+    if not groups[k] then groups[k] = {} order[#order + 1] = k end
+    table.insert(groups[k], p)
+  end
+  for _, k in ipairs(order) do
+    local g = groups[k]
+    if #g > 1 then
+      for i, p in ipairs(g) do p.x = p.x + (i - (#g + 1) / 2) * SPREAD end
+    end
+  end
   return list
 end
 
@@ -411,6 +491,8 @@ function ns.DungeonPinTooltip(pin)
     local c = ns.Style and ns.Style.COLORS and ns.Style.COLORS[color]
     lines[#lines + 1] = (c and c.hex) and ("|c" .. c.hex .. fit .. "|r") or fit
   end
+  -- (1.3.6, Daniel 10.10.: "tooltips must not be overloaded") whether the game confirmed an entrance stays
+  -- out of the tooltip: /qd dungeonlevels reports it
   return ns.DungeonIconTag(inst) .. (pin and pin.name or ns.DungeonName(inst)), lines, L["Click: dungeon journal, right-click: arrow"]
 end
 
@@ -630,13 +712,26 @@ function ns.DungeonLevelReport()
     if pic == "icon" then pic = pic .. " " .. tostring(tex):gsub("^Interface\\Icons\\", "") end
     out[#out + 1] = ("%d %s: data %s, game %s, entrance %s, picture %s"):format(inst, tostring(ns.DungeonName(inst)),
       tlo and ("%d-%d"):format(tlo, thi) or "none", glo and (ghi and ("%d-%d"):format(glo, ghi) or ("%d-?"):format(glo)) or "none",
-      m and ("%d %.1f %.1f (%s)"):format(m, x * 100, y * 100, src) or "none", pic)
+      m and (("%d %.1f %.1f (%s)"):format(m, x * 100, y * 100, src) .. (#ns.DungeonEntrances(inst) > 1 and (" +" .. (#ns.DungeonEntrances(inst) - 1)) or "")) or "none", pic)
   end
   local gs, es, is = gameStats, ejStats, iconStats
   out[#out + 1] = ("game: %d activities, %d matched; journal: %d zones, %d entrances, %d matched"):format(gs.activities, gs.matched,
     es.zones, es.entrances, es.matched)
   out[#out + 1] = ("pictures: journal %d, lfg %d, known %d, icon %d, none %d, failed %d"):format(is.journal, is.lfg, is.known, is.icon,
     is.none, is.failed)
+  -- (1.3.6) entrances learned in the game
+  local ls = ns.EntranceLearnStats and ns.EntranceLearnStats()
+  if ls then
+    local own, shared = 0, 0
+    for inst in pairs(D) do
+      for _, p in ipairs(ns.DungeonEntrances(inst)) do
+        if p[6] then own = own + 1 end
+        if (p[5] or 0) > 0 then shared = shared + 1 end
+      end
+    end
+    out[#out + 1] = ("entrances learned: %d this session, %d confirmed listed ones; own %d, confirmed by others %d; last skip %s; spots %d"):format(
+      ls.learned, ls.confirmed, own, shared, tostring(ls.last), ls.samples)
+  end
   return table.concat(out, "\n")
 end
 function ns.OpenDungeonLevels()

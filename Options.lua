@@ -42,7 +42,7 @@ local PAGES = {
     { header = "Dungeons" },
     { key = "dungeonHint", name = "Hint when entering a dungeon", tip = "When you enter a dungeon, the chat names its quests in your log and the ones you are missing (and who in the group has them)." },
     { header = "Tooltips" },
-    { key = "unitTooltips", name = "Quest info in mob and NPC tooltips", tip = "Mouse over a mob: shows which of your quests it counts for and your progress. Mouse over an NPC: shows quests it has for you. Where Questie's tooltips already show the quest, Questdon adds nothing." },
+    { key = "unitTooltips", name = "Quest info in mob and NPC tooltips", tip = "Mouse over a mob: shows which of your quests it counts for and your progress. Mouse over an NPC: shows quests it has for you. With 'Questie has priority' on, Questdon adds nothing where Questie's tooltips already show the quest." },
   } },
   { title = "Map", tip = "Available quests, quest mobs and learned spots on the world map, the minimap and nameplates.", items = {
     -- (1.23) grouped by what is shown; the level options apply to the world map, minimap, nameplates and panel alike
@@ -68,7 +68,7 @@ local PAGES = {
     { header = "Minimap and nameplates" },
     { key = "minimapPins", name = "Show the pins on the minimap too", tip = "The same pins as on the world map (available quests, quest mobs and objectives, learned turn-ins) for the zone you are in, also on the minimap. The options above apply there too. A quest giver with several quests is one pin. Mouse over for details, click to point the arrow there.", onChange = RefreshPins },
     { key = "minimapButton", name = "Minimap button", tip = "A Questdon button on the edge of the minimap. Left click: quest book. Right click: a menu with the most used switches and all options. Mouse over: quests here, dungeon quests and your quest log. Drag it around the minimap.", onChange = function() if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end end },
-    { key = "nameplateIcons", name = "Quest icons on nameplates", tip = "A small mark above the nameplate: a dot in the quest's colour for mobs of your open objectives, a yellow ! for NPCs with a quest you can pick up now, a ? where a finished quest is turned in (learned NPC). Nameplates must be switched on in the game. If the game hides who a nameplate belongs to (Midnight rules), that nameplate gets no icon.", onChange = function() if ns.RefreshNameplates then ns.RefreshNameplates() end end },
+    { key = "nameplateIcons", name = "Quest mob pins on nameplates", tip = "A pin in the quest's colour above the nameplate of mobs of your open objectives. Quest givers and turn-ins keep the game's own ! and ?. Nameplates must be switched on in the game.", onChange = function() if ns.RefreshNameplates then ns.RefreshNameplates() end end },
     -- (1.3.5) dungeon entrances
     { header = "Dungeon entrances" },
     { key = "dungeonPins", name = "Dungeon entrances on the map", tip = "The entrance of every dungeon and raid Questdon knows, on the world map. Mouse over: level range and your quests there. Click: the dungeon in the quest book. Right-click: the arrow leads you there.", onChange = RefreshPins },
@@ -89,10 +89,20 @@ local PAGES = {
     { key = "panelCombatFade", name = "Dim in combat", tip = "Dims the window to 40 % while you are in combat.", parent = "showPanel", onChange = PanelLook },
     { kind = "button", name = "Reset position", button = "Reset", tip = "Puts the window back to its default place.", onClick = function() if ns.ResetPanelPosition then ns.ResetPanelPosition() end end },
     { key = "panelWidth", kind = "slider", name = "Width", tip = "Width of the window. Long lines wrap and the window grows in height.", min = 220, max = 500, step = 10, format = Pixels, parent = "showPanel", onChange = PanelLook },
+    -- (1.3.6, Daniel 12.10.) the quest list with the compass
+    { header = "Quest list" },
+    { key = "tracker", name = "Show the quest list", tip = "Your quests in Questdon's own window instead of Blizzard's quest tracker: on top the quest you picked with a compass, below the others; the tabs switch between nearby, by zone and by level. Click a quest to pick it, Shift-click to read it. /qd list toggles it.", onChange = function() if ns.UpdateTracker then ns.UpdateTracker(true) end if ns.ApplyArrowLook then ns.ApplyArrowLook() end end },
+    { key = "trackerCompass", name = "Compass in the list instead of the arrow", tip = "The compass on the card of the picked quest takes the place of the separate direction arrow. Collapse the list and the arrow is back.", parent = "tracker", onChange = function() if ns.UpdateTracker then ns.UpdateTracker(true) end end },
+    { key = "trackerDock", name = "Under Leveldon's window", tip = "With Leveldon open, the quest list hangs right under its window, as wide as it, and moves with it. Leveldon then shows the compass.", parent = "tracker", onChange = function() if ns.UpdateTracker then ns.UpdateTracker(true) end end },
+    { key = "trackerHideBlizz", name = "Hide Blizzard's quest tracker", tip = "While the quest list is shown, Blizzard's quest tracker is invisible and lets clicks through. Never changed in combat.", parent = "tracker", onChange = function() if ns.ApplyBlizzTracker then ns.ApplyBlizzTracker() end end },
+    { key = "trackerScale", kind = "slider", name = "Text size", tip = "Size of the quest list and its text. Ctrl + mouse wheel over the title bar does it too.", min = SMIN, max = SMAX, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then f:SetPanelScale(ns.db.trackerScale, true) end if ns.UpdateTracker then ns.UpdateTracker(true) end end },
+    { key = "trackerAlpha", kind = "slider", name = "Background opacity", tip = "From a dark window down to no background and no frame, only the text. Shift + mouse wheel over the title bar does it too.", min = 0, max = 1, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then f:SetBackgroundAlpha(ns.db.trackerAlpha) end end },
+    { key = "trackerCombatFade", name = "Dim in combat", tip = "Dims the window to 40 % while you are in combat.", parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then ns.Style.CombatFade(f, ns.db.trackerCombatFade) end end },
     { header = "Direction arrow" },
     { key = "arrow", name = "Show window", tip = "Arrow with distance to the quest you track in the quest log or tracker (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = ArrowLook },
     { key = "arrowLocked", name = "Lock window", tip = "The arrow can no longer be dragged.", parent = "arrow" },
     { key = "arrowNext", name = "Move on to the next quest by itself", tip = "When no quest is tracked (after a turn-in, or after you arrived at a clicked target), the arrow points to the nearest turn-in of a finished quest, or to an open objective close by when that is nearer. Click the arrow to put it aside until your quest log changes.", parent = "arrow", onChange = function() ns.UpdateArrowTarget() end },
+    { key = "pathDots", name = "Show the way as dots", tip = "Where the arrow leads around a mountain or first to the way into a cave, dots on the world map and minimap show the way.", parent = "arrow" },
     { key = "arrowCorpse", name = "Lead to your corpse when dead", tip = "After you released your spirit, the arrow points to your corpse until you are alive again. Then it goes back to your quest.", parent = "arrow" },
     { key = "arrowScale", kind = "slider", name = "Size", tip = "Size of the direction arrow and its text.", min = SMIN, max = SMAX, step = 0.05, parent = "arrow", onChange = ArrowLook },
     { key = "arrowAlpha", kind = "slider", name = "Background opacity", tip = "How dark the plate behind the target and distance is.", min = 0, max = 1, step = 0.05, parent = "arrow", onChange = ArrowLook },
@@ -119,7 +129,7 @@ local PAGES = {
     { key = "nextConfirmedOnly", name = "Nearest quest: only confirmed ones", tip = "The nearest quest line, the arrow from it and /qd next only use quests the game or a quest giver confirmed. The map still shows all quests.", parent = "nextQuestHint", onChange = UpdatePanel },
     { key = "dungeonQuests", name = "Dungeon quests in the panel", tip = "Lists the dungeon quests in your log and the ones you can pick up now, per dungeon. Forever pays dungeon quests extra XP: take them before you go in. Click the line: arrow to the nearest quest giver. /qd dungeons", parent = "showPanel", onChange = UpdatePanel },
     { header = "When something is done" },
-    { key = "notifySound", name = "Sound when done", tip = "Plays a sound when a quest objective or a whole quest is done. Where Questie plays its own sound, Questdon stays quiet." },
+    { key = "notifySound", name = "Sound when done", tip = "Plays a sound when a quest objective or a whole quest is done. With 'Questie has priority' on, Questdon stays quiet where Questie plays its own sound." },
     { key = "notifyText", name = "Message when done", tip = "Shows a message in the middle of the screen when an objective or quest is done." },
   } },
   { title = "Comfort", tip = "Merchant, loot, quest item button, targeting and waypoints.", items = {
@@ -139,7 +149,7 @@ local PAGES = {
   } },
   { title = "Questie", tip = "How Questdon works together with Questie.", items = {
     { header = "Working together" },
-    { key = "questieFirst", name = "Questie has priority", tip = "If Questie already does something (auto accept, auto turn-in, quest item buttons in its tracker, completion sounds), Questdon steps back there. /qd questie shows the current state.", onChange = function() RefreshItemButton() RefreshPins() end },
+    { key = "questieFirst", name = "Questie has priority", tip = "Off by default. On: if Questie already does something (auto accept, auto turn-in, quest item buttons in its tracker, completion sounds, nameplate icons, tooltips), Questdon steps back there. /qd questie shows the current state.", onChange = function() RefreshItemButton() RefreshPins() end },
   } },
 }
 

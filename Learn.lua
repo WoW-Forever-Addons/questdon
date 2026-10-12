@@ -55,6 +55,49 @@ local function Clock() return ns.Num(ns.Value(GetTime)) or 0 end
 
 local function PlayerLevel() return ns.Num(ns.Value(UnitLevel, "player")) end
 
+-- (1.3.6, Daniel: "when an NPC patrols, that is important to know") where you talked to a quest NPC: up to
+-- SPOTS places per NPC that lie more than SPOT_APART map percent from each other; two of them more than WALKS
+-- apart on one map: the NPC walks around (map pins, Leveldon). The data's walkers (Brave Wildrunner, Mulgore:
+-- Daniel's recording, 60.4 and 63.0) count from the start.
+local SPOTS, SPOT_APART, WALKS = 6, 0.4, 1.5
+ns.WALKING_NPCS = { [3222] = true, [2988] = true } -- 2988 Morin Cloudstalker: 51.4/63.5 and 53.8/64.1 (11.10.)
+local function NoteSpot(id, map, x, y)
+  if not (id and map and x and y) or type(ns.db.npcSpots) ~= "table" then return end
+  local list = ns.db.npcSpots[id]
+  if not list then list = {} ns.db.npcSpots[id] = list end
+  local px, py = x * 100, y * 100
+  for _, p in ipairs(list) do
+    if p[1] == map and math.abs(p[2] - px) < SPOT_APART and math.abs(p[3] - py) < SPOT_APART then return end
+  end
+  if #list >= SPOTS then table.remove(list, 1) end
+  list[#list + 1] = { map, math.floor(px * 10 + 0.5) / 10, math.floor(py * 10 + 0.5) / 10 }
+end
+function ns.NpcWalks(id)
+  if not id then return false end
+  if ns.WALKING_NPCS[id] then return true end
+  local list = type(ns.db.npcSpots) == "table" and ns.db.npcSpots[id]
+  for a = 1, list and #list or 0 do
+    for b = a + 1, #list do
+      local p, q = list[a], list[b]
+      if p[1] == q[1] and math.sqrt((p[2] - q[2]) ^ 2 + (p[3] - q[3]) ^ 2) > WALKS then return true end
+    end
+  end
+  return false
+end
+
+-- the quest giver (turnin = false) or the turn-in NPC of a quest walks around
+function ns.QuestNpcWalks(questID, turnin)
+  local id
+  if turnin then
+    local e = ns.db.learned and ns.db.learned[questID]
+    id = (e and e.finish and e.finish.npcID) or (ns.QUEST_ENDS and ns.QUEST_ENDS[questID] and ns.QUEST_ENDS[questID][4])
+  else
+    local g = ns.QuestGiverIDs and ns.QuestGiverIDs(questID)
+    id = type(g) == "table" and g[1] or nil
+  end
+  return ns.NpcWalks(id)
+end
+
 local function Here()
   local map, x, y = ns.PlayerPosition()
   if not map then return nil end
@@ -65,6 +108,7 @@ local function Here()
     local kind, id = UnitKindID("npc")
     if kind == "c" then here.npcID = id elseif kind == "o" then here.objID = id end
     if kind == "c" and ns.NoteNpcName then ns.NoteNpcName(id, npc) end -- (1.3.5)
+    if kind == "c" then NoteSpot(id, map, x, y) end -- (1.3.6)
   end
   return here
 end

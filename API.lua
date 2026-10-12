@@ -31,6 +31,7 @@ function API.GetQuest(questID)
     questID = questID, mapID = q[1], x = q[2], y = q[3], faction = q[4], minLevel = q[5],
     prereqs = Copy(q[6]), givers = Copy(q[7]), flags = q[8] or "", name = q[13], origin = q[14],
     dungeon = q[15],
+    classes = Copy(q[9]), -- (1.3.6) class IDs of a class quest (1 warrior ... 11 druid), else nil
   }
 end
 
@@ -48,8 +49,13 @@ function API.CanTakeQuestLater(questID)
   if ns.IsQuestDone(questID) or ns.InQuestLog(questID) then return false end
   return ns.CanTakeQuest(questID, nil, 100) and true or false
 end
+-- (1.3.6, Leveldon) the level at which this character's quest giver did not offer the quest (Questdon read
+-- the NPC's dialog), while that holds (until a level up), else nil
+function API.NotOfferedLevel(questID) return ns.NotOfferedLevel and ns.NotOfferedLevel(questID) or nil end
 function API.IsQuestDone(questID) return ns.IsQuestDone(questID) end
 function API.InQuestLog(questID) return ns.InQuestLog(questID) end
+-- (1.3.6) the quest giver (turnin false) or turn-in NPC walks around (seen at places far apart, or known)
+function API.QuestNpcWalks(questID, turnin) return ns.QuestNpcWalks and ns.QuestNpcWalks(questID, turnin) or false end
 function API.IsQuestComplete(questID) return ns.IsQuestComplete(questID) end
 function API.CreatureName(creatureID) return ns.CreatureName(creatureID) end
 
@@ -177,9 +183,71 @@ function API.DistanceTo(mapID, x, y)
 end
 
 -- Arrow: point it at a target { mapID, x, y (0-1), label } or nil to release it.
+-- (1.3.6) { ..., area = true, questID, points = { { mapID, x, y }, ... } }: the quest's objective places; in
+-- their area (or with its mobs in sight) the needle gives way to "In the objective area", as for Questdon's own.
 function API.SetArrowTarget(target)
   if ns.SetExternalArrowTarget then ns.SetExternalArrowTarget(target) end
 end
+
+-- (1.3.6, Daniel 12.10.: "the arrow built into the window") For a guide window with its own compass:
+--   API.NewCompass(parent, size)        Questdon's compass (ring, rose, golden needle): c:Point(bearing, facing,
+--                                       nearness), c:Arrived(on)
+--   API.ArrowState()                    what the arrow shows now: angle (its needle's rotation), needle, nearness,
+--                                       seal (arrived), label, distText, distColor, dist, bearing (to the target
+--                                       itself, radians clockwise from north; the needle may follow a way around)
+--   API.SetGuideCompass(on)             the guide's window shows the compass: Questdon's arrow draws nothing and its
+--                                       quest list leaves out its own card (the quests stay listed)
+--   API.ShowQuestText(questID)          the whole quest to read (description, objectives, rewards)
+function API.NewCompass(parent, size) return ns.NewCompass and ns.NewCompass(parent, size) or nil end
+function API.ArrowState()
+  local st = ns.ArrowState and ns.ArrowState() or {}
+  return { angle = st.angle, needle = st.needle, nearness = st.nearness, seal = st.seal, label = st.label,
+    distText = st.distText, distColor = st.distColor, dist = st.dist, hasTarget = st.t ~= nil,
+    bearing = st.bearing }
+end
+function API.SetGuideCompass(on)
+  ns.guideCompass = on and true or nil
+  if ns.QueueRefresh then ns.QueueRefresh("tracker") end
+end
+-- (1.3.6) The mobs of a quest's objectives: { [index] = { ids = { creatureID, ... }, need = n or nil, done } }
+-- (data creatures; need and done from the game for a quest in the log)
+function API.ObjectiveCreatures(questID)
+  local out = {}
+  local objs = ns.ATT_OBJECTIVES and ns.ATT_OBJECTIVES[questID]
+  local client = ns.InQuestLog(questID) and ns.ClientObjectives(questID) or {}
+  if type(objs) ~= "table" then return out end
+  for idx, o in pairs(objs) do
+    if type(idx) == "number" and type(o) == "table" and type(o[1]) == "table" and #o[1] > 0 then
+      local c = client[idx]
+      out[idx] = { ids = Copy(o[1]), need = type(c) == "table" and ns.Num(c.numRequired) or nil,
+        done = type(c) == "table" and ns.True(c.finished) or false }
+    end
+  end
+  return out
+end
+-- (1.3.6) Who takes a quest: creature ID (nil if unknown) and name (game language where known)
+function API.TurnInNpc(questID)
+  local e = ns.QUEST_ENDS and ns.QUEST_ENDS[questID]
+  local id = e and ns.Num(e[4]) or nil
+  local name = id and ns.LocalNpcName and ns.LocalNpcName(id) or nil
+  local learned = ns.db and ns.db.learned and ns.db.learned[questID]
+  return id, name or (learned and learned.finish and learned.finish.npc) or nil
+end
+-- (1.3.6) the guide's window: Questdon's quest list docks right under it (same width, moves with it); nil undocks
+function API.SetGuideFrame(frame)
+  if ns.guideFrame == frame then return end
+  ns.guideFrame = frame
+  if ns.TrackerDock then ns.TrackerDock() end
+  if ns.QueueRefresh then ns.QueueRefresh("tracker") end
+end
+-- (1.3.6) A guide that draws its own mark over a nameplate claims it: fn(unit) true means Questdon draws
+-- nothing on that nameplate. RefreshPlate(unit): the guide's mark came or went.
+-- (1.3.6) the number of Questdon's open channel (QuestdonNet) while joined, else nil: Leveldon shares how its
+-- routes go there (its own addon prefix)
+function API.ShareChannelID() return ns.ShareChannelID and ns.ShareChannelID() or nil end
+function API.SetPlateClaim(fn) ns.plateClaim = type(fn) == "function" and fn or nil end
+function API.RefreshPlate(unit) if ns.NameplateApply then pcall(ns.NameplateApply, unit) end end
+function API.ShowQuestText(questID) if ns.ShowQuestText then return ns.ShowQuestText(questID) ~= nil end return false end
 
 QuestdonAPI = API
 QuestKompassAPI = API -- old name, kept for addons written against it

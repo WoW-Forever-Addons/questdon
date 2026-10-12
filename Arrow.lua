@@ -180,6 +180,14 @@ local function Nearest(points)
   return best, bestDist
 end
 
+-- (1.3.6) The nearest known point of a quest (the arrow's choice for it) and its distance; for the
+-- quest list (Tracker.lua). nil for a quest that completes from the log or has no point.
+function ns.QuestNearestPoint(questID)
+  local points, special = QuestPoints(questID)
+  if special == "autocomplete" or type(points) ~= "table" then return nil end
+  return Nearest(points)
+end
+
 ---------------------------------------------------------------------------
 -- (1.25) Objective area. For kill and collect objectives the arrow knows all
 -- places (area = true). Within AREA_ENTER yards of one of them, or with a
@@ -270,7 +278,7 @@ local function CheckArea(t)
     end
   end
   if best and (not curDist or bestDist < curDist - SWITCH_YARDS) then
-    t.mapID, t.x, t.y, t.source, t.label = best.mapID, best.x, best.y, best.source, t.LabelFor(best)
+    t.mapID, t.x, t.y, t.source, t.label = best.mapID, best.x, best.y, best.source, t.LabelFor and t.LabelFor(best) or t.label
     curDist = bestDist
   end
   area.dist = curDist
@@ -410,6 +418,8 @@ end
 -- Another addon (QuestdonAPI) can point the arrow; a clicked pin still wins.
 function ns.SetExternalArrowTarget(target)
   external = target
+  -- (1.3.6) a guide's new area target: look at its spots at once (else the needle shows for a moment)
+  if type(target) == "table" and target.area then area.checkAt = nil end
   if target and arrow and ns.db.arrow then arrow:Show() end
 end
 
@@ -512,13 +522,24 @@ local function GoldPlate(frame)
 end
 
 -- Needle layers (shadow, glow, needle) turn together.
+-- (1.3.6, Daniel 12.10.: "the arrow built into the window") what the arrow shows, for the compass in
+-- the quest list (Tracker.lua). While that compass is on, the arrow keeps working (area, ways around,
+-- the dots on the map) but draws nothing and takes no clicks: "ghost".
+local state = {}
+function ns.ArrowState() return state end
+local function Ghost() return (ns.GuideActive and ns.GuideActive()) or (ns.TrackerCompassActive and ns.TrackerCompassActive()) or false end
+ns.ArrowGhost = Ghost
+
 local function Turn(self, angle)
+  state.angle = angle
   self.icon:SetRotation(angle)
   self.glow:SetRotation(angle)
   self.shadow:SetRotation(angle)
 end
 
 local function ShowNeedle(self, shown, nearness)
+  state.needle, state.nearness = shown and true or false, shown and (nearness or 0) or nil
+  if shown and Ghost() then shown = false end
   if shown then
     local n = nearness or 0
     local v = 0.78 + 0.22 * n -- matte antique gold far away, full shine near
@@ -531,6 +552,8 @@ local function ShowNeedle(self, shown, nearness)
 end
 
 local function ShowSeal(self, shown)
+  state.seal = shown and true or false
+  if shown and Ghost() then shown = false end
   if shown then
     if not self.seal:IsShown() then
       self.seal:Show() self.sealGlow:Show()
@@ -585,6 +608,8 @@ end
 local lastLabel, lastDist, lastDistColor
 local function SetTexts(self, label, dist, distColor)
   label, dist = label or "", dist or ""
+  state.label, state.distText, state.distColor = label, dist, distColor
+  if Ghost() then label, dist = "", "" end
   if label == lastLabel and dist == lastDist and distColor == lastDistColor and not self.box.estimated then return end
   lastLabel, lastDist, lastDistColor = label, dist, distColor
   self.label:SetWidth(TEXT_W)
@@ -613,13 +638,18 @@ local function SetTexts(self, label, dist, distColor)
   self.box:Show()
 end
 
+local arrowWay = {}
+function ns.ArrowWay() return arrowWay end
 local function Update(self)
   local t = Target()
+  arrowWay.t, arrowWay.wp, arrowWay.cave = nil, nil, nil
+  state.t, state.dist, state.bearing = t, nil, nil
   -- Without a target the frame is invisible: let clicks pass through to the world.
   local wantMouse = (ns.db.arrow and t) and true or false
-  if self.qdMouse ~= wantMouse then
-    self.qdMouse = wantMouse
-    self:EnableMouse(wantMouse)
+  local mouse = wantMouse and not Ghost()
+  if self.qdMouse ~= mouse then
+    self.qdMouse = mouse
+    self:EnableMouse(mouse)
   end
   if not wantMouse then ShowNeedle(self, false) ShowSeal(self, false) SetTexts(self, "", "") return end
   if not t.mapID then
@@ -628,12 +658,22 @@ local function Update(self)
     return
   end
   -- (1.25) objective area of the tracked quest (auto target only)
+  -- (1.3.6, Daniel 11.10.: "the arrow confuses when you are in the area killing the mobs") also for a
+  -- guide's target that brings its objective places (QuestdonAPI.SetArrowTarget { area = true, points })
   local inArea = false
-  if t == auto and t.points then
+  if (t == auto or (t == external and t.area and t.questID)) and t.points then
     CheckArea(t)
     inArea = area.inside
   end
   local dist, bearing = ns.DistanceAndBearing(t)
+  state.dist = dist
+  -- (Daniel 12.10.: "the arrow towards the quest target, the minimap shows where to walk") the compasses in
+  -- the windows point at the target itself; the way around stays on the map's dots (and this arrow)
+  state.bearing = bearing
+  -- (11.10., Daniel: the quest deep in the cave) the target inside a cave or building you are not in: first to
+  -- its way in (you are not in the objective area while outside, even right above it)
+  local cave = ns.PathCave and ns.PathCave(t) or nil
+  if cave then inArea = false end
   if inArea then
     if not dist or dist <= AREA_ENTER then
       ShowNeedle(self, false) ShowSeal(self, true)
@@ -654,7 +694,19 @@ local function Update(self)
     return
   end
   ShowSeal(self, false)
-  if not inArea then SetTexts(self, t.label, L["%d yards"]:format(dist), "textSecondary") end
+  -- (1.3.6, Daniel: "with mountains in the way I have to run around") a known way around (Paths.lua): the
+  -- needle points at its next waypoint, the distance stays the target's
+  local wp = cave or (not inArea and dist > 60 and ns.PathNext and ns.PathNext(t)) or nil
+  if wp then
+    local _, wb = ns.DistanceAndBearing(wp)
+    if wb then bearing = wb else wp, cave = nil, nil end
+  end
+  -- (11.10.) for the dots on the map and minimap (PathDots.lua): what the needle follows now
+  arrowWay.t, arrowWay.wp, arrowWay.cave = wp and t or nil, wp, cave and true or nil
+  if not inArea then
+    local fmt = (cave and L["%d yards, first to the way in"]) or (wp and L["%d yards, the way around"]) or L["%d yards"]
+    SetTexts(self, t.label, fmt:format(dist), "textSecondary")
+  end
   local facing = ns.Num(ns.Value(GetPlayerFacing))
   if facing then
     -- facing: radians counter-clockwise from north; bearing: clockwise from north.

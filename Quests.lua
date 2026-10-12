@@ -11,6 +11,17 @@ local function Repeatable(questID, clientFlag)
 end
 ns.SkipAutoTurnIn = Repeatable
 
+-- (1.3.6, Daniel 11.10.) With Leveldon guiding: quests outside its route are not accepted automatically,
+-- they are left to you (Leveldon says whether one you take yourself fits the route).
+local function LeftToPlayer(questID)
+  questID = ns.Num(questID)
+  local api = rawget(_G, "LeveldonAPI")
+  if not (questID and questID > 0 and type(api) == "table" and type(api.WantsQuest) == "function") then return false end
+  local ok, wants = pcall(api.WantsQuest, questID)
+  return ok and wants == false
+end
+ns.LeftToPlayer = LeftToPlayer
+
 -- Gossip window (modern NPC dialog with quest list)
 ns.On("GOSSIP_SHOW", function()
   if ns.IsPaused() or not C_GossipInfo then return end
@@ -31,7 +42,7 @@ ns.On("GOSSIP_SHOW", function()
   if ns.Active("autoAccept") and C_GossipInfo.GetAvailableQuests and not ns.QuestLogFull() then
     for _, q in ipairs(ns.Value(C_GossipInfo.GetAvailableQuests) or {}) do
       local id = type(q) == "table" and ns.Num(q.questID)
-      if id and id > 0 and not ns.True(q.isIgnored) then
+      if id and id > 0 and not ns.True(q.isIgnored) and not LeftToPlayer(id) then
         -- (1.23) a secret "trivial" flag counts as trivial: left to the player
         local trivial = q.isTrivial ~= nil and (not ns.Usable(q.isTrivial) or q.isTrivial == true)
         if not (db.skipTrivial and trivial) then
@@ -62,9 +73,9 @@ ns.On("QUEST_GREETING", function()
     for i = 1, ns.Num(ns.Value(GetNumAvailableQuests)) or 0 do
       -- (1.28) a secret flag must not be tested as a boolean: it counts as trivial (left to the player), as in the gossip list
       -- (ns.Value would turn a secret into nil, which counts as "not trivial": read it directly)
-      local okT, isTrivial = pcall(GetAvailableQuestInfo, i)
+      local okT, isTrivial, _, _, _, availID = pcall(GetAvailableQuestInfo, i)
       local trivial = okT and isTrivial ~= nil and (not ns.Usable(isTrivial) or isTrivial == true)
-      if not (db.skipTrivial and trivial) then
+      if not (db.skipTrivial and trivial) and not LeftToPlayer(okT and ns.Usable(availID) and availID or nil) then
         SelectAvailableQuest(i)
         return
       end
@@ -90,6 +101,8 @@ ns.On("QUEST_DETAIL", function()
     if AcknowledgeAutoAcceptQuest then AcknowledgeAutoAcceptQuest() end
   elseif ns.db.skipTrivial and IsTrivial(ns.Value(GetQuestID)) then
     return -- left to you, like grey quests in the NPC's list
+  elseif LeftToPlayer(ns.Value(GetQuestID)) then
+    return -- (1.3.6) not in Leveldon's route: left to you
   elseif ns.QuestLogFull() then
     ns.Warn(L["Quest log is full: quest not accepted."])
   else

@@ -1557,15 +1557,19 @@ end
 
 local function BookAlpha(self, alpha)
   -- (v3) navy at the top, violet at the bottom; the frame stays gold whatever the opacity
+  -- (1.3.6, Daniel 12.10.: "the background transparent up to fully gone, with the frame, so it looks more
+  -- open") below a third of the opacity the gold frame, its corners and the title bar fade out with it
   local bg = BOOK.background
   local under = self._bookBg and 0 or alpha -- the gradient on top carries the colour
+  local frameA = alpha >= 0.35 and 0.95 or 0.95 * alpha / 0.35
   if self._backdrop then
     Call(self, "SetBackdropColor", bg[1], bg[2], bg[3], under)
-    Call(self, "SetBackdropBorderColor", BOOK.gold[1], BOOK.gold[2], BOOK.gold[3], 0.95)
+    Call(self, "SetBackdropBorderColor", BOOK.gold[1], BOOK.gold[2], BOOK.gold[3], frameA)
   else
     Tint(self._bg, BOOK.background, under)
-    for _, t in ipairs(self._border) do Tint(t, BOOK.gold, 0.95) end
+    for _, t in ipairs(self._border) do Tint(t, BOOK.gold, frameA) end
   end
+  for _, t in ipairs(self._corners or {}) do Call(t, "SetAlpha", frameA / 0.95) end
   local g = self._bookBg
   if g then
     local lo, hi = BOOK.backgroundLow, BOOK.background
@@ -1575,8 +1579,8 @@ local function BookAlpha(self, alpha)
     end
     if not done then Tint(g, BOOK.background, alpha) end
   end
-  Tint(self._headerBg, BOOK.header, min(1, alpha + 0.05))
-  Tint(self._divider, BOOK.gold, 0.7)
+  Tint(self._headerBg, BOOK.header, alpha >= 0.35 and min(1, alpha + 0.05) or alpha)
+  Tint(self._divider, BOOK.gold, 0.7 * frameA / 0.95)
 end
 
 function PanelMethods:SetBackgroundAlpha(alpha, silent)

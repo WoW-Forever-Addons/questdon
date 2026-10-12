@@ -27,16 +27,29 @@ ns.defaults = {
   learnPins = true,
   pinsOnlyUnknown = true,
   shareQuests = false,
-  questieFirst = true,
+  questieFirst = false, -- (1.3.6, Daniel 12.10.: "we no longer need to give Questie priority")
   -- 1.2
   availablePins = true,
   objectivePins = true,
   showLowLevel = false,
   chainHint = true,
   -- 1.3
+  -- (1.3.6, Daniel 12.10.) own quest list instead of Blizzard's tracker, with the arrow built in as a compass
+  tracker = true,
+  trackerShown = true,
+  trackerCompass = true,
+  trackerDock = true, -- (1.3.6) under Leveldon's window when both are open
+  trackerHideBlizz = true,
+  trackerMode = "near",
+  trackerSortLevel = false,
+  trackerAlpha = 0.82,
+  trackerScale = 1.2, -- (Daniel 12.10.: "the writing looks very small") text size 120 %, Ctrl + mouse wheel changes it
+  trackerCombatFade = true,
+  questTexts = {}, -- (1.3.6) [questID] = { d, o, p, c }: the game's quest texts, kept when a quest giver shows them
   arrow = true,
   arrowNext = true, -- (1.3.5) nothing tracked: the arrow moves on to the next turn-in or an objective close by
   arrowCorpse = true, -- (1.2) as a ghost the arrow leads to your corpse
+  pathDots = true, -- (1.3.6) the arrow's way around a mountain or into a cave as dots on the map and minimap
   arrowPos = nil,
   -- 1.4
   arrowScale = 1.15,
@@ -59,6 +72,7 @@ ns.defaults = {
   nextQuestHint = false, -- (1.0) off: the game shows ! on map and minimap itself
   guessedItems = {}, -- (1.0) [itemID] = { questID } guessed from items that appeared after accepting a quest
   learnedItems = {}, -- (1.0) [itemID] = questID that handed the item out (Cleanup.lua)
+  npcSpots = {}, -- (1.3.6) [creatureID] = { { map, x, y }, ... } where you talked to a quest NPC (Learn.lua: walks around)
   learnedObj = {}, -- [questID] = { [objectiveIndex] = { map,x,y, ... } }
   learnedCredit = {}, -- (1.0.1) [questID] = { [index] = { c|o|i = { [id] = n } } } what gave objective credit (Learn.lua)
   learnedDrops = {}, -- (1.0.1) [itemID] = { ["c123"] = { n, map, x, y } } where a quest item dropped
@@ -95,7 +109,7 @@ ns.defaults = {
   -- 1.21
   minimapPins = true, -- the map pins of the current zone on the minimap too
   -- 1.22
-  nameplateIcons = true, -- quest marks above nameplates (quest mobs, quest givers, turn-ins)
+  nameplateIcons = true, -- pins above the nameplates of quest mobs (1.3.6: no more ! and ? over NPCs)
   lowLevelRange = 10,    -- a quest is low level this many levels below yours (was fixed)
   -- 1.24: quests without a level in the data on the map/minimap/nameplates/panel
   -- even when neither the client nor a quest giver confirmed them (replaces
@@ -344,6 +358,11 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if not QuestdonDB.nextHintV10 then
       QuestdonDB.nextQuestHint, QuestdonDB.nextConfirmedOnly, QuestdonDB.nextHintV10 = false, true, true
     end
+    -- (1.3.6, Daniel 12.10.: "we are at the stage where Questie no longer needs priority") off once for everybody;
+    -- who wants it back switches it on again (page "Questie")
+    if not QuestdonDB.questieV136 then
+      QuestdonDB.questieFirst, QuestdonDB.questieV136 = false, true
+    end
     -- (1.24) per character: what quest givers offered (Offers.lua)
     if type(QuestdonCharDB) ~= "table" then QuestdonCharDB = {} end
     ns.charDB = QuestdonCharDB
@@ -548,6 +567,8 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
     if ns.PointToNextQuest then ns.PointToNextQuest() end
   elseif msg == "arrow" then
     if ns.ToggleArrow then ns.ToggleArrow() end
+  elseif msg == "list" then
+    if ns.ToggleTracker then ns.ToggleTracker() end
   elseif msg == "questie" then
     if ns.PrintQuestieStatus then ns.PrintQuestieStatus() end
   elseif msg == "xp" then
@@ -575,6 +596,9 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
         S(r.learned), S(r.shipped), S(r.data)))
       if not r.game and not r.gameBroken then print("  The client may ask the server first: try again in a few seconds.") end
     end
+  elseif msg:match("^why%s+%d+$") then
+    -- (1.3.6) why a quest has no "!" (QuestData.lua ns.WhyQuest)
+    for _, l in ipairs(ns.WhyQuest(tonumber(msg:match("(%d+)$")))) do print("|cffffd100Questdon|r " .. l) end
   elseif msg == "diag" then
     if ns.OpenDiag then ns.OpenDiag() end
   elseif msg == "xpcheck" or msg == "xpcheck reset" then

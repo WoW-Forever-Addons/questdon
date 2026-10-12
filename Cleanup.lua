@@ -122,13 +122,20 @@ end
 -- (1.0) True when every quest known for the item is finished or gone: the ones in the
 -- log are ready for turn-in, the others done or out of reach. Unknown item: false.
 -- Used by the quest item button (no button for an item nobody needs any more).
+-- (1.3.6, Daniel: Call of Earth (2/3), "the item to use is missing") a quest without objectives is "complete"
+-- from the start; its item (Earth Sapta) is what brings the turn-in (the spirit appears when you drink it):
+-- needed until it is turned in
+local function NoObjectives(questID)
+  local objs = C_QuestLog and C_QuestLog.GetQuestObjectives and ns.Value(C_QuestLog.GetQuestObjectives, questID)
+  return type(objs) == "table" and ns.Usable(objs) and #objs == 0
+end
 function ns.ItemQuestsFinished(itemID)
   if not ns.db then return false end
   local list = QuestsOf(itemID)
   if #list == 0 then return false end
   for _, id in ipairs(list) do
     if ns.InQuestLog(id) then
-      if not ns.IsQuestComplete(id) then return false end
+      if not ns.IsQuestComplete(id) or NoObjectives(id) then return false end
     elseif not ns.IsQuestDone(id) and ns.QuestReachable(id) then
       return false
     end

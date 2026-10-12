@@ -13,7 +13,7 @@ local L = ns.L
 --
 --   message  "D2:<seq>:<account token>:<line>;<line>;..."  (at most MAX_MSG
 --            characters; "D1:<seq>:..." from Questdon before 1.1 is still read)
---   lines    S G I T O F K D A X N as in Export.lua, only numbers
+--   lines    S G I T O F K D A X N E W as in Export.lua, only numbers (E: 1.3.6 dungeon entrances, W: 1.3.6 walked cells)
 --
 -- Sending: option shareLearned (on), to the guild and the own group (not to
 -- the group when all members are in the guild: the guild message reaches
@@ -215,6 +215,19 @@ local PARSE = {
     if not Int(q, 1e6) then return nil end
     return "X " .. q, { v = "1" }
   end,
+  -- (1.3.6) a dungeon's way in (Entrances.lua): one fact per dungeon and zone map; reports within NEAR
+  -- map units agree, a second way in on the same map is another variant (Uldaman, Stratholme)
+  E = function(l)
+    local inst, m, x, y = l:match("^E (%d+) (%d+) (%d+%.%d) (%d+%.%d)$")
+    if not (Int(inst, 1e6) and Int(m, 1e5) and Pos(x) and Pos(y)) then return nil end
+    return ("E %s %s"):format(inst, m), { m = tonumber(m), x = tonumber(x), y = tonumber(y) }
+  end,
+  -- (1.3.6) a block of walked cells (Paths.lua): stored apart (ns.StoreWalk), cell by cell
+  W = function(l)
+    local m, b, mask = l:match("^W (%d+) (%d+) (%x+)$")
+    if not (Int(m, 1e5) and Int(b, 100) and mask and #mask == 25) then return nil end
+    return ("W %s %s"):format(m, b), { v = mask:lower() }
+  end,
   -- (1.1) the quest giver never offers this quest (NotHere.lua)
   N = function(l)
     local q, npc = l:match("^N (%d+) (%d+) [ma]$")
@@ -360,7 +373,12 @@ local function OnMessage(_, prefix, text, chatType, sender)
   if not Allowed(reporter, #lines) then stats.limited = stats.limited + #lines return end
   for _, line in ipairs(lines) do
     local key, value, count = Parse(line)
-    if key then
+    if key and line:sub(1, 1) == "W" then
+      -- (1.3.6) walked cells: counted cell by cell (Paths.lua)
+      local m, b = key:match("^W (%d+) (%d+)$")
+      if ns.StoreWalk then ns.StoreWalk(tonumber(m), tonumber(b), value.v, reporter, open) end
+      stats.recvLines = stats.recvLines + 1
+    elseif key then
       Store(key, value, count, reporter, open)
       stats.recvLines = stats.recvLines + 1
     else
@@ -520,6 +538,12 @@ function ns.ApplyShareChannel()
     chan.index = 1
     ns.ShareChannelTick()
   end
+end
+
+-- (1.3.6) for Leveldon's route sharing (QuestdonAPI.ShareChannelID): the channel number while joined
+function ns.ShareChannelID()
+  if chan.state ~= "joined" or not chan.name then return nil end
+  return ChannelID(chan.name)
 end
 
 function ns.ShareChannelState()
@@ -731,6 +755,26 @@ function ns.SharedNotHereCount()
     end
   end
   return n
+end
+
+-- (1.3.6) Entrances of a dungeon others confirmed: { { map, x, y (0-1), reporters }, ... }
+local entrCache, entrVersion = nil, -1
+function ns.SharedEntrances(inst)
+  if entrVersion ~= version or not entrCache then
+    entrCache, entrVersion = {}, version
+    for key, e in pairs(ns.db and ns.db.shared or {}) do
+      local id = type(key) == "string" and tonumber(key:match("^E (%d+) "))
+      if id and type(e) == "table" and type(e.v) == "table" then
+        for _, v in ipairs(e.v) do -- every confirmed way in, not only the most reported one
+          if type(v) == "table" and v.m and Confirmed(v) then
+            entrCache[id] = entrCache[id] or {}
+            table.insert(entrCache[id], { v.m, v.x / 100, v.y / 100, v.n })
+          end
+        end
+      end
+    end
+  end
+  return entrCache[inst] or {}
 end
 
 function ns.SharedVersion() return version end

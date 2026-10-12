@@ -110,6 +110,21 @@ function ns.TooltipLinesForCreature(creatureID)
       lines[#lines + 1] = { "  " .. p[1], p[2], party = true, kind = "party" }
     end
   end
+  -- (1.3.6, Daniel: "the tooltip should say which quests I can turn in there") quests in your log that this NPC
+  -- takes: where you turned them in before (learned), else the turn-in NPC of the data; finished first
+  local turnins = {}
+  for _, info in ipairs(ns.QuestLogEntries and ns.QuestLogEntries() or {}) do
+    local q = ns.Num(info.questID)
+    local e = q and ns.db.learned and ns.db.learned[q]
+    local ender = (e and e.finish and e.finish.npcID) or (q and ns.QUEST_ENDS and ns.QUEST_ENDS[q] and ns.QUEST_ENDS[q][4])
+    if q and ender == creatureID and not QuestieShowsTooltip(q) then
+      turnins[#turnins + 1] = { q, ns.IsQuestComplete(q) and true or false }
+    end
+  end
+  table.sort(turnins, function(a, b) if a[2] ~= b[2] then return a[2] end return a[1] < b[1] end)
+  for _, t in ipairs(turnins) do
+    lines[#lines + 1] = { "? " .. ns.QuestTitle(t[1]), t[2] and L["ready (quest to turn in)"] or L["not finished yet"], kind = t[2] and "turnin" or "turninOpen" }
+  end
   for _, questID in ipairs(byGiver[creatureID] or {}) do
     -- (1.24) the client's list or the data and the quest givers; an unknown
     -- level only once confirmed (or with "showNoLevel")
@@ -177,6 +192,14 @@ local function OnUnitTooltip(tooltip, data)
     local l = lines[i]
     if l.kind == "giver" then
       tooltip:AddLine("|c" .. W.hex .. "!|r" .. l[1]:sub(2), P[1], P[2], P[3])
+    elseif l.kind == "turnin" or l.kind == "turninOpen" then
+      -- (1.3.6) a yellow ? for a finished quest, a grey one for an open one
+      local H = C.textHint or K
+      local q = l.kind == "turnin" and ("|c" .. W.hex .. "?|r") or ("|cff8a8f99?|r")
+      -- (Daniel 11.10.) "ready" in the game's quest green
+      local G = GREEN_FONT_COLOR and { GREEN_FONT_COLOR.r, GREEN_FONT_COLOR.g, GREEN_FONT_COLOR.b } or { 0.1, 1, 0.1 }
+      local R = l.kind == "turnin" and G or H
+      tooltip:AddDoubleLine(q .. l[1]:sub(2), l[2], P[1], P[2], P[3], R[1], R[2], R[3])
     elseif l.kind == "notOffered" then
       local H = C.textHint or K
       tooltip:AddDoubleLine(l[1], l[2], K[1], K[2], K[3], H[1], H[2], H[3])

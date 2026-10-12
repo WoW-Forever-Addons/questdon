@@ -196,7 +196,10 @@ local function PinTooltip(self)
   elseif pin.group then title, lines, hint = ns.QuestGroupTooltip(pin)
   elseif pin.kind == "objective" then title, lines, hint = ns.ObjectivePinTooltip(pin)
   else title, lines, hint = ns.QuestPinTooltip(pin) end
-  ns.Style.Tooltip(self, title, lines, hint, "auto")
+  -- (1.3.6) our own hover card (PinCard.lua)
+  local first = self.members and #self.members > 1 and self.members[1] or nil
+  if first then ns.PinCard(self, title, lines, hint, ns.PinCardKind(nil, first.questID))
+  else ns.PinCard(self, title, lines, hint, ns.PinCardKind(pin.group and pin.group[1] or pin)) end
   if ns.SetHoverTooltip then ns.SetHoverTooltip(self, PinTooltip) end -- (1.3.4) Shift redraws it
 end
 
@@ -249,7 +252,7 @@ local function NewPin()
   b.ring:Hide()
   b:RegisterForClicks("LeftButtonUp", "RightButtonUp") -- (1.3.5) right-click removes an entrance mark
   b:SetScript("OnEnter", ns.Guard("minimap tooltip", PinTooltip))
-  b:SetScript("OnLeave", function(self) ns.Style.HideTooltip(self) if ns.SetHoverTooltip then ns.SetHoverTooltip(nil) end end)
+  b:SetScript("OnLeave", function(self) ns.PinCardHide(self) if ns.SetHoverTooltip then ns.SetHoverTooltip(nil) end end)
   b:SetScript("OnClick", ns.Guard("minimap click", PinClick))
   return b
 end

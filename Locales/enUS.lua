@@ -5,3 +5,4 @@ ns.L = setmetatable({}, { __index = function(_, k) return k end })
 -- (i18n) keys whose English text is shorter than the key
 ns.L["%s %s (player and quest state)"] = "%s %s"
 ns.L["done (turned in)"] = "done"
+ns.L["ready (quest to turn in)"] = "ready"

@@ -312,6 +312,33 @@ function CanTake(questID, player, above)
   ns.CheckQuestExists(questID) -- about to be offered: ask the server (once, rate limited)
   return true
 end
+-- (1.3.6, Daniel: The Adventurer [Mulgore] had no "!" on the map at level 5) /qd why <questID>: every rule
+-- CanTakeQuest checks, in its order, with this character's answer; the first "no" is why there is no "!".
+function ns.WhyQuest(questID)
+  local out = {}
+  local q = Q[questID]
+  local player = Player()
+  local function Line(ok, text) out[#out + 1] = (ok and "|cff7fd17fok|r  " or "|cffff6060no|r  ") .. text end
+  if not q then Line(false, "not in the data") return out end
+  out[#out + 1] = ("%d %s, map %s %s/%s, level %s"):format(questID, tostring(q[NAME] or "?"), tostring(q[MAP]), tostring(q[X]), tostring(q[Y]), tostring(q[LEVEL]))
+  Line(not ns.IsQuestDone(questID), "not done yet")
+  Line(not ns.InQuestLog(questID), "not in the quest log")
+  Line(not ns.QuestKnownMissing(questID), "the server knows it")
+  Line(Reachable(questID, player), ("faction, race, class (you: %s %s %s)"):format(tostring(player.faction), tostring(player.race), tostring(player.class)))
+  if q[SKILL] then Line(ns.KnowsSkill(q[SKILL]), "profession " .. tostring(q[SKILL]) .. " learned") end
+  Line(not (q[LEVEL] and player.level and q[LEVEL] > player.level), ("level %s, you %s"):format(tostring(q[LEVEL]), tostring(player.level)))
+  Line(PrereqsDone(questID, q, player), "quests before it done")
+  local active = ns.EXTRA_ACTIVE and ns.EXTRA_ACTIVE[questID]
+  if active then Line(ns.InQuestLog(active), "helper quest, needs " .. active .. " in the log") end
+  Line(not BreadcrumbObsolete(questID), "not a breadcrumb you no longer need")
+  Line(not (ns.NeverOffered and ns.NeverOffered(questID)), "the quest giver was not seen refusing it for good")
+  local nol = ns.NotOfferedLevel and ns.NotOfferedLevel(questID, player.level)
+  Line(not nol, nol and ("the quest giver did not offer it at level " .. tostring(nol)) or "no 'not offered' mark")
+  local ca = ns.ClientAvailability and ns.ClientAvailability(questID, q[MAP])
+  Line(ca ~= false, "the game's quest lines: " .. (ca == true and "offered" or ca == false and "in a quest line, not offered" or "no answer"))
+  return out
+end
+
 -- (1.24) The data's rules only (Offers.lua: is the NPC's answer news?).
 function ns.DataCanTakeQuest(questID)
   return DataCanTake(questID, Player())
@@ -355,10 +382,11 @@ function ns.LearnedQuestAvailable(questID)
   return true
 end
 
--- "o": only in ATT's older data, may not exist in Forever (see ATT_Quests.lua).
+-- "o": only in ATT's older data, may not exist in Forever (see ATT_Quests.lua). (1.3.6) "wc": a classic quest
+-- ATT has no Forever entry for, taken from Wowhead Forever (Extra_Quests.lua): the same caution.
 function ns.QuestOnlyInOldData(questID)
   local q = Q[questID]
-  return q ~= nil and q[ORIGIN] == "o"
+  return q ~= nil and (q[ORIGIN] == "o" or q[ORIGIN] == "wc")
 end
 
 -- (1.3) Previous quests of a quest in the data (for the order of a chain).
@@ -417,16 +445,43 @@ function ns.QuestLevel(questID)
   return nil
 end
 
--- (1.22) "[12] " in difficulty colour, "[?] " for an unknown level.
+-- (1.3.6, Daniel 12.10.: "why don't we take Blizzard's levels?") the level the game shows for a quest: its
+-- difficulty level from the quest log ("[6] Ammo for Rumbleshot"), where our data has the level you may take it
+-- at (5). Kept once seen (QuestdonDB.questLevels), so map pins and lists show it later too. nil: not known.
+function ns.GameQuestLevel(questID)
+  questID = ns.Num(questID)
+  if not questID then return nil end
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    if info.questID == questID then
+      local lv = ns.Num(info.level)
+      if lv and lv > 0 then
+        if ns.db then
+          ns.db.questLevels = type(ns.db.questLevels) == "table" and ns.db.questLevels or {}
+          ns.db.questLevels[questID] = lv
+        end
+        return lv
+      end
+    end
+  end
+  local fn = C_QuestLog and C_QuestLog.GetQuestDifficultyLevel
+  if type(fn) == "function" then
+    local lv = ns.Num(ns.Value(fn, questID))
+    if lv and lv > 0 then return lv end
+  end
+  local kept = ns.db and type(ns.db.questLevels) == "table" and ns.Num(ns.db.questLevels[questID])
+  return kept and kept > 0 and kept or nil
+end
+
+-- (1.22) "[12] " in difficulty colour, "[?] " for an unknown level. (1.3.6) the game's level first.
 function ns.QuestLevelTag(questID)
-  local lv = ns.QuestLevel(questID)
+  local lv = ns.GameQuestLevel(questID) or ns.QuestLevel(questID)
   if lv then return (ns.LevelColor and ns.LevelColor(lv) or "") .. ("[%d]|r "):format(lv) end
   return "|cff737880[?]|r "
 end
 
 -- (1.22) "Level 12" or "Level unknown" for texts.
 function ns.QuestLevelText(questID)
-  local lv = ns.QuestLevel(questID)
+  local lv = ns.GameQuestLevel(questID) or ns.QuestLevel(questID)
   if lv then return L["Level %d"]:format(lv) end
   return L["Level unknown"]
 end

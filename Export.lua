@@ -28,6 +28,9 @@ local L = ns.L
 --                                                      offers it: m = reported by
 --                                                      the player, a = not offered
 --                                                      at 3 levels (NotHere.lua)
+--   E <instance> <mapID> <x> <y>                       (1.3.6) a dungeon's way in: the last
+--                                                      spot outside before it loaded
+--                                                      (Entrances.lua)
 --   M <npcID> <name>                                   (1.3.5) an NPC's name as the
 --                                                      game showed it, in the locale
 --                                                      of the header (rest of the line)
@@ -263,6 +266,11 @@ function ns.ExportRecords(all)
 
   -- (1.1) quests a quest giver never offers
   for _, line in ipairs(ns.NotHereRecords and ns.NotHereRecords(all) or {}) do records[#records + 1] = line end
+
+  -- (1.3.6) dungeon entrances (always: they confirm the listed ones too)
+  for _, line in ipairs(ns.EntranceRecords and ns.EntranceRecords() or {}) do records[#records + 1] = line end
+  -- (1.3.6) where you walked (Paths.lua): ways around mountains for others
+  for _, line in ipairs(ns.WalkRecords and ns.WalkRecords() or {}) do records[#records + 1] = line end
 
   return records
 end

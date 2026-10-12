@@ -18,4 +18,22 @@
 			<OnLoad method="OnLoad"/>
 		</Scripts>
 	</Frame>
+	<!-- (1.3.6) the dots of the arrow's way (PathDots.lua): no mouse, clicks go through to the map -->
+	<Frame name="QuestdonPathDotPinTemplate" mixin="QuestdonPathDotPinMixin" virtual="true">
+		<Size x="9" y="9"/>
+		<Layers>
+			<Layer level="ARTWORK">
+				<Texture parentKey="Ring" file="Interface\CHARACTERFRAME\TempPortraitAlphaMask" setAllPoints="true"/>
+			</Layer>
+			<Layer level="OVERLAY">
+				<Texture parentKey="Dot" file="Interface\CHARACTERFRAME\TempPortraitAlphaMask">
+					<Size x="6" y="6"/>
+					<Anchors><Anchor point="CENTER"/></Anchors>
+				</Texture>
+			</Layer>
+		</Layers>
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
 </Ui>

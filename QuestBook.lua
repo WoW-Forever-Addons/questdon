@@ -2828,6 +2828,15 @@ local function CreateDetail()
   pane.arrow:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 14, 12)
   pane.map = Chip(pane, function() if detailID then ns.FocusQuest(detailID, true) end end)
   pane.map:SetPoint("LEFT", pane.arrow, "RIGHT", 8, 0)
+  -- (1.3.6, Daniel 11.10.) with Leveldon: report this quest (quest giver not there, route, a remark)
+  pane.report = Chip(pane, function()
+    local api = rawget(_G, "LeveldonAPI")
+    if detailID and type(api) == "table" and type(api.Report) == "function" then
+      api.Report({ quest = detailID, title = ns.QuestTitle(detailID) })
+    end
+  end)
+  pane.report:SetPoint("LEFT", pane.map, "RIGHT", 8, 0)
+  pane.report:Hide()
   P.detail = pane
 end
 
@@ -2899,6 +2908,13 @@ local function RenderDetail()
   end
   pane.arrow:Set(L["Arrow"], false)
   pane.map:Set(L["World map"], false)
+  local api = rawget(_G, "LeveldonAPI")
+  if type(api) == "table" and type(api.Report) == "function" then
+    pane.report:Set(L["Report"], false)
+    pane.report:Show()
+  else
+    pane.report:Hide()
+  end
   pane:Show()
 end
 
