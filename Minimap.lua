@@ -50,11 +50,9 @@ ns.MINIMAP_OBJECTIVE_BUDGET = MINIMAP_BUDGET
 -- top of the game's own "!". The game puts a blip on every quest giver near
 -- you that offers you a quest (or takes a finished one), and that blip is not
 -- in its quest lines, so the 1.25 rule (SkipGameShownPins) did not see it.
--- With "skipGameGivers" on, the minimap leaves givers closer than this to the
--- game: no Questdon "!" or "?" there. Farther away the game shows nothing and
--- Questdon draws as before. Dots of quest mobs stay.
-local NEAR_GIVER_YARDS = 80
-local NEAR_GIVER2 = NEAR_GIVER_YARDS * NEAR_GIVER_YARDS
+-- With "skipGameGivers" on, the minimap leaves givers to the game: no Questdon
+-- "!" or "?" there (1.3.7: in the whole view, the game marks them up to the
+-- minimap's edge). Dots of quest mobs stay.
 -- (1.3.5) dungeon entrances: on the minimap only within this many yards (the mark always)
 local DUNGEON2 = (ns.DUNGEON_PIN_MINIMAP_YARDS or 300) ^ 2
 
@@ -476,7 +474,9 @@ local function Update()
       local dn, de = e.dn - pn, -(e.dw - pw)
       local d2 = dn * dn + de * de
       local kind = e.pin.kind
-      if leaveNear and d2 <= NEAR_GIVER2 and (kind == "available" or kind == "turnin") then
+      -- (1.3.7, Daniel 13.10.: "still double !, when I come closer one goes away"; the game's own ! shows right at
+      -- the edge of the minimap, zoomed out fully) the game marks givers in the whole view: Questdon leaves them all
+      if leaveNear and (kind == "available" or kind == "turnin") then
         near = near + 1 -- the game's own blip marks this giver
       elseif kind == "dungeon" and (ns.db.dungeonPinsMinimap == false or d2 > DUNGEON2) then
         -- (1.3.5) entrances only close by (and with their option on): no clutter at the edge

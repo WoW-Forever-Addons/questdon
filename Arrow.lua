@@ -360,7 +360,7 @@ function ns.DismissNextTarget() nextDismissed = LogSignature() end
 
 local function BuildAuto()
   auto = nil
-  if not (ns.db.arrow and C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID) then return end
+  if not (ns.ArrowRuns and ns.ArrowRuns() and C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID) then return end
   local questID = ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
   if not questID or questID == 0 or not ns.InQuestLog(questID) then auto = NextAuto() return end
   local points, special = QuestPoints(questID)
@@ -408,7 +408,7 @@ end
 -- (1.3.5) kind (optional): what the target is ("entrance": a marked dungeon entrance, Dungeons.lua)
 function ns.SetArrowTarget(mapID, x, y, label, kind)
   manual = { mapID = mapID, x = x, y = y, label = label, tracked = Tracked(), kind = kind }
-  if arrow and ns.db.arrow then arrow:Show() end
+  if arrow and ns.ArrowRuns() then arrow:Show() end
 end
 
 function ns.ClearArrow()
@@ -420,7 +420,7 @@ function ns.SetExternalArrowTarget(target)
   external = target
   -- (1.3.6) a guide's new area target: look at its spots at once (else the needle shows for a moment)
   if type(target) == "table" and target.area then area.checkAt = nil end
-  if target and arrow and ns.db.arrow then arrow:Show() end
+  if target and arrow and ns.ArrowRuns() then arrow:Show() end
 end
 
 -- (1.2) Dead and released (a ghost): the arrow leads back to your corpse.
@@ -527,7 +527,15 @@ end
 -- the dots on the map) but draws nothing and takes no clicks: "ghost".
 local state = {}
 function ns.ArrowState() return state end
-local function Ghost() return (ns.GuideActive and ns.GuideActive()) or (ns.TrackerCompassActive and ns.TrackerCompassActive()) or false end
+-- (1.3.7, Daniel 13.10.: "by default the compass in the list and the arrow off; switch the list's compass off and
+-- the old arrow comes back; both at the same time must be possible") the arrow works whenever someone needs its
+-- target (its own window, the list's compass, a guide), but draws only when its window is switched on and no
+-- guide (Leveldon) shows the way
+local function Runs()
+  return ns.db.arrow or (ns.TrackerCompassActive and ns.TrackerCompassActive()) or (ns.GuideActive and ns.GuideActive()) or false
+end
+ns.ArrowRuns = Runs
+local function Ghost() return (ns.GuideActive and ns.GuideActive()) or not ns.db.arrow or false end
 ns.ArrowGhost = Ghost
 
 local function Turn(self, angle)
@@ -645,7 +653,7 @@ local function Update(self)
   arrowWay.t, arrowWay.wp, arrowWay.cave = nil, nil, nil
   state.t, state.dist, state.bearing = t, nil, nil
   -- Without a target the frame is invisible: let clicks pass through to the world.
-  local wantMouse = (ns.db.arrow and t) and true or false
+  local wantMouse = (Runs() and t) and true or false
   local mouse = wantMouse and not Ghost()
   if self.qdMouse ~= mouse then
     self.qdMouse = mouse
@@ -830,7 +838,7 @@ end
 -- Options (Appearance page): size, plate opacity, combat dimming, shown.
 function ns.ApplyArrowLook()
   if not arrow then return end
-  arrow:SetShown(ns.db.arrow)
+  arrow:SetShown(Runs() and true or false)
   arrow:SetScale(Scale())
   arrow.box.plate:SetAlpha(ns.db.arrowAlpha)
   Style.CombatFade(arrow, ns.db.arrowCombatFade) -- (1.20) kit v2 for own frames

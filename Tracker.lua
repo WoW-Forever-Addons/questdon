@@ -46,10 +46,11 @@ function ns.GuideActive()
 end
 
 function ns.TrackerOn() return DB().tracker ~= false end
--- the compass in our window stands in for the arrow
+-- the compass in our window (the arrow keeps working for it, Arrow.lua Runs); (1.3.7) also while the list is
+-- folded: the card with the compass stays
 function ns.TrackerCompassActive()
   local db = DB()
-  return not ns.GuideActive() and db.tracker ~= false and db.trackerCompass ~= false and panel ~= nil and panel:IsShown() and not panel:IsCollapsed() or false
+  return not ns.GuideActive() and db.tracker ~= false and db.trackerCompass ~= false and panel ~= nil and panel:IsShown() or false
 end
 
 ---------------------------------------------------------------------------
@@ -141,6 +142,9 @@ local function Entries()
     e.title = ns.QuestTitle(id)
     e.level = ns.GameQuestLevel(id) or ns.QuestLevel(id)
     e.complete = ns.IsQuestComplete(id) and true or false
+    -- (1.3.7, a player on Discord: "how do I remove low level quests from the quest panel?") grey quests go to the
+    -- bottom, folded into one line
+    e.grey = not e.complete and ns.IsGreyQuestInfo and ns.IsGreyQuestInfo({ questID = id, level = e.level }) and true or false
     e.failed = ns.IsQuestFailed and ns.IsQuestFailed(id) or false
     e.objs = Objectives(id)
     local open
@@ -305,7 +309,11 @@ local function FillCard(e, width)
   for _, fs in ipairs(card.lines) do fs:Hide() end
   for _, t in ipairs(card.pips) do t:Hide() end
   npip = 0
-  local textW = width - COMPASS - 24
+  -- (1.3.7, Daniel 13.10.: "switch the option off and the compass in the list should be gone") the compass only
+  -- with "Compass in the quest list"
+  local withCompass = DB().trackerCompass ~= false
+  if withCompass then card.compass:Show() card.dist:Show() else card.compass:Hide() card.dist:Hide() end
+  local textW = withCompass and (width - COMPASS - 24) or (width - 16)
   card:SetWidth(width)
   if not e then
     card.label:SetText(L["Quest log empty"])
@@ -376,7 +384,7 @@ local function FillCard(e, width)
   card.way:ClearAllPoints()
   card.way:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -y)
   y = y + 13
-  return math.max(y + 4, COMPASS + 38)
+  return math.max(y + 4, withCompass and (COMPASS + 38) or 0)
 end
 
 ---------------------------------------------------------------------------
@@ -515,6 +523,123 @@ Style.ICONS.qdRead = Style.ICONS.qdRead or {
 
 local function Mode() return ns.db.trackerMode == "zones" and "zones" or "near" end
 
+-- (1.3.7, Daniel 13.10.: "right-click: a small menu with abandon quest, hide quest and show hidden quests")
+-- Hidden quests are kept per character (QuestdonCharDB.hiddenQuests) and listed folded at the bottom.
+local function Hidden()
+  local c = ns.charDB
+  if type(c) ~= "table" then return {} end
+  if type(c.hiddenQuests) ~= "table" then c.hiddenQuests = {} end
+  return c.hiddenQuests
+end
+ns.TrackerHidden = Hidden -- (tests)
+local qmenu, qcatcher, armed
+local function HideQuestMenu()
+  armed = nil
+  if qmenu then qmenu:Hide() end
+  if qcatcher then qcatcher:Hide() end
+end
+-- what a menu entry does; "abandon" asks once (the entry turns red), the second click abandons
+local function QuestMenuAction(e, what)
+  if what == "abandon" then
+    if armed ~= e.questID then armed = e.questID return false end
+    HideQuestMenu()
+    if ns.AbandonQuest then ns.AbandonQuest(e.questID) end
+    return true
+  elseif what == "hide" then
+    Hidden()[e.questID] = not Hidden()[e.questID] or nil
+  elseif what == "showhidden" then
+    ns.db.trackerHiddenOpen = not ns.db.trackerHiddenOpen or nil
+  end
+  HideQuestMenu()
+  ns.UpdateTracker(true)
+  return true
+end
+ns.TrackerQuestMenuAction = QuestMenuAction -- (tests)
+local function HiddenCount()
+  local n = 0
+  for id in pairs(Hidden()) do if ns.InQuestLog(id) then n = n + 1 else Hidden()[id] = nil end end
+  return n
+end
+local function MenuRow(parent)
+  local r = CreateFrame("Button", nil, parent)
+  r:SetHeight(22)
+  r.hover = r:CreateTexture(nil, "BACKGROUND")
+  r.hover:SetAllPoints(r)
+  r.hover:SetColorTexture(1, 1, 1, 0.07)
+  r.hover:Hide()
+  r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  r.text:SetPoint("LEFT", r, "LEFT", 8, 0)
+  r.text:SetPoint("RIGHT", r, "RIGHT", -4, 0)
+  r.text:SetJustifyH("LEFT")
+  r:SetScript("OnEnter", function(self) self.hover:Show() end)
+  r:SetScript("OnLeave", function(self) self.hover:Hide() end)
+  return r
+end
+local function ShowQuestMenu(e)
+  if not qmenu then
+    qcatcher = CreateFrame("Button", nil, UIParent)
+    qcatcher:SetAllPoints(UIParent)
+    qcatcher:SetFrameStrata("DIALOG")
+    qcatcher:RegisterForClicks("AnyUp")
+    qcatcher:SetScript("OnClick", HideQuestMenu)
+    qmenu = CreateFrame("Frame", "QuestdonQuestMenu", UIParent)
+    qmenu:SetFrameStrata("DIALOG")
+    local lvl = ns.Num(qcatcher.GetFrameLevel and qcatcher:GetFrameLevel())
+    if lvl and qmenu.SetFrameLevel then qmenu:SetFrameLevel(lvl + 10) end
+    qmenu:SetWidth(220)
+    qmenu:EnableMouse(true)
+    qmenu:SetClampedToScreen(true)
+    local bg = qmenu:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(qmenu)
+    bg:SetColorTexture(0.10, 0.11, 0.22, 0.97)
+    qmenu.title = qmenu:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    qmenu.title:SetPoint("TOPLEFT", qmenu, "TOPLEFT", 10, -8)
+    qmenu.title:SetPoint("RIGHT", qmenu, "RIGHT", -10, 0)
+    qmenu.title:SetJustifyH("LEFT")
+    qmenu.rows = { MenuRow(qmenu), MenuRow(qmenu), MenuRow(qmenu) }
+    for k, r in ipairs(qmenu.rows) do
+      r:SetPoint("TOPLEFT", qmenu, "TOPLEFT", 4, -8 - 20 - (k - 1) * 22)
+      r:SetPoint("TOPRIGHT", qmenu, "TOPRIGHT", -4, -8 - 20 - (k - 1) * 22)
+    end
+    if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "QuestdonQuestMenu") end
+    qmenu:SetScript("OnHide", function() armed = nil if qcatcher then qcatcher:Hide() end end)
+  end
+  armed = nil
+  qmenu.title:SetText(e.title or tostring(e.questID))
+  local hid = Hidden()[e.questID]
+  local n = HiddenCount()
+  local items = {
+    { "abandon", L["Abandon quest"] },
+    { "hide", hid and L["Show this quest again"] or L["Hide quest"] },
+  }
+  if n > 0 then items[#items + 1] = { "showhidden", ns.db.trackerHiddenOpen and L["Fold hidden quests"] or L["Show hidden quests (%d)"]:format(n) } end
+  for k, r in ipairs(qmenu.rows) do
+    local it = items[k]
+    if it then
+      r.text:SetText(it[2])
+      r.text:SetTextColor(1, 1, 1)
+      r:SetScript("OnClick", function(self)
+        if QuestMenuAction(e, it[1]) == false then
+          self.text:SetText(L["Click again to abandon"])
+          self.text:SetTextColor(1, 0.35, 0.3)
+        end
+      end)
+      r:Show()
+    else
+      r:Hide()
+    end
+  end
+  qmenu:SetHeight(8 + 20 + #items * 22 + 8)
+  local x, y = 0, 0
+  if GetCursorPosition then x, y = GetCursorPosition() end
+  local sc = ns.Num(UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()) or 1
+  qmenu:ClearAllPoints()
+  qmenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (x or 0) / sc - 8, (y or 0) / sc + 8)
+  qcatcher:Show()
+  qmenu:Show()
+end
+ns.TrackerQuestMenu = ShowQuestMenu -- (tests)
+
 local function RowFor(e, focusID)
   local row = Style.Row(panel)
   local title = (ns.QuestLevelTag(e.questID) or "") .. (e.title or "")
@@ -527,6 +652,7 @@ local function RowFor(e, focusID)
   row:SetText(sub and (title .. "\n" .. sub) or title, e.complete and { 0.62, 0.92, 0.62 } or (B.textPrimary or "textPrimary"))
   if e.questID == focusID then row:SetActive(true) end
   row:SetOnClick(function(_, button)
+    if button == "RightButton" then ShowQuestMenu(e) return end
     if IsShiftKeyDown and IsShiftKeyDown() then ns.ShowQuestText(e.questID) return end
     Pick(e.questID)
   end)
@@ -534,7 +660,7 @@ local function RowFor(e, focusID)
     local lines = {}
     for _, o in ipairs(e.objs) do lines[#lines + 1] = (o.done and "|cff66cc73" or "") .. o.text .. (o.done and "|r" or "") end
     if e.dist then lines[#lines + 1] = { L["Distance"], Yards(e.dist) } end
-    return e.title, lines, L["Click: pick it (compass). Shift-click: read the whole quest."]
+    return e.title, lines, L["Click: pick it (compass). Shift-click: read the whole quest."] .. " " .. L["Right-click: abandon or hide."]
   end)
   return row
 end
@@ -567,7 +693,99 @@ local function NewNearby()
   return n, best
 end
 
+-- (1.3.8, Daniel 13.10.: the old Questdon window goes; what only it had comes to the bottom of the list) quests in
+-- the log, quest items without their quest (two clicks destroy the first sure one), the group's progress
+local destroyID, destroyUntil
+local function FirstSure(orphans) for _, o in ipairs(orphans) do if o.sure then return o end end end
+local function ItemName(o) return o.link and o.link:match("%[(.-)%]") or ("item:" .. tostring(o.itemID)) end
+local function DestroyClick()
+  if InCombatLockdown and InCombatLockdown() then return end
+  local first = FirstSure(ns.OrphanQuestItems and ns.OrphanQuestItems() or {})
+  if not first then return end
+  local now = GetTime and GetTime() or 0
+  if destroyID == first.itemID and destroyUntil and now < destroyUntil then
+    destroyID = nil
+    if ns.DestroyQuestItem and ns.DestroyQuestItem(first.itemID) then ns.Print(L["Destroyed: %s"]:format(first.link or first.itemID)) end
+  else
+    destroyID, destroyUntil = first.itemID, now + 4
+    if ns.After then ns.After(4.1, function() ns.UpdateTracker(true) end) end
+  end
+  ns.UpdateTracker(true)
+end
+ns.TrackerDestroyClick = DestroyClick -- (tests)
+local function ExtrasSig()
+  local n, max if ns.QuestLogCount then n, max = ns.QuestLogCount() end
+  local orphans = ns.OrphanQuestItems and ns.OrphanQuestItems() or {}
+  local first = FirstSure(orphans)
+  local g = ""
+  if ns.db.partyProgress and ns.PartyMemberCount and ns.PartyMemberCount() > 0 and ns.PartyOverview then
+    local po = ns.PartyOverview()
+    g = #po.shared .. "/" .. #po.takeable
+  end
+  return table.concat({ tostring(n), tostring(max), #orphans, first and first.itemID or "", tostring(destroyID), g }, ":")
+end
+local function Extras()
+  local hint = B.textHint or "textHint"
+  local n, max if ns.QuestLogCount then n, max = ns.QuestLogCount() end
+  if max then
+    Style.Row(panel):SetText(L["Quests in log"], hint):SetGapBefore(6)
+      :SetValue(("%d/%d"):format(n, max), n >= max and "critical" or (n >= max - 3 and "warning") or hint)
+  end
+  local orphans = ns.OrphanQuestItems and ns.OrphanQuestItems() or {}
+  if #orphans > 0 then
+    local first = FirstSure(orphans)
+    local confirm = first and destroyID == first.itemID and destroyUntil and GetTime() < destroyUntil
+    local row = Style.Row(panel)
+    if first and not (InCombatLockdown and InCombatLockdown()) then
+      row:SetText(confirm and L["Click again: destroy %s"]:format(ItemName(first)) or (L["Destroy unneeded quest item"] .. ": " .. ItemName(first)),
+        confirm and "critical" or "accent")
+      row:SetOnClick(ns.Guard and ns.Guard("tracker", DestroyClick) or DestroyClick)
+    else
+      row:SetText(L["Quest items without quest"], hint)
+    end
+    row:SetValue(tostring(#orphans), "warning")
+    row:SetTooltip(function()
+      local lines = {}
+      for i = 1, math.min(#orphans, 30) do
+        local line = orphans[i].link or ("item:" .. orphans[i].itemID)
+        if orphans[i].quest then line = line .. "  " .. orphans[i].quest end
+        if not orphans[i].sure then line = line .. "  ?" end
+        lines[#lines + 1] = line
+      end
+      return L["Probably no longer needed"], lines, first and L["Click twice within 4 seconds to destroy. This cannot be undone."] or nil
+    end)
+  end
+  if ns.db.partyProgress and ns.PartyMemberCount and ns.PartyMemberCount() > 0 and ns.PartyOverview then
+    local po = ns.PartyOverview()
+    Style.Row(panel):SetText(L["Group progress"], hint)
+      :SetValue(L["%d shared, %d to pick up"]:format(#po.shared, #po.takeable))
+      :SetTooltip(function()
+        local lines, count = {}, 0
+        for _, id in ipairs(po.shared) do
+          if count >= 30 then break end
+          count = count + 1
+          lines[#lines + 1] = { header = ns.QuestTitle(id) }
+          lines[#lines + 1] = { "  " .. L["You"], ns.IsQuestComplete(id) and L["done"] or ns.QuestProgressText(id) or L["in log"],
+            ns.IsQuestComplete(id) and "good" or "textPrimary" }
+          for _, p in ipairs(ns.PartyProgress(id)) do
+            lines[#lines + 1] = { "  " .. p.name, ns.PartyStateText(p), p.complete and "good" or (p.failed and "critical") or "textPrimary" }
+          end
+        end
+        if #po.takeable > 0 then
+          lines[#lines + 1] = { header = L["Your group has, you can pick up:"] }
+          for i = 1, math.min(#po.takeable, 30) do
+            local id = po.takeable[i]
+            lines[#lines + 1] = { "  " .. ns.QuestTitle(id), table.concat(ns.PartyMembersWithQuest(id), ", ") }
+          end
+        end
+        return L["Group progress"], lines, nil
+      end)
+  end
+end
+
 local function Footer()
+  -- (1.3.7, Daniel 13.10.: "only with Questdon's XP bar off") the bar shows the same
+  if ns.db.xpBar then return end
   local level = ns.PlayerLevel()
   local xp, max = ns.Num(ns.Value(UnitXP, "player")), ns.Num(ns.Value(UnitXPMax, "player"))
   local gain = ns.CompletedQuestXP and ns.CompletedQuestXP() or 0
@@ -649,9 +867,9 @@ local function Build()
   for _, e in ipairs(list) do if e.questID == focusID then focus = e end end
   -- rebuild only when something we show changed (distances in steps of 10 yards)
   local sig = { Mode(), tostring(ns.db.trackerSortLevel), tostring(focusID), tostring(ns.GuideActive()),
-    tostring(ns.db.trackerLines), tostring(panel._width) }
+    tostring(ns.db.trackerLines), tostring(panel._width), tostring(ns.db.trackerGreyOpen), tostring(ns.db.trackerHideGrey), tostring(ns.db.trackerHiddenOpen), tostring(ns.db.xpBar), ExtrasSig() }
   for _, e in ipairs(list) do
-    sig[#sig + 1] = e.questID .. (e.complete and "c" or "") .. (e.failed and "f" or "") .. (e.dist and math.floor(e.dist / 10) or "-")
+    sig[#sig + 1] = e.questID .. (e.complete and "c" or "") .. (e.failed and "f" or "") .. (e.grey and "g" or "") .. (Hidden()[e.questID] and "h" or "") .. (e.dist and math.floor(e.dist / 10) or "-")
     for _, o in ipairs(e.objs) do sig[#sig + 1] = (o.have or "") .. (o.done and "d" or "") end
   end
   local n, best = NewNearby()
@@ -680,6 +898,40 @@ local function Build()
   else
     card.questID = focusID
   end
+  local greys, hiddenQ, rest = {}, {}, {}
+  local hid = Hidden()
+  for _, e in ipairs(list) do
+    local free = e.questID ~= focusID or ns.GuideActive()
+    if hid[e.questID] and free then hiddenQ[#hiddenQ + 1] = e
+    elseif e.grey and free then greys[#greys + 1] = e
+    else rest[#rest + 1] = e end
+  end
+  list = rest
+  -- the folded line of grey quests at the bottom (click: show or hide them)
+  local function Greys()
+    if #greys == 0 or ns.db.trackerHideGrey then return end
+    local open = ns.db.trackerGreyOpen
+    Style.Row(panel):SetText(L["Grey quests"] .. " (" .. #greys .. ")", B.textHint or "textHint")
+      :SetValue(open and "-" or "+", B.textHint or "textHint"):SetGapBefore(4)
+      :SetOnClick(function() ns.db.trackerGreyOpen = not ns.db.trackerGreyOpen or nil ns.UpdateTracker(true) end)
+      :SetTooltip(function() return L["Grey quests"], { L["No XP left for your level."] }, L["Click: show or hide them."] end)
+    if open then
+      table.sort(greys, function(a, b) return (a.level or 0) < (b.level or 0) end)
+      for _, e in ipairs(greys) do RowFor(e, focusID):SetIndent(12) end
+    end
+  end
+  -- the quests you hid (right-click menu), folded the same way
+  local function HiddenLine()
+    if #hiddenQ == 0 then return end
+    local open = ns.db.trackerHiddenOpen
+    Style.Row(panel):SetText(L["Hidden quests"] .. " (" .. #hiddenQ .. ")", B.textHint or "textHint")
+      :SetValue(open and "-" or "+", B.textHint or "textHint"):SetGapBefore(4)
+      :SetOnClick(function() ns.db.trackerHiddenOpen = not ns.db.trackerHiddenOpen or nil ns.UpdateTracker(true) end)
+      :SetTooltip(function() return L["Hidden quests"], nil, L["Click: show or hide them."] end)
+    if open then
+      for _, e in ipairs(hiddenQ) do RowFor(e, focusID):SetIndent(12) end
+    end
+  end
   if Mode() == "near" then
     local done, others = {}, {}
     for _, e in ipairs(list) do
@@ -706,6 +958,8 @@ local function Build()
     Group(L["Ready to turn in"], done)
     Group(L["Nearby"], others)
     if more > 0 then Style.Row(panel):SetText(L["+%d more quests"]:format(more), B.textHint or "textHint") end
+    Greys()
+    HiddenLine()
     if n > 0 then
       Style.Row(panel):SetText(n == 1 and L["1 new quest nearby"] or L["%d new quests nearby"]:format(n), { 0.96, 0.78, 0.26 })
         :SetValue(Yards(best), B.goldLight or "accent"):SetIcon("Interface\\GossipFrame\\AvailableQuestIcon"):SetGapBefore(4)
@@ -728,7 +982,8 @@ local function Build()
       end
       local row = Style.Row(panel)
       row:SetText((ns.QuestLevelTag(e.questID) or "") .. (e.title or ""), e.complete and { 0.62, 0.92, 0.62 } or (B.textPrimary or "textPrimary"))
-      row:SetOnClick(function()
+      row:SetOnClick(function(_, button)
+        if button == "RightButton" then ShowQuestMenu(e) return end
         if IsShiftKeyDown and IsShiftKeyDown() then ns.ShowQuestText(e.questID) return end
         Pick(e.questID)
       end)
@@ -743,9 +998,12 @@ local function Build()
      end
     end
     if more > 0 then Style.Row(panel):SetText(L["+%d more quests"]:format(more), B.textHint or "textHint") end
+    Greys()
+    HiddenLine()
   end
   lastShown = (tonumber(ns.db.trackerLines) or math.huge) - left
   if lastShown == math.huge or lastShown ~= lastShown then lastShown = 0 end
+  Extras()
   Footer()
   panel:Relayout()
 end
@@ -791,6 +1049,7 @@ local function Dock()
   if grip and not docked then grip:Show() end
 end
 ns.TrackerDock = Dock
+function ns.ResetTrackerPosition() if panel then panel:ResetPosition() Dock() end end
 function ns.TrackerDocked() return docked end -- (tests)
 
 function ns.UpdateTracker(force)
@@ -804,7 +1063,10 @@ function ns.UpdateTracker(force)
   end
   Dock()
   Build()
-  if not panel:IsShown() and DB().trackerShown ~= false then panel:FadeIn() end
+  if not panel:IsShown() and DB().trackerShown ~= false then
+    panel:FadeIn()
+    if ns.ApplyArrowLook then ns.ApplyArrowLook() end -- (1.3.7) the arrow runs for the list's compass
+  end
   ApplyBlizzTracker()
 end
 
@@ -917,6 +1179,9 @@ local function Create()
       { key = "options", kind = "options", tooltip = { L["Options"] }, onClick = function() if ns.OpenOptions then ns.OpenOptions() end end },
       { key = "read", kind = "qdRead", tooltip = { L["Read the whole quest"], nil, L["Shift-click a quest does it too."] },
         onClick = function() local id = card and card.questID if id then ns.ShowQuestText(id) end end },
+      -- (1.3.8) the quest book button of the old window
+      { key = "book", kind = "qdZoneList", tooltip = { L["Quest book"], nil, L["Your journal, the quests of the zone and a search over all quests. /qd journal, /qd zone"] },
+        onClick = function() if ns.ToggleQuestBook then ns.ToggleQuestBook() end end },
     },
     get = Get, set = Set,
     defaultPoint = { "TOPRIGHT", "TOPRIGHT", -60, -240 },
@@ -954,4 +1219,6 @@ ns.On("SUPER_TRACKING_CHANGED", Queue)
 ns.On("ZONE_CHANGED_NEW_AREA", Queue)
 ns.On("PLAYER_ENTERING_WORLD", Queue)
 ns.On("PLAYER_XP_UPDATE", Queue)
+ns.On("BAG_UPDATE_DELAYED", Queue) -- (1.3.8) quest items without quest
+ns.On("GROUP_ROSTER_UPDATE", Queue) -- (1.3.8) group progress
 ns.On("PLAYER_REGEN_ENABLED", function() ApplyBlizzTracker() end)

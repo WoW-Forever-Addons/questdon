@@ -73,7 +73,12 @@ local SWITCHES = {
   { label = "Direction arrow", keys = { "arrow" }, apply = function() if ns.ApplyArrow then ns.ApplyArrow() end end },
   { label = "Auto accept and turn in", keys = { "autoAccept", "autoTurnIn" } },
   { label = "XP bar", keys = { "xpBar" }, apply = function() if ns.UpdateXPBar then ns.UpdateXPBar() end end },
-  { label = "Questdon window", keys = { "showPanel" }, apply = function() if ns.UpdatePanel then ns.UpdatePanel() end end },
+  -- (1.3.8) the quest list instead of the old window; without the list its compass is gone, the arrow comes back
+  { label = "Quest list", keys = { "tracker", "trackerShown" }, apply = function()
+      if ns.db.tracker == false then ns.db.arrow = true if ns.ApplyArrow then ns.ApplyArrow() end end
+      if ns.UpdateTracker then ns.UpdateTracker(true) end
+      if ns.ApplyArrowLook then ns.ApplyArrowLook() end
+    end },
 }
 ns.MINIMAP_SWITCHES = SWITCHES -- (tests)
 

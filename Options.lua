@@ -23,7 +23,7 @@ local function ArrowLook() if ns.ApplyArrow then ns.ApplyArrow() end end
 local function XPBarLook() if ns.ApplyXPBarLook then ns.ApplyXPBarLook() end end
 local function UpdateXPBar() if ns.UpdateXPBar then ns.UpdateXPBar() end end
 -- (1.2) switching the bar also changes the window (its experience lines)
-local function UpdateXPBarAndPanel() UpdateXPBar() if ns.UpdatePanel then ns.UpdatePanel() end end
+local function UpdateXPBarAndPanel() UpdateXPBar() if ns.UpdatePanel then ns.UpdatePanel() end if ns.UpdateTracker then ns.UpdateTracker(true) end end
 local SMIN, SMAX = ns.Style.SCALE_MIN, ns.Style.SCALE_MAX
 
 local PAGES = {
@@ -38,7 +38,7 @@ local PAGES = {
     { header = "Chains and group" },
     { key = "chainHint", name = "Hint for the next quest in a chain", tip = "After turning in a quest, names the follow-up quest and its zone in the chat." },
     { key = "shareQuests", name = "Share new quests with group", tip = "Shares every quest you accept with your group, if it can be shared." },
-    { key = "partyProgress", name = "Quest progress with the group", tip = "Group members who use Questdon too see each other's quest progress: in mob tooltips (who still needs this mob), in the panel and on quest pins (who has a quest you can pick up). Only in groups of up to five, only quest numbers and counters are sent. /qd group", onChange = function() if ns.ApplyPartyProgress then ns.ApplyPartyProgress() end UpdatePanel() end },
+    { key = "partyProgress", name = "Quest progress with the group", tip = "Group members who use Questdon too see each other's quest progress: in mob tooltips (who still needs this mob), at the bottom of the quest list and on quest pins (who has a quest you can pick up). Only in groups of up to five, only quest numbers and counters are sent. /qd group", onChange = function() if ns.ApplyPartyProgress then ns.ApplyPartyProgress() end UpdatePanel() end },
     { header = "Dungeons" },
     { key = "dungeonHint", name = "Hint when entering a dungeon", tip = "When you enter a dungeon, the chat names its quests in your log and the ones you are missing (and who in the group has them)." },
     { header = "Tooltips" },
@@ -81,19 +81,24 @@ local PAGES = {
     { key = "pinsOnlyUnknown", name = "Only quests Questie does not know", tip = "Hides this ? for quests that Questie already shows.", parent = "learnPins", onChange = RefreshPins },
   } },
   { title = "Appearance", tip = "Panel, direction arrow and XP bar: show, lock, size, background opacity, dimming in combat and position. The same options in all our addons.", items = {
-    { header = "Panel" },
-    { key = "showPanel", name = "Show window", tip = "XP of finished quests and the level after turning them in, XP per hour, quests nearby, dungeon quests, group progress, grey quests and quest items you no longer need. Drag the header to move. /qd panel toggles it.", onChange = UpdatePanel },
-    { key = "panelLocked", name = "Lock window", tip = "The window can no longer be dragged by its header.", parent = "showPanel", onChange = PanelLook },
-    { key = "panelScale", kind = "slider", name = "Size", tip = "Size of the window including its text.", min = SMIN, max = SMAX, step = 0.05, parent = "showPanel", onChange = PanelLook },
-    { key = "panelAlpha", kind = "slider", name = "Background opacity", tip = "How dark the background is. The text stays fully visible.", min = 0, max = 1, step = 0.05, parent = "showPanel", onChange = PanelLook },
-    { key = "panelCombatFade", name = "Dim in combat", tip = "Dims the window to 40 % while you are in combat.", parent = "showPanel", onChange = PanelLook },
-    { kind = "button", name = "Reset position", button = "Reset", tip = "Puts the window back to its default place.", onClick = function() if ns.ResetPanelPosition then ns.ResetPanelPosition() end end },
-    { key = "panelWidth", kind = "slider", name = "Width", tip = "Width of the window. Long lines wrap and the window grows in height.", min = 220, max = 500, step = 10, format = Pixels, parent = "showPanel", onChange = PanelLook },
+    -- (1.3.8, Daniel 13.10.) the old window and its options are gone: its lines are at the bottom of the quest list
     -- (1.3.6, Daniel 12.10.) the quest list with the compass
     { header = "Quest list" },
-    { key = "tracker", name = "Show the quest list", tip = "Your quests in Questdon's own window instead of Blizzard's quest tracker: on top the quest you picked with a compass, below the others; the tabs switch between nearby, by zone and by level. Click a quest to pick it, Shift-click to read it. /qd list toggles it.", onChange = function() if ns.UpdateTracker then ns.UpdateTracker(true) end if ns.ApplyArrowLook then ns.ApplyArrowLook() end end },
-    { key = "trackerCompass", name = "Compass in the list instead of the arrow", tip = "The compass on the card of the picked quest takes the place of the separate direction arrow. Collapse the list and the arrow is back.", parent = "tracker", onChange = function() if ns.UpdateTracker then ns.UpdateTracker(true) end end },
+    { key = "tracker", name = "Show the quest list", tip = "Your quests in Questdon's own window instead of Blizzard's quest tracker: on top the quest you picked with a compass, below the others; the tabs switch between nearby, by zone and by level. Click a quest to pick it, Shift-click to read it. /qd list toggles it.", onChange = function()
+        -- (1.3.7) without the list its compass is gone too: the arrow comes back
+        if ns.db.tracker == false then ns.db.arrow = true if ns.RefreshSettingsUI then ns.RefreshSettingsUI() end end
+        if ns.UpdateTracker then ns.UpdateTracker(true) end if ns.ApplyArrowLook then ns.ApplyArrowLook() end end },
+    -- (1.3.7, Daniel 13.10.: "by default the compass in the list and the arrow off; switch it off and the old arrow
+    -- comes back; both at once must be possible")
+    { key = "trackerCompass", name = "Compass in the quest list", tip = "A compass on the card of the picked quest. Off: the separate direction arrow comes back. Both at once: also switch on 'Show window' under Direction arrow.", parent = "tracker", onChange = function()
+        ns.db.arrow = not ns.db.trackerCompass
+        ApplyArrow()
+        if ns.UpdateTracker then ns.UpdateTracker(true) end
+        if ns.RefreshSettingsUI then ns.RefreshSettingsUI() end
+      end },
     { key = "trackerDock", name = "Under Leveldon's window", tip = "With Leveldon open, the quest list hangs right under its window, as wide as it, and moves with it. Leveldon then shows the compass.", parent = "tracker", onChange = function() if ns.UpdateTracker then ns.UpdateTracker(true) end end },
+    -- (1.3.7, Discord: "how do I remove low level quests from the quest panel?")
+    { key = "trackerHideGrey", name = "Hide grey quests", tip = "Quests that give no XP for your level are not listed at all. Off: they are folded into one line at the bottom.", parent = "tracker", onChange = function() if ns.UpdateTracker then ns.UpdateTracker(true) end end },
     { key = "trackerHideBlizz", name = "Hide Blizzard's quest tracker", tip = "While the quest list is shown, Blizzard's quest tracker is invisible and lets clicks through. Never changed in combat.", parent = "tracker", onChange = function() if ns.ApplyBlizzTracker then ns.ApplyBlizzTracker() end end },
     { key = "trackerScale", kind = "slider", name = "Text size", tip = "Size of the quest list and its text. Ctrl + mouse wheel over the title bar does it too.", min = SMIN, max = SMAX, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then f:SetPanelScale(ns.db.trackerScale, true) end if ns.UpdateTracker then ns.UpdateTracker(true) end end },
     { key = "trackerAlpha", kind = "slider", name = "Background opacity", tip = "From a dark window down to no background and no frame, only the text. Shift + mouse wheel over the title bar does it too.", min = 0, max = 1, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then f:SetBackgroundAlpha(ns.db.trackerAlpha) end end },
@@ -122,12 +127,9 @@ local PAGES = {
     { key = "xpBarWidth", kind = "slider", name = "Width", tip = "Width of the XP bar.", min = 200, max = 1600, step = 10, format = Pixels, parent = "xpBar", onChange = UpdateXPBar },
     { key = "xpBarHeight", kind = "slider", name = "Height", tip = "Height of the XP bar.", min = 6, max = 40, step = 1, format = Pixels, parent = "xpBar", onChange = UpdateXPBar },
   } },
-  { title = "Panel and signals", tip = "What the panel shows, completion sound and message.", items = {
-    { header = "Panel content" },
-    { key = "bookButton", name = "Quest book button in the window", tip = "A button at the bottom of the window opens the quest book: your journal, the quests of every zone and the search. Off: a small icon in the title bar opens it instead.", onChange = function() if ns.ApplyPanelLook then ns.ApplyPanelLook() end end },
-    { key = "nextQuestHint", name = "Nearest quest", tip = "Shows the nearest quest you can pick up within 400 yards. Off by default: the map and minimap show the game's own ! anyway. Click the line to point the arrow there (/qd next).", parent = "showPanel", onChange = UpdatePanel },
-    { key = "nextConfirmedOnly", name = "Nearest quest: only confirmed ones", tip = "The nearest quest line, the arrow from it and /qd next only use quests the game or a quest giver confirmed. The map still shows all quests.", parent = "nextQuestHint", onChange = UpdatePanel },
-    { key = "dungeonQuests", name = "Dungeon quests in the panel", tip = "Lists the dungeon quests in your log and the ones you can pick up now, per dungeon. Forever pays dungeon quests extra XP: take them before you go in. Click the line: arrow to the nearest quest giver. /qd dungeons", parent = "showPanel", onChange = UpdatePanel },
+  { title = "Signals", tip = "Sound and message when something is done, and the nearest quest (/qd next).", items = {
+    { header = "Nearest quest" },
+    { key = "nextConfirmedOnly", name = "Nearest quest: only confirmed ones", tip = "/qd next and the arrow from it only use quests the game or a quest giver confirmed. The map still shows all quests." },
     { header = "When something is done" },
     { key = "notifySound", name = "Sound when done", tip = "Plays a sound when a quest objective or a whole quest is done. With 'Questie has priority' on, Questdon stays quiet where Questie plays its own sound." },
     { key = "notifyText", name = "Message when done", tip = "Shows a message in the middle of the screen when an objective or quest is done." },
@@ -171,11 +173,11 @@ end
 
 local TOOLS = {
   { "Reset positions", "Reset", function()
-      if ns.ResetPanelPosition then ns.ResetPanelPosition() end
+      if ns.ResetTrackerPosition then ns.ResetTrackerPosition() end
       if ns.ResetArrowPosition then ns.ResetArrowPosition() end
       if ns.ResetXPBarPosition then ns.ResetXPBarPosition() end
       if ns.ResetButtonPosition then ns.ResetButtonPosition() end
-    end, "Puts the panel, the arrow, the XP bar and the quest item button back to their default places." },
+    end, "Puts the quest list, the arrow, the XP bar and the quest item button back to their default places." },
   { "Test the arrow", "Test", function()
       local map, x, y = ns.PlayerPosition()
       if map and ns.SetArrowTarget then

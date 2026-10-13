@@ -14,6 +14,7 @@ local function IsGrey(info)
   local level, range = ns.PlayerLevel(), ns.QuestTrivialRange and ns.QuestTrivialRange() or 8 -- (1.26)
   return ns.Num(info.level) and level and info.level < level - range or false
 end
+ns.IsGreyQuestInfo = IsGrey -- (1.3.7, the quest list)
 
 function ns.GreyQuests()
   local list = {}

@@ -43,6 +43,7 @@ ns.defaults = {
   trackerMode = "near",
   trackerSortLevel = false,
   trackerAlpha = 0.82,
+  trackerHideGrey = false, -- (1.3.7) grey quests folded into one line at the bottom of the quest list
   trackerScale = 1.2, -- (Daniel 12.10.: "the writing looks very small") text size 120 %, Ctrl + mouse wheel changes it
   trackerCombatFade = true,
   questTexts = {}, -- (1.3.6) [questID] = { d, o, p, c }: the game's quest texts, kept when a quest giver shows them
@@ -363,6 +364,16 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if not QuestdonDB.questieV136 then
       QuestdonDB.questieFirst, QuestdonDB.questieV136 = false, true
     end
+    -- (1.3.7, Daniel 13.10.: "by default the compass in the list and the arrow off") once: with the list and its
+    -- compass on, the separate arrow window goes off (switch it on again for both at once)
+    -- (1.3.8, Daniel 13.10.: "the old window can go completely") its lines are at the bottom of the quest list now
+    if not QuestdonDB.panelV138 then
+      QuestdonDB.showPanel, QuestdonDB.panelV138 = false, true
+    end
+    if not QuestdonDB.arrowV137 then
+      if QuestdonDB.tracker ~= false and QuestdonDB.trackerCompass ~= false then QuestdonDB.arrow = false end
+      QuestdonDB.arrowV137 = true
+    end
     -- (1.24) per character: what quest givers offered (Offers.lua)
     if type(QuestdonCharDB) ~= "table" then QuestdonCharDB = {} end
     ns.charDB = QuestdonCharDB
@@ -560,7 +571,8 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
   elseif msg == "reset" then
     if ns.ResetButtonPosition then ns.ResetButtonPosition() end
   elseif msg == "panel" then
-    if ns.TogglePanel then ns.TogglePanel() end
+    -- (1.3.8) the old window is gone: its lines are at the bottom of the quest list
+    if ns.ToggleTracker then ns.ToggleTracker() end
   elseif msg == "xpbar" then
     if ns.ToggleXPBar then ns.ToggleXPBar() end
   elseif msg == "next" then

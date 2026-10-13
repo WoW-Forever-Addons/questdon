@@ -1,5 +1,14 @@
 # Changes
 
+## 1.3.7
+
+- **The old Questdon window is gone:** the quest list does its job now. At its bottom: quests in the log (yellow when nearly full), quest items no quest needs any more (click twice to destroy the first one) and your group's quest progress. The quest book button sits in the list's title bar, /qd panel switches the quest list. Dungeon quests: the minimap button, the quest book or /qd dungeons.
+- **One ! on the minimap:** where the game marks a quest giver, Questdon draws no second ! or ?, now in the whole minimap view and not only close by.
+- **Compass and arrow:** the quest list's compass and the separate direction arrow are two switches now. By default the list shows the compass and the arrow window is off; switch the list's compass off and the arrow comes back, or switch both on.
+- **Grey quests in the quest list:** quests that give no XP for your level are folded into one line at the bottom; click it to show or hide them, or hide them completely with the option "Hide grey quests". Right-click a quest for a small menu: abandon it, hide it from the list, or show the quests you hid.
+- **More known ways for the arrow:** the ways Questdon players walked, your own and the shared ones, now come with the data, so the way around mountains is known in more places.
+- **Quest data:** more quest chains, turn-ins and objective places learned while playing, also from other Questdon players. Disrupt the Attacks (Barrens) shows for every Horde player from level 9; it waited for Journey to the Crossroads before, which is only a hint quest. The class sigils in Shadowglen show right after The Balance of Nature (1/2).
+
 ## 1.3.6
 
 - **Update note:** new files, so restart the game after updating (a /reload is not enough).
