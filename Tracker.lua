@@ -91,7 +91,15 @@ function ns.BlizzTrackerHidden() return blizzHidden ~= nil end -- (tests)
 ---------------------------------------------------------------------------
 -- The quest log with its zone headings, and what we need per quest
 ---------------------------------------------------------------------------
+local ReadLogWithZones
 local function LogWithZones()
+  -- (16.10.) the rows kept until the next quest log event; the entries are new (Entries fills them)
+  local rows = ns.LogValue("logWithZones", ReadLogWithZones)
+  local out = {}
+  for i, r in ipairs(rows) do out[i] = { questID = r.questID, zone = r.zone, index = r.index } end
+  return out
+end
+function ReadLogWithZones()
   local out, zone = {}, nil
   if not C_QuestLog then return out end
   for i = 1, ns.Num(ns.Value(C_QuestLog.GetNumQuestLogEntries)) or 0 do
@@ -102,6 +110,16 @@ local function LogWithZones()
       elseif not ns.True(info.isHidden) and (ns.Num(info.questID) or 0) > 0 then
         out[#out + 1] = { questID = info.questID, zone = zone, index = i }
       end
+    end
+  end
+  -- (Questdon review 5) quests under a heading collapsed in Blizzard's quest log, with the zone last seen
+  local have = {}
+  for _, e in ipairs(out) do have[e.questID] = true end
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local id = info.questID
+    if not have[id] then
+      have[id] = true
+      out[#out + 1] = { questID = id, zone = ns.QuestLogZone and ns.QuestLogZone(id) or nil }
     end
   end
   return out
@@ -162,16 +180,26 @@ end
 ns.TrackerEntries = Entries -- (tests)
 
 -- the picked quest: the arrow's quest, else the game's super-tracked quest, else the nearest
+local Hidden -- (review 3) defined below, used by FocusID
 local function FocusID(list)
   local t = ns.ArrowTarget and ns.ArrowTarget()
-  if type(t) == "table" and t.questID and ns.InQuestLog(t.questID) then return t.questID end
+  -- (Questdon review 4) not a quest you hid from the list, unless you picked it yourself on the arrow
+  if type(t) == "table" and t.questID and ns.InQuestLog(t.questID) and not (Hidden()[t.questID] and t.next) then return t.questID end
   local id = C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
   if id and id > 0 and ns.InQuestLog(id) then return id end
   local best
+  -- (Questdon review 3) not a quest you hid from the list, grey ones only when nothing else is near
   for _, e in ipairs(list) do
-    if e.dist and (not best or e.dist < best.dist) then best = e end
+    if e.dist and not Hidden()[e.questID] and not e.grey and (not best or e.dist < best.dist) then best = e end
   end
-  return best and best.questID or (list[1] and list[1].questID)
+  if not best then
+    for _, e in ipairs(list) do
+      if e.dist and not Hidden()[e.questID] and (not best or e.dist < best.dist) then best = e end
+    end
+  end
+  if best then return best.questID end
+  for _, e in ipairs(list) do if not Hidden()[e.questID] then return e.questID end end
+  return list[1] and list[1].questID
 end
 ns.TrackerFocusID = function() return FocusID(Entries()) end -- (tests)
 
@@ -240,14 +268,19 @@ local function CreateCard()
   f.title = Font(f, 13, CREAM, "LEFT")
   f.title:SetPoint("TOPLEFT", f.label, "BOTTOMLEFT", 0, -2)
   f.lines, f.pips = {}, {}
-  f:RegisterForClicks("LeftButtonUp")
-  f:SetScript("OnClick", function(self)
+  f:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  f:SetScript("OnClick", function(self, button)
+    -- (Questdon review 3) right-click: the same menu as the rows (abandon, hide), the card's quest has no row
+    if button == "RightButton" and self.questID and ns.TrackerQuestMenu then
+      for _, e in ipairs(ns.TrackerEntries()) do if e.questID == self.questID then ns.TrackerQuestMenu(e) return end end
+      return
+    end
     if self.questID and IsShiftKeyDown and IsShiftKeyDown() then ns.ShowQuestText(self.questID) end
   end)
   f:SetScript("OnEnter", function(self)
     if not self.questID then return end
     Style.Tooltip(self, ns.QuestTitle(self.questID), { { L["Distance"], f.dist:GetText() or "" } },
-      L["Shift-click: read the whole quest."])
+      L["Shift-click: read the whole quest."] .. " " .. L["Right-click: abandon or hide."])
   end)
   f:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
   -- the compass follows the arrow 20 times a second
@@ -256,8 +289,10 @@ local function CreateCard()
     elapsed = elapsed + (tonumber(dt) or 0)
     if elapsed < 0.05 then return end
     elapsed = 0
-    ns.SafeCall("trackerCompass", function() ns.TrackerCompassTick() end)
+    ns.SafeCall("trackerCompass", ns.TrackerCompassTick)
   end)
+  -- (Questdon review 1) hidden until the list places it: with the list off it ran 20 times a second
+  f:Hide()
   return f
 end
 
@@ -293,17 +328,33 @@ function ns.TrackerCompassTick()
   end
   local text = st.distText or ""
   -- "240 yards, the way around": the distance on the card, the rest as a hint below the title
-  card.dist:SetText(st.t and (text:match("^[%d%.,]+%s*%S*") or text) or "")
+  -- (review 3: from the arrow's own parts, not parsed from the translated text)
+  local short, way = st.distShort, st.distWay
+  if not short then short, way = ns.SplitDistance(text) end
+  card.dist:SetText(st.t and (short or text) or "")
   if st.distColor and st.distColor ~= "textSecondary" and ns.Look and ns.Look.SetColor then
     ns.Look.SetColor(card.dist, st.distColor)
   else
     Color(card.dist, GOLD_L)
   end
-  local way = st.t and text:match("^[%d%.,]+%s*%S*,%s*(.+)$") or nil
+  way = st.t and way or nil
+  -- (review 3) the arrow leads to something that is not the card's quest (your corpse, a spot you clicked): say what
+  -- (Questdon review 5) also a clicked '!' or dot of another quest: the card names where its needle points
+  if st.t and st.t.questID ~= card.questID and type(st.t.label) == "string" and st.t.label ~= "" then
+    way = way and (st.t.label .. ", " .. way) or st.t.label
+  end
   if card.way then card.way:SetText(way or "") end
 end
 
 -- Lays the card out for one quest and returns its height.
+local soonest -- (review 2) the timed quest with the least time left in the list (Build)
+-- (Questdon review 1/2) a timed quest's time left, coloured (red in the last minute); nil without a timer
+local function Clock(e)
+  local left = not e.failed and not e.complete and ns.QuestTimeLeft(e.questID)
+  if not left then return nil end
+  return Style.Colorize(("%d:%02d"):format(math.floor(left / 60), left % 60), left < 60 and "critical" or "warning")
+end
+
 local function FillCard(e, width)
   card.questID = e and e.questID
   for _, fs in ipairs(card.lines) do fs:Hide() end
@@ -320,7 +371,15 @@ local function FillCard(e, width)
     card.title:SetText("")
     return COMPASS + 38
   end
-  card.label:SetText((ns.QuestLevelTag(e.questID) or "") .. (e.complete and L["Ready to turn in"] or L["Picked"]))
+  -- (Questdon review 1) a timed quest: its time left behind; (review 2) a failed one says so
+  local clock = Clock(e)
+  -- (review 2) another quest's timer runs: its time and name behind (the rows that show it may be collapsed)
+  local other = soonest and soonest ~= e and Clock(soonest)
+  card.label:SetWidth(textW)
+  card.label:SetText((ns.QuestLevelTag(e.questID) or "") .. (e.failed and Style.Colorize(L["Failed"], "critical")
+    or e.complete and L["Ready to turn in"] or L["Picked"]) .. (clock and ("  " .. clock) or "")
+    .. (other and ("  " .. other .. " " .. (soonest.title or "")) or ""))
+  if Style.FitText then Style.FitText(card.label, textW) end
   card.title:SetWidth(textW)
   card.title:SetText(e.title or "")
   if Style.FitText then Style.FitText(card.title, textW) end
@@ -525,13 +584,16 @@ local function Mode() return ns.db.trackerMode == "zones" and "zones" or "near" 
 
 -- (1.3.7, Daniel 13.10.: "right-click: a small menu with abandon quest, hide quest and show hidden quests")
 -- Hidden quests are kept per character (QuestdonCharDB.hiddenQuests) and listed folded at the bottom.
-local function Hidden()
+function Hidden()
   local c = ns.charDB
   if type(c) ~= "table" then return {} end
   if type(c.hiddenQuests) ~= "table" then c.hiddenQuests = {} end
   return c.hiddenQuests
 end
 ns.TrackerHidden = Hidden -- (tests)
+-- (Questdon review 4) a hidden quest that leaves the log is shown again when you take it once more
+ns.On("QUEST_REMOVED", function(_, questID) local id = ns.Num(questID) if id then Hidden()[id] = nil end end)
+ns.On("QUEST_TURNED_IN", function(_, questID) local id = ns.Num(questID) if id then Hidden()[id] = nil end end)
 local qmenu, qcatcher, armed
 local function HideQuestMenu()
   armed = nil
@@ -547,6 +609,14 @@ local function QuestMenuAction(e, what)
     return true
   elseif what == "hide" then
     Hidden()[e.questID] = not Hidden()[e.questID] or nil
+    -- (Questdon review 4) hiding the picked quest: the game's track and a clicked arrow target go with it, so the
+    -- list picks another quest (it stayed on the card before)
+    if Hidden()[e.questID] then
+      local st = C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
+      if st == e.questID and C_SuperTrack.SetSuperTrackedQuestID then pcall(C_SuperTrack.SetSuperTrackedQuestID, 0) end
+      local t = ns.ArrowTarget and ns.ArrowTarget()
+      if type(t) == "table" and t.questID == e.questID and ns.ClearArrow then ns.ClearArrow() end
+    end
   elseif what == "showhidden" then
     ns.db.trackerHiddenOpen = not ns.db.trackerHiddenOpen or nil
   end
@@ -642,13 +712,16 @@ ns.TrackerQuestMenu = ShowQuestMenu -- (tests)
 
 local function RowFor(e, focusID)
   local row = Style.Row(panel)
-  local title = (ns.QuestLevelTag(e.questID) or "") .. (e.title or "")
+  local title = (ns.QuestLevelTag(e.questID) or "") .. (e.title or "") .. ns.GroupTag(e.questID)
   local sub
   if e.failed then sub = Style.Colorize(L["Failed"], "critical")
   elseif e.complete then
     local who = TurnInName(e.questID)
     sub = Style.Colorize(who and L["Turn in: %s"]:format(who) or L["Ready to turn in"], "good")
   elseif e.open then sub = Style.Colorize(Short(e.open), B.textHint or "textHint") end
+  -- (Questdon review 1) a timed quest: the time left in front (the game's tracker that shows it is hidden)
+  local clock = Clock(e)
+  if clock then sub = sub and (clock .. "  " .. sub) or clock end
   row:SetText(sub and (title .. "\n" .. sub) or title, e.complete and { 0.62, 0.92, 0.62 } or (B.textPrimary or "textPrimary"))
   if e.questID == focusID then row:SetActive(true) end
   row:SetOnClick(function(_, button)
@@ -673,6 +746,22 @@ local function NeedleRow(row, e)
   end
 end
 
+-- (Questdon review 5) the map's available quests are worked out again only when the log, the level or the zone changed,
+-- or after AVAIL_SECS (they were worked out every second: 2 ms and 44 KB a tick, more with much learned data); the
+-- distances every second
+local AVAIL_SECS = 10
+local availMap, availAt, availList, availGen, availSeen = nil, nil, nil, 0, -1
+for _, e in ipairs({ "QUEST_LOG_UPDATE", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA" }) do
+  ns.On(e, function() availGen = availGen + 1 end)
+end
+local function AvailableHere(mapID)
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if availMap ~= mapID or availSeen ~= availGen or not availAt or now - availAt > AVAIL_SECS or now < availAt then
+    availMap, availAt, availSeen = mapID, now, availGen
+    availList = ns.AvailableQuestsOnMap(mapID) or {}
+  end
+  return availList
+end
 local function NewNearby()
   local mapID = ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
   if not (mapID and ns.AvailableQuestsOnMap and ns.PlayerWorld) then return 0 end
@@ -680,7 +769,7 @@ local function NewNearby()
   if not pc then return 0 end
   local n, best = 0, nil
   local target = { mapID = mapID }
-  for _, a in ipairs(ns.AvailableQuestsOnMap(mapID) or {}) do
+  for _, a in ipairs(AvailableHere(mapID)) do
     if not a.dimmed and a.x and a.y then
       target.x, target.y = a.x, a.y
       local d = ns.DistanceFrom(pc, pn, pw, target)
@@ -722,7 +811,9 @@ local function ExtrasSig()
     local po = ns.PartyOverview()
     g = #po.shared .. "/" .. #po.takeable
   end
-  return table.concat({ tostring(n), tostring(max), #orphans, first and first.itemID or "", tostring(destroyID), g }, ":")
+  -- (Questdon review 5) the fight's state too: the destroy row built in combat is a plain row, rebuilt after it
+  local fight = InCombatLockdown and InCombatLockdown() and "c" or ""
+  return table.concat({ tostring(n), tostring(max), #orphans, first and first.itemID or "", tostring(destroyID), g, fight }, ":")
 end
 local function Extras()
   local hint = B.textHint or "textHint"
@@ -737,7 +828,7 @@ local function Extras()
     local confirm = first and destroyID == first.itemID and destroyUntil and GetTime() < destroyUntil
     local row = Style.Row(panel)
     if first and not (InCombatLockdown and InCombatLockdown()) then
-      row:SetText(confirm and L["Click again: destroy %s"]:format(ItemName(first)) or (L["Destroy unneeded quest item"] .. ": " .. ItemName(first)),
+      row:SetText(confirm and L["Click again: destroy %s"]:format(ItemName(first)) or (L["Destroy unneeded quest item"] .. L[": "] .. ItemName(first)),
         confirm and "critical" or "accent")
       row:SetOnClick(ns.Guard and ns.Guard("tracker", DestroyClick) or DestroyClick)
     else
@@ -863,13 +954,26 @@ local function Build()
   if not panel then return end
   local list = Entries()
   local focusID = FocusID(list)
+  -- (Questdon review 3) the list's pick for the item and target buttons when the game tracks nothing (a turned in
+  -- quest leaves the super track at 0 and the card picks the nearest)
+  if focusID ~= ns.trackerFocus then
+    ns.trackerFocus = focusID
+    local st = C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
+    if not (st and st > 0) then ns.QueueRefresh("itembutton", "targetbutton") end -- only then do they use it
+  end
+  soonest = nil
+  local least
+  for _, e in ipairs(list) do
+    local left = not e.failed and not e.complete and ns.QuestTimeLeft(e.questID)
+    if left and (not least or left < least) then soonest, least = e, left end
+  end
   local focus
   for _, e in ipairs(list) do if e.questID == focusID then focus = e end end
   -- rebuild only when something we show changed (distances in steps of 10 yards)
   local sig = { Mode(), tostring(ns.db.trackerSortLevel), tostring(focusID), tostring(ns.GuideActive()),
     tostring(ns.db.trackerLines), tostring(panel._width), tostring(ns.db.trackerGreyOpen), tostring(ns.db.trackerHideGrey), tostring(ns.db.trackerHiddenOpen), tostring(ns.db.xpBar), ExtrasSig() }
   for _, e in ipairs(list) do
-    sig[#sig + 1] = e.questID .. (e.complete and "c" or "") .. (e.failed and "f" or "") .. (e.grey and "g" or "") .. (Hidden()[e.questID] and "h" or "") .. (e.dist and math.floor(e.dist / 10) or "-")
+    sig[#sig + 1] = e.questID .. (e.complete and "c" or "") .. (e.failed and "f" or "") .. (e.grey and "g" or "") .. (Hidden()[e.questID] and "h" or "") .. (e.dist and math.floor(e.dist / 10) or "-") .. (not e.failed and ns.QuestTimeLeft(e.questID) or "")
     for _, o in ipairs(e.objs) do sig[#sig + 1] = (o.have or "") .. (o.done and "d" or "") end
   end
   local n, best = NewNearby()
@@ -893,6 +997,7 @@ local function Build()
   -- (1.3.6) with a guide's compass (Leveldon) the guide shows the way: no card of our own, all quests listed
   if not ns.GuideActive() then
     local h = FillCard(focus, width)
+    card:Show()
     local holder = Style.Content(panel, card, h)
     if holder and holder.SetKeepWhenCollapsed then holder:SetKeepWhenCollapsed(true) end
   else
@@ -981,16 +1086,21 @@ local function Build()
         Style.Header(panel, zone or L["Other"])
       end
       local row = Style.Row(panel)
-      row:SetText((ns.QuestLevelTag(e.questID) or "") .. (e.title or ""), e.complete and { 0.62, 0.92, 0.62 } or (B.textPrimary or "textPrimary"))
+      row:SetText((ns.QuestLevelTag(e.questID) or "") .. (e.title or "") .. ns.GroupTag(e.questID), e.complete and { 0.62, 0.92, 0.62 } or (B.textPrimary or "textPrimary"))
       row:SetOnClick(function(_, button)
         if button == "RightButton" then ShowQuestMenu(e) return end
         if IsShiftKeyDown and IsShiftKeyDown() then ns.ShowQuestText(e.questID) return end
         Pick(e.questID)
       end)
-      if e.complete then
+      -- (Questdon review 2) a failed quest and a timed quest's time left in these tabs too
+      local clock = Clock(e)
+      if e.failed then
+        Style.Row(panel):SetText(L["Failed"], "critical"):SetIndent(12)
+      elseif e.complete then
         local who = TurnInName(e.questID)
         Style.Row(panel):SetText(who and L["Turn in: %s"]:format(who) or L["Ready to turn in"], "good"):SetIndent(12)
       else
+        if clock then Style.Row(panel):SetText(clock):SetIndent(12) end
         for _, o in ipairs(e.objs) do
           Style.Row(panel):SetText(o.text, o.done and "good" or (B.textSecondary or "textSecondary")):SetIndent(12)
         end
@@ -1039,14 +1149,13 @@ local function Dock()
     panel:ClearAllPoints()
     panel:SetPoint("TOPLEFT", g, "BOTTOMLEFT", 0, -3)
     if not docked then docked = true panel:SetLocked(true, true) end
-    if grip then grip:Hide() end
   elseif docked then
     docked = false
     panel:ApplySettings()
     panel:SetPanelWidth(TrackerWidth())
     lastSig = nil
   end
-  if grip and not docked then grip:Show() end
+  if grip then grip:Show() end
 end
 ns.TrackerDock = Dock
 function ns.ResetTrackerPosition() if panel then panel:ResetPosition() Dock() end end
@@ -1054,7 +1163,7 @@ function ns.TrackerDocked() return docked end -- (tests)
 
 function ns.UpdateTracker(force)
   if not panel then return end
-  if force then lastSig = nil end
+  if force then lastSig = nil availGen = availGen + 1 end -- (review 5) a forced update works the quests out again
   if DB().tracker == false then
     if panel:IsShown() then panel:FadeOut() end
     ApplyBlizzTracker()
@@ -1062,6 +1171,8 @@ function ns.UpdateTracker(force)
     return
   end
   Dock()
+  -- (Questdon review 1) closed with its X: not built every second (all objective points of all quests)
+  if not panel:IsShown() and DB().trackerShown == false then ApplyBlizzTracker() return end
   Build()
   if not panel:IsShown() and DB().trackerShown ~= false then
     panel:FadeIn()
@@ -1070,14 +1181,45 @@ function ns.UpdateTracker(force)
   ApplyBlizzTracker()
 end
 
+-- (Questdon review 4) the arrow window stands in for the list's compass while the list is off or closed, and goes
+-- again when the list comes back if Questdon switched it on (two arrows before); an arrow you switched on stays
+-- (Questdon review 5) the list shows the way only with its compass on: the compass switched off counts like the list
+-- closed (before, the list's sync took the arrow away while the compass was off: no direction at all)
+local function SyncArrowData(db)
+  local listShowsWay = db.tracker ~= false and db.trackerShown ~= false and db.trackerCompass ~= false
+  if not listShowsWay then
+    if not db.arrow then db.arrow, db.arrowAuto = true, true end
+  elseif db.arrowAuto then
+    db.arrow, db.arrowAuto = false, nil
+  end
+end
+ns.SyncArrowData = SyncArrowData
+function ns.SyncArrowWithList()
+  local db = DB()
+  SyncArrowData(db)
+  if ns.ApplyArrow then ns.ApplyArrow() end
+  if ns.RefreshSettingsUI then pcall(ns.RefreshSettingsUI) end
+end
+
 function ns.ToggleTracker()
   local db = DB()
+  -- (Questdon review 3) closed with its X ("/qd list brings it back"): back on, not switched off
+  if db.tracker ~= false and db.trackerShown == false then
+    db.trackerShown = true
+    ns.SyncArrowWithList()
+    ns.UpdateTracker(true)
+    ns.Print(L["Quest list on."])
+    return
+  end
   db.tracker = db.tracker == false
   if db.tracker then db.trackerShown = true end
+  -- (Questdon review 4) without the list its compass is gone: the arrow comes back, and goes with the list's return
+  ns.SyncArrowWithList()
   ns.UpdateTracker(true)
   ns.Print(db.tracker and L["Quest list on."] or L["Quest list off: Blizzard's quest tracker is back."])
 end
 function ns.TrackerFrame() return panel end
+function ns.TrackerCard() return card end -- (tests)
 
 -- (1.3.6) Shift + mouse wheel over the title bar: the background's opacity, down to nothing
 local function WheelAlpha(_, delta)
@@ -1097,8 +1239,9 @@ end
 
 -- (Daniel 12.10.: "only Questdon open, no way to make the window bigger or smaller") The handle at the
 -- bottom right, as in Leveldon: right and left the width (240 to 600), down and up how many quests the
--- list shows (all when dragged past the last). Ctrl + mouse wheel: text size. Docked under Leveldon the
--- handle is gone (the width is Leveldon's then).
+-- list shows (all when dragged past the last). Ctrl + mouse wheel: text size. (1.3.8, Daniel 15.10.: "the list
+-- movable in height too, the width given by the docked Leveldon") Docked under Leveldon the handle sets only how
+-- many quests show; the width is Leveldon's.
 local function Cursor()
   local x, y = GetCursorPosition()
   local sc = ns.Num(ns.Value(panel.GetEffectiveScale, panel)) or 1
@@ -1106,7 +1249,7 @@ local function Cursor()
 end
 local function ApplySize(w, lines, total)
   w = math.max(MIN_W, math.min(MAX_W, math.floor((tonumber(w) or 300) + 0.5)))
-  ns.db.trackerWidth = w
+  if docked then w = panel._width or w else ns.db.trackerWidth = w end
   if lines then
     lines = math.max(1, math.min(MAX_LINES, math.floor(lines)))
     if total and lines >= total then lines = nil end -- past the last: all of them
@@ -1131,15 +1274,15 @@ function ns.TrackerAttachGrip()
   if grip.EnableMouseWheel then grip:EnableMouseWheel(true) end
   grip:SetScript("OnMouseWheel", WheelAlpha)
   grip:SetScript("OnEnter", function(self)
-    Style.Tooltip(self, L["Window size"], { L["Drag: width (right, left) and how many quests (down, up)."],
+    Style.Tooltip(self, L["Window size"], { docked and L["Drag down and up: how many quests. The width follows Leveldon."]
+      or L["Drag: width (right, left) and how many quests (down, up)."],
       L["Ctrl + mouse wheel: text size."], L["Shift + mouse wheel: background opacity."] })
   end)
   grip:SetScript("OnLeave", function(self) if Style.HideTooltip then Style.HideTooltip(self) end end)
   grip:SetScript("OnMouseDown", function(self)
-    if docked then return end
-    -- the top left corner stays where it is while the size changes
+    -- the top left corner stays where it is while the size changes (docked: it hangs under Leveldon anyway)
     local l, t = panel:GetLeft(), panel:GetTop()
-    if l and t then
+    if l and t and not docked then
       panel:ClearAllPoints()
       panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l, t)
       ns.db.trackerPos = { "TOPLEFT", "BOTTOMLEFT", math.floor(l + 0.5), math.floor(t + 0.5) }
@@ -1153,7 +1296,7 @@ function ns.TrackerAttachGrip()
       local cx, cy = Cursor()
       local w = math.floor(d.w + (cx - d.x) + 0.5)
       local lines = d.lines + math.floor((d.y - cy) / ROW + 0.5)
-      w = math.max(MIN_W, math.min(MAX_W, w))
+      w = docked and (panel._width or w) or math.max(MIN_W, math.min(MAX_W, w))
       local cur = tonumber(ns.db.trackerLines) or d.total
       local want = (lines >= d.total) and d.total or math.max(1, lines)
       if w ~= panel._width or want ~= cur then ApplySize(w, lines, d.total) end
@@ -1163,7 +1306,6 @@ function ns.TrackerAttachGrip()
     self:SetScript("OnUpdate", nil)
     self._drag = nil
   end)
-  if docked then grip:Hide() end
   return grip
 end
 
@@ -1192,6 +1334,7 @@ local function Create()
     end,
     onClose = function(p)
       ns.db.trackerShown = false
+      ns.SyncArrowWithList() -- (review 4) closed with its X: the arrow shows the way meanwhile
       p:FadeOut()
       ns.After(0.3, function() ApplyBlizzTracker() if ns.ApplyArrowLook then ns.ApplyArrowLook() end end)
     end,

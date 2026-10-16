@@ -5,6 +5,79 @@ local POOR = (Enum and Enum.ItemQuality and Enum.ItemQuality.Poor) or 0
 local LAST_BAG = NUM_BAG_SLOTS or 4 -- backpack + 4 bags, reagent bag excluded
 
 ---------------------------------------------------------------------------
+-- (1.3.8) Another addon already does it: Questdon steps back
+---------------------------------------------------------------------------
+-- Two addons selling the same junk or looting the same window get in each
+-- other's way. Leatrix Plus keeps its switches in LeaPlusDB ("On"), ElvUI in
+-- its profile (general.vendorGrays, general.autoRepair); single-purpose addons
+-- count as soon as they are loaded. Said once per addon in the chat.
+local OTHERS = {
+  sellJunk = {
+    lea = "AutoSellJunk",
+    -- older ElvUI: general.vendorGrays; newer: bags.vendorGrays.enable (review 6, both looked at)
+    elv = function(g, db)
+      if g.vendorGrays == true then return true end
+      local b = type(db.bags) == "table" and db.bags.vendorGrays
+      return type(b) == "table" and b.enable == true
+    end,
+    addons = { "Scrap", "Vendor", "Peddler", "AutoVendor", "Dejunk", "SellJunk" },
+  },
+  autoRepair = {
+    lea = "AutoRepairGear",
+    elv = function(g) return type(g.autoRepair) == "string" and g.autoRepair ~= "NONE" end,
+    addons = { "AutoRepair" },
+  },
+  fastLoot = {
+    lea = "FasterLooting",
+    addons = { "SpeedyAutoLoot", "FasterLoot", "AutoLootPlus" },
+  },
+}
+local OPTION_NAME = { sellJunk = "Sell junk", autoRepair = "Auto repair", fastLoot = "Fast loot" }
+
+local function ElvGeneral()
+  if not ns.AddOnLoaded("ElvUI") then return end
+  local elv = rawget(_G, "ElvUI")
+  local E = type(elv) == "table" and elv[1]
+  local db = type(E) == "table" and E.db
+  local g = type(db) == "table" and db.general
+  return type(g) == "table" and g or nil, db
+end
+
+-- Name of the addon that already does this comfort feature, or nil.
+function ns.ComfortTakenBy(key)
+  local o = OTHERS[key]
+  if not o then return end
+  local lea = rawget(_G, "LeaPlusDB")
+  if type(lea) == "table" and lea[o.lea] == "On" and ns.AddOnLoaded("Leatrix_Plus") then
+    return "Leatrix Plus"
+  end
+  if o.elv then
+    local g, db = ElvGeneral()
+    if g then
+      local ok, yes = pcall(o.elv, g, db)
+      if ok and yes then return "ElvUI" end
+    end
+  end
+  for _, name in ipairs(o.addons) do
+    if ns.AddOnLoaded(name) then return name end
+  end
+end
+
+-- true if Questdon does this feature itself (switched on and nobody else does it).
+local function Mine(key)
+  if not ns.db[key] then return false end
+  local other = ns.ComfortTakenBy(key)
+  if not other then return true end
+  ns.db.comfortLeft = type(ns.db.comfortLeft) == "table" and ns.db.comfortLeft or {}
+  if ns.db.comfortLeft[key] ~= other then
+    ns.db.comfortLeft[key] = other
+    ns.Print(L["%s does this already: Questdon leaves \"%s\" to it."]:format(other, L[OPTION_NAME[key]]))
+  end
+  return false
+end
+ns.ComfortMine = Mine -- (tests)
+
+---------------------------------------------------------------------------
 -- Repair
 ---------------------------------------------------------------------------
 -- quiet: say nothing if the gold is short (junk is still being sold, see below).
@@ -13,6 +86,7 @@ local function Repair(quiet)
   if not ns.db.autoRepair or not CanMerchantRepair() then return end
   local cost, needed = GetRepairAllCost()
   if not needed or cost <= 0 then return end
+  if not Mine("autoRepair") then return end
 
   local guildAllowed = ns.db.useGuildRepair and IsInGuild()
     and CanGuildBankRepair and CanGuildBankRepair()
@@ -104,15 +178,24 @@ local function SellJunk(list, after)
   end, #list + 1)
 end
 
+local retryRepair = false
+ns.On("PLAYER_MONEY", function()
+  if retryRepair and MerchantFrame and MerchantFrame:IsShown() and not Repair(true) then retryRepair = false end
+end)
 ns.On("MERCHANT_SHOW", function()
   if ns.IsPaused() then return end
   local junk = ns.db.sellJunk and CollectJunk() or {}
+  local otherSells = #junk > 0 and not Mine("sellJunk")
+  if otherSells then junk = {} end
   -- Gold short for the repair? Sell the junk first, then try again.
-  local short = Repair(#junk > 0)
+  local short = Repair(#junk > 0 or otherSells)
   SellJunk(junk, short and function() Repair() end or nil)
+  -- (review 6) another addon sells the junk: the repair again as its money comes in
+  retryRepair = (short and otherSells) and true or false
 end)
 
 ns.On("MERCHANT_CLOSED", function()
+  retryRepair = false
   if ticker then ticker:Cancel() ticker = nil end
 end)
 
@@ -156,6 +239,7 @@ ns.On("LOOT_READY", function()
   if not ns.db.fastLoot then return end
   -- Same rule as Blizzard auto loot: CVar xor the auto loot modifier key.
   if GetCVarBool("autoLootDefault") == IsModifiedClick("AUTOLOOTTOGGLE") then return end
+  if not Mine("fastLoot") then return end
   lootStats.windows = lootStats.windows + 1
   local n = ns.Num(ns.Value(GetNumLootItems)) or 0
   for i = 1, n do

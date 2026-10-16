@@ -364,3 +364,70 @@ function ns.DumpMapSizes()
   ns.db.taxiNodes = nodes
   return n, k
 end
+
+---------------------------------------------------------------------------
+-- (16.10., stutter report; Daniel: "how much does Questie use?") /qd mem: the memory of Questdon and the other
+-- quest addons, sampled once a second for 30 seconds: what each holds now and how much new memory it made per
+-- second (the growth between two samples; a drop is the game's garbage collection). Out of combat only: the
+-- game's memory count walks all memory.
+---------------------------------------------------------------------------
+local MEM_ADDONS = { "Questdon", "Questie", "Leveldon", "Geardon", "Leatrix_Plus", "ElvUI" }
+local memRun
+function ns.MemoryCheck(seconds)
+  seconds = math.max(5, math.min(120, tonumber(seconds) or 30))
+  if memRun then return end
+  if type(UpdateAddOnMemoryUsage) ~= "function" or type(GetAddOnMemoryUsage) ~= "function" then
+    ns.Print(L["The game does not tell the memory of addons here."]) return
+  end
+  local list = {}
+  for _, name in ipairs(MEM_ADDONS) do if ns.AddOnLoaded(name) then list[#list + 1] = { name = name, grown = 0 } end end
+  memRun = { left = seconds, seconds = seconds }
+  ns.Print(L["Measuring the memory of the quest addons for %d seconds (stay out of fights)..."]:format(seconds))
+  local function Sample()
+    if InCombatLockdown() then return end
+    pcall(UpdateAddOnMemoryUsage)
+    for _, e in ipairs(list) do
+      local ok, kb = pcall(GetAddOnMemoryUsage, e.name)
+      kb = ok and ns.Num(kb) or nil
+      if kb then
+        if e.last and kb > e.last then e.grown = e.grown + (kb - e.last) end
+        e.last, e.first = kb, e.first or kb
+      end
+    end
+  end
+  -- (16.10. evening) the garbage collector pauses while it measures (at most 2 minutes): with it running, a part's
+  -- "before and after" also counts what the collector freed meanwhile, and the numbers say little
+  memRun.gcStopped = pcall(collectgarbage, "stop")
+  Sample()
+  if ns.MemProfile then ns.MemProfile(true) end
+  ns.NewTicker(1, function(t)
+    Sample()
+    memRun.left = memRun.left - 1
+    if memRun.left > 0 then return end
+    t:Cancel()
+    local prof = ns.MemProfile and ns.MemProfile(false)
+    if memRun.gcStopped then pcall(collectgarbage, "restart") end
+    for _, e in ipairs(list) do
+      if e.last then
+        ns.Print(L["%s: %.1f MB, about %d KB new memory a second"]:format(e.name, e.last / 1024, math.floor(e.grown / memRun.seconds + 0.5)))
+      end
+    end
+    -- (16.10. evening) where Questdon's new memory comes from: the biggest parts (events with the file of the
+    -- listener, timers, refreshes, frames), so a measurement in the game tells what to make lighter
+    if prof then
+      local top = {}
+      for k, v in pairs(prof.top) do top[#top + 1] = { k, v } end
+      for k, v in pairs(prof.inner) do top[#top + 1] = { k .. " (inner)", v } end
+      table.sort(top, function(a, b) return a[2] > b[2] end)
+      local shown = 0
+      for _, e in ipairs(top) do
+        local kbs = e[2] / memRun.seconds
+        if shown >= 12 or kbs < 1 then break end
+        if shown == 0 then ns.Print(L["Questdon's new memory by part:"]) end
+        shown = shown + 1
+        ns.Print(L["  %s: %d KB a second"]:format(e[1], math.floor(kbs + 0.5)))
+      end
+    end
+    memRun = nil
+  end, seconds)
+end

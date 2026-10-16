@@ -36,11 +36,11 @@ local function TurnIns(mapID)
   for _, info in ipairs(ns.QuestLogEntries()) do
     local questID = info.questID
     if ns.IsQuestComplete(questID) and not (ns.IsAutoComplete and ns.IsAutoComplete(questID))
-        and not (ns.db.pinsOnlyUnknown and ns.QuestieKnows(questID) == true)
+        and not (ns.db.pinsOnlyUnknown and ns.QuestieOn() and ns.QuestieKnows(questID) == true and ns.QuestieDrawsMarks("turnin")) -- (review 1) only while Questie draws
         and not GameShowsTurnIn(questID) then
-      local m, x, y, npc, source = ns.KnownTurnIn(questID)
+      local m, x, y, npc, source, npcID = ns.KnownTurnIn(questID)
       if m == mapID and x and y then
-        list[#list + 1] = { kind = "turnin", questID = questID, x = x, y = y, npc = npc, source = source }
+        list[#list + 1] = { kind = "turnin", questID = questID, x = x, y = y, npc = npc, source = source, npcID = npcID }
       end
     end
   end
@@ -122,7 +122,11 @@ end
 local giverCache = setmetatable({}, { __mode = "k" })
 local function GiverIDs(p)
   local ids = giverCache[p]
-  if ids == nil then
+  if ids == nil and p.kind == "turnin" then
+    -- (16.10.) a turn-in stands at its turn-in NPC, not at the quest's giver
+    ids = p.npcID and { p.npcID } or false
+    giverCache[p] = ids
+  elseif ids == nil then
     local e = ns.db.learned and ns.db.learned[p.questID]
     local npc = e and e.start and not e.start.item and ns.Num(e.start.npcID)
     ids = npc and { npc } or ns.QuestGiverIDs(p.questID) or false
@@ -153,9 +157,20 @@ function ns.GroupQuestPins(pins, cluster)
   dupStats.lastMerged = 0
   for _, p in ipairs(pins or {}) do
     local head
-    if p.kind == "available" and p.x and p.y then
+    -- (16.10., Daniel's Undead start: no "?" for Vital Intelligence in Brill) a turn-in at an NPC who also offers
+    -- quests joins their marker: drawn apart, the "!" lay on top of the "?" (same spot, same frame level)
+    -- (only at the same NPC: a turn-in next to another giver stays its own "?")
+    local joins = (p.kind == "available" or p.kind == "turnin") and p.x and p.y
+    if joins then
       for _, h in ipairs(heads) do
-        local same, byGiver = SameSpot(h.pin, p, cluster)
+        local same, byGiver
+        if p.kind == "turnin" or h.pin.kind == "turnin" then
+          for _, m in ipairs(h.members) do
+            if math.abs(m.x - p.x) < GIVER_DIST and math.abs(m.y - p.y) < GIVER_DIST and SameGiver(m, p) then same = true break end
+          end
+        else
+          same, byGiver = SameSpot(h.pin, p, cluster)
+        end
         if same then
           head = h
           if byGiver then dupStats.merged = dupStats.merged + 1 dupStats.lastMerged = dupStats.lastMerged + 1 end
@@ -165,17 +180,24 @@ function ns.GroupQuestPins(pins, cluster)
     end
     if head then
       head.members[#head.members + 1] = p
-    else
-      local entry = { pin = p, members = { p }, x = p.x, y = p.y }
-      if p.kind == "available" then heads[#heads + 1] = entry end
+    elseif joins then
+      local entry = { pin = p, members = { p }, x = p.x, y = p.y, isEntry = true }
+      heads[#heads + 1] = entry
       out[#out + 1] = entry
+    else
+      out[#out + 1] = p -- (16.10., stutter report) dots as they are: two new tables each before
     end
   end
   for i, e in ipairs(out) do
-    if #e.members == 1 then
+    if not e.isEntry then
+      -- a pin passed through (also an objective bundle, which has members of its own)
+    elseif #e.members == 1 then
       out[i] = e.pin
     else
       table.sort(e.members, function(a, b)
+        -- (16.10.) the turn-ins first: the marker shows the "?" of what is ready to hand in
+        local ta, tb = a.kind == "turnin", b.kind == "turnin"
+        if ta ~= tb then return ta end
         local la, lb = MinLevel(a.questID), MinLevel(b.questID)
         if la ~= lb then return la < lb end
         return a.questID < b.questID
@@ -384,15 +406,20 @@ end
 local function Details() return ns.True(ns.Value(IsShiftKeyDown)) end
 ns.TooltipDetails = Details
 function ns.QuestPinHint(pin)
-  local hint = (pin and pin.kind ~= "turnin" and ns.ReportPin) and L["Click: arrow, Alt-click: hide"] or L["Click: arrow"]
-  if pin and pin.kind ~= "turnin" and not Details() then hint = hint .. ", " .. L["Shift: details"] end
+  -- (review 7) a giver's marker with a turn-in in it (kind "turnin") still has quests to report
+  local offers = pin and pin.kind ~= "turnin"
+  if pin and not offers and pin.group then
+    for _, m in ipairs(pin.group) do if m.kind ~= "turnin" then offers = true break end end
+  end
+  local hint = (offers and ns.ReportPin) and L["Click: arrow, Alt-click: hide"] or L["Click: arrow"]
+  if offers and not Details() then hint = hint .. ", " .. L["Shift: details"] end
   return hint
 end
 
 -- (1.3.4) Pressing or releasing Shift over a marker redraws its tooltip (details).
 local hover = { owner = nil, fn = nil }
 function ns.SetHoverTooltip(owner, fn) hover.owner, hover.fn = owner, owner and fn or nil end
-ns.On("MODIFIER_STATE_CHANGED", function(key)
+ns.On("MODIFIER_STATE_CHANGED", function(_, key) -- (Questdon review 1) the event name comes first
   if not (hover.owner and hover.fn) then return end
   if type(key) == "string" and not key:find("SHIFT", 1, true) then return end
   local tt = GameTooltip
@@ -502,7 +529,9 @@ function ns.QuestGroupTooltip(pin)
     -- (1.3.4) "[6] Title" like the single tooltip; a status only when there is one
     local title = ns.LevelTitle(p.questID)
     if ns.QuestFlags(p.questID):find("b", 1, true) then title = title .. " (" .. L["Breadcrumb quest"] .. ")" end
-    if p.upcoming then
+    if p.kind == "turnin" then
+      lines[#lines + 1] = { title, L["Turn in here"], "good" } -- (16.10.) a turn-in in the giver's marker
+    elseif p.upcoming then
       lines[#lines + 1] = { title, L["from level %d"]:format(p.upcoming), "textHint" }
     elseif p.notOffered then
       lines[#lines + 1] = { title, L["not offered (level %d)"]:format(p.notOffered), "textHint" } -- (1.24)
@@ -735,8 +764,9 @@ function ns.ThinWorldObjectives(pins, bucket, dotSize)
           if not mp.small then small = false end
         end
         local p = objs[i]
-        out[#out + 1] = { kind = "objective", questID = best, index = p.index, x = B.mx[i], y = B.my[i] * CANVAS_ASPECT,
-          members = m, scale = ns.BundleScale(#m), dimmed = dimmed or nil, small = small or nil, text = p.text, creature = p.creature }
+        -- (16.10. evening) the text is read when the tooltip shows (QuestData.lua, OBJECTIVE_PIN_META)
+        out[#out + 1] = setmetatable({ kind = "objective", questID = best, index = p.index, x = B.mx[i], y = B.my[i] * CANVAS_ASPECT,
+          members = m, scale = ns.BundleScale(#m), dimmed = dimmed or nil, small = small or nil, creature = p.creature }, ns.OBJECTIVE_PIN_META)
       else
         out[#out + 1] = objs[i]
       end
@@ -754,6 +784,9 @@ local clusterBucket = 1 -- (1.28) zoom step the pins were last built for
 local objBucket, objThinned = 1, false -- (1.3.5) zoom step of the objective thinning; true: another zoom can change the dots
 local stats = { builds = 0, skipped = 0 }
 local function PinKey(p)
+  -- (16.10. evening, /qd mem) a quest mob's dot is the same table while nothing on it changed (QuestData.lua):
+  -- its key is made once
+  if p.kind == "objective" and p._key then return p._key end
   local extra = ""
   if p.kind == "entrance" or p.kind == "dungeon" then
     extra = tostring(p.name) .. tostring(p.inst)
@@ -765,16 +798,33 @@ local function PinKey(p)
     end
   end
   -- (1.23) one string per pin (was a table of 13 strings)
-  return ("%s:%s:%s:%.4f:%.4f:%s:%s:%s:%s:%s:%s:%s:%s"):format(tostring(p.kind), tostring(p.questID), tostring(p.index or ""),
+  local key = ("%s:%s:%s:%.4f:%.4f:%s:%s:%s:%s:%s:%s:%s:%s"):format(tostring(p.kind), tostring(p.questID), tostring(p.index or ""),
     tonumber(p.x) or 0, tonumber(p.y) or 0, (p.dimmed and "d" or "") .. (p.small and "s" or ""), p.learned and "l" or "",
     tostring(p.upcoming or "") .. "/" .. tostring(p.notOffered or "") .. (p.confirmed and "c" or "") .. (p.gameShown and "g" or ""), -- (1.24, 1.25)
-    tostring(p.npc or ""), tostring(p.text or "") .. tostring(p.statusText or "") .. tostring(p.iconKind or ""), tostring(p.needsItem or ""), tostring(p.creature or ""), extra)
+    tostring(p.npc or ""), tostring(p.kind ~= "objective" and p.text or "") .. tostring(p.statusText or "") .. tostring(p.iconKind or ""), tostring(p.needsItem or ""), tostring(p.creature or ""), extra)
+  if p.kind == "objective" then p._key = key end
+  return key
 end
+-- (16.10. evening, /qd mem) The signature was all keys sorted and joined: a string of up to 30 KB for every
+-- build of the map and the minimap. Now each distinct key gets two random numbers once, and the signature is the
+-- count and two sums of them (the order of the pins does not matter, as before with the sorted keys).
+local keyA, keyB, keyCount = {}, {}, 0
+local SIG_M = 2147483647
 local function Signature(mapID, pins)
-  local keys = {}
-  for i, p in ipairs(pins) do keys[i] = PinKey(p) end
-  table.sort(keys)
-  return tostring(mapID) .. "|" .. tostring(ns.db.objectivePinSize or 12) .. "|" .. table.concat(keys, ";")
+  local s1, s2 = 0, 0
+  for _, p in ipairs(pins) do
+    local k = PinKey(p)
+    local a = keyA[k]
+    if not a then
+      if keyCount >= 20000 then keyA, keyB, keyCount = {}, {}, 0 end
+      a = math.random(1, 67108864)
+      keyA[k], keyB[k] = a, math.random(1, 67108864)
+      keyCount = keyCount + 1
+    end
+    s1 = (s1 + a) % SIG_M
+    s2 = (s2 + (a * keyB[k]) % SIG_M) % SIG_M
+  end
+  return ("%s|%s|%d|%d|%d"):format(tostring(mapID), tostring(ns.db.objectivePinSize or 12), #pins, s1, s2)
 end
 -- (1.23) The world map and the minimap of the same zone compare the same pin
 -- list (ns.PinsForMap, once per scope) in the batched refresh: the signature
@@ -884,7 +934,7 @@ function Setup()
     end
     if button == "LeftButton" and self.qdPin then
       local label = self.qdPin.group and ns.QuestGroupTitle(self.qdPin) or ns.QuestTitle(self.qdPin.questID)
-      ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.qdPin.x, self.qdPin.y, label)
+      ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.qdPin.x, self.qdPin.y, label, nil, self.qdPin)
     end
   end
   -- (1.3.5, Daniel 10.10.: "right-click on a dungeon entrance zooms out of the map") The map canvas lets
@@ -915,6 +965,8 @@ function Setup()
   function QuestPin:OnMouseLeave() ns.PinCardHide(self) ns.SetHoverTooltip(nil) end
 
   -- Objective spawns: small coloured dots.
+  local SQUARE, DOT, QUARTER = "Interface\\Buttons\\WHITE8X8", "Interface\\COMMON\\Indicator-Yellow", math.pi / 4
+  local function Turn(tex, angle) if tex and tex.SetRotation then pcall(tex.SetRotation, tex, angle) end end
   QuestdonObjectivePinMixin = CreateFromMixins(MapCanvasPinMixin)
   local ObjPin = QuestdonObjectivePinMixin
   function ObjPin:OnLoad()
@@ -926,24 +978,83 @@ function Setup()
     local size = ns.db.objectivePinSize or 12
     if pin.small then size = math.max(6, math.floor(size * 0.7 + 0.5)) end -- (1.2) many spawns: smaller dots
     if pin.scale then size = math.min(math.floor(size * pin.scale + 0.5), math.floor(size * 1.3)) end -- (1.3.5) a bundle, at most 1.3 times
+    -- (1.3.8, F2) objects to click: a diamond with a dark edge, mobs keep the round dot; (F9) the place of use of a
+    -- quest item: the item's icon in a frame of the quest's colour
+    local item = ns.PinUseItem(pin)
+    local icon = item and C_Item and ns.Value(C_Item.GetItemIconByID, item) or nil
+    local shape = icon and "item" or ns.IsObjectPin(pin) and "diamond" or nil
+    if shape == "item" then size = math.floor(size * 1.35 + 0.5)
+    elseif shape == "diamond" then size = math.max(5, math.floor(size * 0.75 + 0.5)) end
     self:SetSize(size, size)
     self:SetPosition(pin.x, pin.y)
-    if self.Dot then self.Dot:SetVertexColor(QuestColor(pin.questID)) end
+    local dot = self.Dot
+    if dot and dot.SetTexture and (shape or self.shape) then
+      dot:SetTexture(icon or (shape == "diamond" and SQUARE) or DOT)
+      Turn(dot, shape == "diamond" and QUARTER or 0)
+      if dot.SetTexCoord then
+        local a, b = icon and 0.08 or 0, icon and 0.92 or 1
+        dot:SetTexCoord(a, b, a, b)
+      end
+    end
+    if shape and not self.Edge and self.CreateTexture then
+      local e = self:CreateTexture(nil, "ARTWORK")
+      e:SetPoint("CENTER", self, "CENTER", 0, 0)
+      e:SetTexture(SQUARE)
+      self.Edge = e
+    end
+    if self.Edge then
+      if shape then
+        Turn(self.Edge, shape == "diamond" and QUARTER or 0)
+        local pad = shape == "item" and 4 or 3
+        self.Edge:SetSize(size + pad, size + pad)
+        if shape == "item" then self.Edge:SetVertexColor(QuestColor(pin.questID)) else self.Edge:SetVertexColor(0, 0, 0, 0.85) end
+        self.Edge:Show()
+      else
+        self.Edge:Hide()
+      end
+    end
+    self.shape = shape
+    if dot then
+      if icon then dot:SetVertexColor(1, 1, 1) else dot:SetVertexColor(QuestColor(pin.questID)) end
+    end
     -- place of use of an item not yet in the bags: dimmed
     if self.SetAlpha then self:SetAlpha(pin.dimmed and 0.35 or 1) end
   end
+  -- (1.3.8, F8) while the mouse is on a quest's dot the other quests' dots step back
+  local function HoverWorldDots(self, on)
+    local map = self.GetMap and self:GetMap()
+    if not (map and map.EnumeratePinsByTemplate) then return end
+    local set
+    if on and self.pin then
+      set = {}
+      for _, m in ipairs(self.pin.members or { self.pin }) do if m.questID then set[m.questID] = true end end
+    end
+    local ok, iter, state, start = pcall(map.EnumeratePinsByTemplate, map, OBJECTIVE_TEMPLATE)
+    if not ok or type(iter) ~= "function" then return end
+    for p in iter, state, start do
+      if type(p) == "table" and p.pin and p.SetAlpha then
+        local base = p.pin.dimmed and 0.35 or 1
+        local mine = not set
+        for _, m in ipairs(set and (p.pin.members or { p.pin }) or {}) do if set[m.questID] then mine = true break end end
+        p:SetAlpha(mine and base or base * 0.3)
+      end
+    end
+  end
+  ns.HoverWorldDots = HoverWorldDots -- (tests)
   ObjPin.OnMouseEnter = ns.Guard("map tooltip", function(self)
     if not self.pin then return end
+    HoverWorldDots(self, true)
     local title, lines, hint
     if self.pin.members then title, lines, hint = ns.ObjectiveBundleTooltip(self.pin.members) -- (1.3.5) a bundle
     else title, lines, hint = ns.ObjectivePinTooltip(self.pin) end
     local first = self.pin.members and self.pin.members[1] or self.pin
     ns.PinCard(self, title, lines, hint, ns.PinCardKind(nil, first.questID))
   end)
-  function ObjPin:OnMouseLeave() ns.PinCardHide(self) end
+  function ObjPin:OnMouseLeave() ns.PinCardHide(self) HoverWorldDots(self, false) end
   function ObjPin:OnMouseClickAction(button)
     if button == "LeftButton" and self.pin then
-      ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.pin.x, self.pin.y, ns.QuestTitle(self.pin.questID))
+      ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.pin.x, self.pin.y, ns.QuestTitle(self.pin.questID), "objective",
+        self.pin.members and self.pin.members[1] or self.pin)
     end
   end
   ObjPin.OnClick = ns.Guard("map click", function(self, button) self:OnMouseClickAction(button) end)
@@ -1024,13 +1135,20 @@ end
 
 -- (1.2) A click on a pin points the arrow there and switches the arrow on if
 -- it was off (before, the click set the target of a hidden arrow).
-function ns.PointArrowFromPin(mapID, x, y, label, kind)
+-- (Questdon review 4) pin: the clicked pin, so the target knows its quest and goes once the quest no longer needs it
+function ns.PointArrowFromPin(mapID, x, y, label, kind, pin)
   if not (mapID and x and y and ns.SetArrowTarget) then return end
-  if not ns.db.arrow then
-    ns.db.arrow = true
-    if ns.ApplyArrow then ns.ApplyArrow() end
-  end
-  ns.SetArrowTarget(mapID, x, y, label, kind)
+  ns.EnsureArrow()
+  local questID = type(pin) == "table" and not pin.group and ns.Num(pin.questID) or nil
+  local spot = type(pin) == "table" and not pin.group and (pin.creature ~= nil or pin.index ~= nil) and pin or nil
+  ns.SetArrowTarget(mapID, x, y, label, kind or (type(pin) == "table" and pin.kind) or nil, questID, spot)
+end
+-- (Questdon review 3) the arrow window switched on only when nothing shows the way yet (the quest list's compass or a
+-- guide): a pin click, /qd next, a zone list entry or a dungeon mark switched it on for good, two arrows from then on
+function ns.EnsureArrow()
+  if ns.db.arrow or (ns.ArrowRuns and ns.ArrowRuns()) then return end
+  ns.db.arrow = true
+  if ns.ApplyArrow then ns.ApplyArrow() end
 end
 
 function ns.RefreshPins()
@@ -1098,6 +1216,11 @@ ns.On("PLAYER_REGEN_DISABLED", function()
   provider:RefreshAllData()
 end)
 ns.On("QUEST_LOG_UPDATE", Queue)
+-- (Questdon review 5) "Only for tracked quests": another quest tracked changes which dots show (the minimap kept the
+-- old quest's dots until a quest or bag event)
+for _, e in ipairs({ "SUPER_TRACKING_CHANGED", "QUEST_WATCH_LIST_CHANGED" }) do
+  ns.On(e, function() if ns.db and ns.db.objectivePinsTrackedOnly then ns.RefreshPins() end end)
+end
 ns.On("QUEST_DATA_LOAD_RESULT", Queue)
 ns.On("QUESTLINE_UPDATE", Queue)
 ns.On("PLAYER_LEVEL_UP", Queue) -- (1.23) new level: other quests available (minimap and nameplates did this already)

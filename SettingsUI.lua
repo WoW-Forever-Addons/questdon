@@ -48,6 +48,22 @@ local function VarType(kind, default)
   return types.Boolean or "boolean"
 end
 
+-- (Questdon review 3) the settings objects, so ns.RefreshSettingsUI can show values the addon changed itself (the
+-- list's compass switches the arrow window, "Show the quest list" too): it was called but never defined
+local settingsByKey, refreshing = {}, false
+function ns.RefreshSettingsUI()
+  refreshing = true
+  for key, setting in pairs(settingsByKey) do
+    local v = ns.db[key]
+    if setting.GetValue and setting.SetValue then
+      local ok, cur = pcall(setting.GetValue, setting)
+      if ok and cur ~= v then pcall(setting.SetValue, setting, v) end
+    end
+  end
+  refreshing = false
+end
+ns.SettingsObjects = function() return settingsByKey end -- (tests)
+
 local function AddItem(category, item)
   -- (1.19) tool button inside a page (e.g. "Reset position")
   if item.kind == "button" then
@@ -67,6 +83,7 @@ local function AddItem(category, item)
   local default = ns.defaults[item.key]
   local setting = Settings.RegisterAddOnSetting(category, Var(item.key), item.key, ns.db,
     VarType(kind, default), L[item.name], default)
+  if setting then settingsByKey[item.key] = setting end
 
   local init
   if kind == "slider" then
@@ -102,7 +119,10 @@ local function AddItem(category, item)
   Settings.RegisterInitializer(category, init)
 
   if item.onChange and Settings.SetOnValueChangedCallback then
-    Settings.SetOnValueChangedCallback(Var(item.key), ns.Guard("setting", function() item.onChange(ns.db[item.key]) end))
+    Settings.SetOnValueChangedCallback(Var(item.key), ns.Guard("setting", function()
+      if refreshing then return end -- (review 3) a value shown again, not changed by the player
+      item.onChange(ns.db[item.key])
+    end))
   end
 end
 

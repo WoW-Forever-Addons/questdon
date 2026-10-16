@@ -200,10 +200,9 @@ end
 local function Money(copper)
   copper = ns.Num(copper)
   if not copper or copper <= 0 then return nil end
-  local g, s, c = math.floor(copper / 10000), math.floor(copper % 10000 / 100), copper % 100
-  if g > 0 then return ("%dg %ds"):format(g, s) end
-  if s > 0 then return ("%ds %dc"):format(s, c) end
-  return ("%dc"):format(c)
+  -- (Questdon review 1) the game's coins, not English g/s/c in every language; above a gold without the copper
+  if copper >= 10000 then copper = copper - copper % 100 end
+  return ns.Money(copper)
 end
 
 local function EntryTitle(e)
@@ -304,7 +303,7 @@ end
 ---------------------------------------------------------------------------
 local clientTitle = {} -- questID -> title the client already knows (no requests)
 
-local function Norm(s) return tostring(s or ""):lower() end
+local function Norm(s) return ns.FoldCase(s) end -- (review 5) "ärger" finds "Ärger", "кобольды" "Кобольды"
 
 local function Matches(q, ...)
   for i = 1, select("#", ...) do
@@ -358,7 +357,7 @@ function ns.JournalSearch(text)
         ok = Matches(q, ns.DataQuestName(id), KnownTitle(id), CachedMapName(m))
       end
       if ok and ns.QuestReachable(id) and not (ns.QuestKnownMissing and ns.QuestKnownMissing(id)) then
-        quests[#quests + 1] = { q = id, level = ns.QuestLevel(id) or 0, title = KnownTitle(id) or ns.DataQuestName(id) or ("Quest " .. id), m = m }
+        quests[#quests + 1] = { q = id, level = ns.QuestLevel(id) or 0, title = KnownTitle(id) or ns.DataQuestName(id) or L["Quest %d"]:format(id), m = m }
       end
     end
   end

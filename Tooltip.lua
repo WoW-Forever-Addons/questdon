@@ -82,7 +82,7 @@ function ns.CreatureIDFromGUID(guid)
 end
 
 local function QuestieShowsTooltip(questID)
-  if not (ns.db.questieFirst and ns.AddOnLoaded("Questie")) then return false end
+  if not (ns.db.questieFirst and ns.QuestieOn()) then return false end -- (review 2) Questie switched off draws nothing
   local p = type(Questie) == "table" and type(Questie.db) == "table" and Questie.db.profile
   if type(p) ~= "table" or p.enableTooltips == false then return false end
   return ns.QuestieKnows(questID) == true
@@ -95,7 +95,8 @@ function ns.TooltipLinesForCreature(creatureID)
   for _, entry in ipairs(byCreature[creatureID] or {}) do
     local questID, index = ns.ObjectiveEntry(entry)
     local own = false
-    if ns.InQuestLog(questID) and not ns.IsQuestComplete(questID) and not QuestieShowsTooltip(questID) then
+    -- (Questdon review 4) not for a failed quest (the timer ran out): its mobs no longer count
+    if ns.InQuestLog(questID) and not ns.IsQuestComplete(questID) and not ns.IsQuestFailed(questID) and not QuestieShowsTooltip(questID) then
       local o = ns.ClientObjectives(questID)[index]
       if not (type(o) == "table" and ns.True(o.finished)) then
         local text = type(o) == "table" and type(o.text) == "string" and ns.Usable(o.text) and o.text or ""
@@ -221,6 +222,20 @@ end)
 ---------------------------------------------------------------------------
 -- Rewards of a quest in the log (XP, money, items, choices)
 ---------------------------------------------------------------------------
+-- (1.3.8, F11) With Geardon: rewards that are an upgrade for you get a green mark (only Geardon's sure answer; its
+-- yellow "check it" arrow does not count). nil without Geardon or while the item is not known yet.
+function ns.GeardonUpgrade(item)
+  local api = rawget(_G, "GeardonAPI")
+  if type(api) ~= "table" or type(api.IsUpgrade) ~= "function" or item == nil then return nil end
+  local ok, up, uncertain = pcall(api.IsUpgrade, item)
+  if not ok or up == nil then return nil end
+  return up == true and not uncertain
+end
+local function Marked(name, itemID)
+  if itemID and ns.GeardonUpgrade(itemID) then return name .. " |cff1eff00(" .. L["upgrade"] .. ")|r" end
+  return name
+end
+
 function ns.QuestRewardLines(questID)
   local lines = {}
   if not ns.InQuestLog(questID) then return lines end
@@ -233,9 +248,10 @@ function ns.QuestRewardLines(questID)
   local items = {}
   if GetQuestLogRewardInfo then
     for i = 1, math.min(ns.Num(ns.Value(GetNumQuestLogRewards, questID)) or 0, 10) do
-      local ok, name, _, count = pcall(GetQuestLogRewardInfo, i, questID)
+      local ok, name, _, count, _, _, itemID = pcall(GetQuestLogRewardInfo, i, questID)
       if ok and type(name) == "string" and ns.Usable(name) then
         count = ns.Num(count)
+        name = Marked(name, ns.Num(itemID))
         items[#items + 1] = (count and count > 1) and ("%dx %s"):format(count, name) or name
       end
     end
@@ -244,8 +260,8 @@ function ns.QuestRewardLines(questID)
   local choices = {}
   if GetQuestLogChoiceInfo then
     for i = 1, math.min(ns.Num(ns.Value(GetNumQuestLogChoices, questID, true)) or 0, 10) do
-      local ok, name = pcall(GetQuestLogChoiceInfo, i, questID)
-      if ok and type(name) == "string" and ns.Usable(name) then choices[#choices + 1] = name end
+      local ok, name, _, _, _, _, itemID = pcall(GetQuestLogChoiceInfo, i, questID)
+      if ok and type(name) == "string" and ns.Usable(name) then choices[#choices + 1] = Marked(name, ns.Num(itemID)) end
     end
   end
   if #choices > 0 then lines[#lines + 1] = L["Choice: %s"]:format(table.concat(choices, " / ")) end

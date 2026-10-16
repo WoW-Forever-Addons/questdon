@@ -203,7 +203,10 @@ function API.ArrowState()
   local st = ns.ArrowState and ns.ArrowState() or {}
   return { angle = st.angle, needle = st.needle, nearness = st.nearness, seal = st.seal, label = st.label,
     distText = st.distText, distColor = st.distColor, dist = st.dist, hasTarget = st.t ~= nil,
-    bearing = st.bearing }
+    bearing = st.bearing,
+    -- (Questdon review 5) the distance and the way apart ("240 yards" / "the way around"), as Questdon's card has
+    -- them; nil when the text is not "N yards, ..." (in the objective area, arrived, other zone)
+    distShort = st.distShort, distWay = st.distWay }
 end
 function API.SetGuideCompass(on)
   ns.guideCompass = on and true or nil

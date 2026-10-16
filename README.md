@@ -1,4 +1,4 @@
-# Questdon 1.3.7 (WoW Forever)
+# Questdon 1.3.8 (WoW Forever)
 
 Quest- und Komforthilfe für World of Warcraft: Forever (Client "Camelot", Interface 16001).
 Questdon bringt eine eigene Questdatenbank mit (umgewandelt aus All The Things) und ergänzt Questie (Kartenmarkierungen), ersetzt es nicht. Questie wird nicht gebraucht.
@@ -14,6 +14,7 @@ Esc > "AddOns" ist nur die Liste zum Ein- und Ausschalten der Addons.
 - Quests automatisch annehmen (inkl. Eskort-Bestätigung). "Graue Quests ignorieren" gilt auch, wenn ein NPC eine graue Quest direkt öffnet. Eine unbekannte Stufe zählt nie als grau. Bei vollem Questlog wird nichts angenommen und das gemeldet.
 - Abgeschlossene Quests automatisch abgeben, nie bei Goldkosten oder mehreren Belohnungen zur Wahl. Ist etwas unlesbar (gesperrte Werte unter den Midnight-Regeln), entscheidest du.
 - Die Belohnung mit dem höchsten Händlerpreis bekommt eine Goldmünze und wird im Chat genannt, optional wird sie automatisch gewählt (nur mit automatischer Abgabe, ignoriert mögliche Ausrüstungsverbesserungen).
+- **Vorschlag für deine Klasse:** Ein grüner Rahmen zeigt die Belohnung, die Spieler deiner Klasse am häufigsten wählen. Solange dafür noch zu wenige gewählt haben, zeigt er die Belohnung mit passender Rüstung und passenden Werten für deine Klasse, wenn sie besser ist als das, was du trägst. Was du selbst wählst, merkt sich Questdon und teilt es anonym mit anderen (nur Quest, Klasse und Gegenstand).
 - Nach einer Abgabe nennt der Chat die nächste Quest der Kette und ihre Zone.
 - **Shift gedrückt halten pausiert alle Automatiken** (z. B. um eine Quest erst zu lesen).
 - Fertig-Signal: Ton und Bildschirmmeldung, wenn ein Questziel oder eine Quest fertig ist. Fehlgeschlagene Quests (z. B. Eskorte gestorben) melden sich in der Bildschirmmitte, ihre Punkte verschwinden von der Karte und der Pfeil zeigt zurück zum Questgeber.

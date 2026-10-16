@@ -13,7 +13,8 @@ local L = ns.L
 --
 --   message  "D2:<seq>:<account token>:<line>;<line>;..."  (at most MAX_MSG
 --            characters; "D1:<seq>:..." from Questdon before 1.1 is still read)
---   lines    S G I T O F K D A X N E W as in Export.lua, only numbers (E: 1.3.6 dungeon entrances, W: 1.3.6 walked cells)
+--   lines    S G I T O F K D A X N E W R as in Export.lua, only numbers (E: 1.3.6 dungeon entrances, W: 1.3.6 walked
+--            cells, R: 1.3.8 reward picks)
 --
 -- Sending: option shareLearned (on), to the guild and the own group (not to
 -- the group when all members are in the guild: the guild message reaches
@@ -228,6 +229,13 @@ local PARSE = {
     if not (Int(m, 1e5) and Int(b, 100) and mask and #mask == 25) then return nil end
     return ("W %s %s"):format(m, b), { v = mask:lower() }
   end,
+  -- (1.3.8) the reward a player of a class (and talent tree) picked by hand (Rewards.lua): one fact per
+  -- quest, class, tree and item, so the reporters of a fact are the players who picked that item
+  R = function(l)
+    local q, c, t, item = l:match("^R (%d+) (%d+) ([0-3]) (%d+)$")
+    if not (Int(q, 1e6) and Int(c, 20) and tonumber(c) >= 1 and Int(item, 1e7)) then return nil end
+    return ("R %s %s %s %s"):format(q, c, t, item), { v = "1" }
+  end,
   -- (1.1) the quest giver never offers this quest (NotHere.lua)
   N = function(l)
     local q, npc = l:match("^N (%d+) (%d+) [ma]$")
@@ -280,6 +288,15 @@ local function Prune()
   sharedCount = nil
 end
 
+-- (Questdon review 4) places (objective spots, turn-ins, starts) have their own version: a reward pick or a
+-- level fact from the open channel rebuilt every quest's points and re-scanned all shared facts
+local placeVersion = 0
+local function Changed(key)
+  version = version + 1
+  if type(key) == "string" and key:match("^[OTS] ") then placeVersion = placeVersion + 1 end
+end
+function ns.SharedPlacesVersion() return placeVersion end
+
 local function Store(key, value, count, reporter, open)
   local shared = DB().shared
   local e = shared[key]
@@ -299,11 +316,11 @@ local function Store(key, value, count, reporter, open)
         v.r[reporter] = open and "o" or true
         v.n = v.n + 1
         if open then v.o = (ns.Num(v.o) or 0) + 1 end
-        version = version + 1
+        Changed(key)
       elseif had == "o" and not open then
         v.r[reporter] = true -- the same player through guild or group
         v.o = math.max((ns.Num(v.o) or 1) - 1, 0)
-        version = version + 1
+        Changed(key)
       end
       return
     end
@@ -312,7 +329,7 @@ local function Store(key, value, count, reporter, open)
     value.r, value.n = { [reporter] = open and "o" or true }, 1
     if open then value.o = 1 end
     e.v[#e.v + 1] = value
-    version = version + 1
+    Changed(key)
   end
 end
 
@@ -698,8 +715,8 @@ end
 -- Objective spots others reported (confirmed): { [index] = { map, x, y, ... } (0-1) }
 local spotCache, spotVersion = nil, -1
 function ns.SharedSpots(questID)
-  if spotVersion ~= version or not spotCache then
-    spotCache, spotVersion = {}, version
+  if spotVersion ~= placeVersion or not spotCache then
+    spotCache, spotVersion = {}, placeVersion
     for key, e in pairs(ns.db and ns.db.shared or {}) do
       local q, i
       if type(key) == "string" then q, i = key:match("^O (%d+) (%d+) ") end
@@ -779,6 +796,21 @@ end
 
 function ns.SharedVersion() return version end
 
+-- (1.3.8) players of a class who picked each reward of a quest (all talent trees): { [itemID] = players }
+function ns.SharedRewardPicks(questID, class)
+  local out = {}
+  local pre = ("R %d %d "):format(tonumber(questID) or 0, tonumber(class) or 0)
+  for key, e in pairs(ns.db and ns.db.shared or {}) do
+    if type(key) == "string" and key:sub(1, #pre) == pre and type(e) == "table" and type(e.v) == "table" then
+      local item = tonumber(key:match(" (%d+)$"))
+      local n = 0
+      for _, v in ipairs(e.v) do n = n + (ns.Num(v.n) or 0) end
+      if item then out[item] = (out[item] or 0) + n end
+    end
+  end
+  return out
+end
+
 ---------------------------------------------------------------------------
 -- Diagnostics, reset
 ---------------------------------------------------------------------------
@@ -799,7 +831,7 @@ end
 function ns.ResetShared()
   local db = DB()
   wipe(db.shared)
-  sharedCount, version = 0, version + 1
+  sharedCount, version, placeVersion = 0, version + 1, placeVersion + 1
 end
 
 ---------------------------------------------------------------------------

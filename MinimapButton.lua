@@ -70,12 +70,12 @@ local function RefreshPins() if ns.RefreshPins then ns.RefreshPins() end end
 local SWITCHES = {
   { label = "Quest markers on the map", keys = { "availablePins" }, apply = RefreshPins },
   { label = "Quest mobs on the map", keys = { "objectivePins" }, apply = RefreshPins },
-  { label = "Direction arrow", keys = { "arrow" }, apply = function() if ns.ApplyArrow then ns.ApplyArrow() end end },
+  { label = "Direction arrow", keys = { "arrow" }, apply = function() ns.db.arrowAuto = nil if ns.ApplyArrow then ns.ApplyArrow() end end }, -- (review 4) your choice
   { label = "Auto accept and turn in", keys = { "autoAccept", "autoTurnIn" } },
   { label = "XP bar", keys = { "xpBar" }, apply = function() if ns.UpdateXPBar then ns.UpdateXPBar() end end },
   -- (1.3.8) the quest list instead of the old window; without the list its compass is gone, the arrow comes back
   { label = "Quest list", keys = { "tracker", "trackerShown" }, apply = function()
-      if ns.db.tracker == false then ns.db.arrow = true if ns.ApplyArrow then ns.ApplyArrow() end end
+      if ns.SyncArrowWithList then ns.SyncArrowWithList() end -- (review 4) and gone again with the list
       if ns.UpdateTracker then ns.UpdateTracker(true) end
       if ns.ApplyArrowLook then ns.ApplyArrowLook() end
     end },

@@ -184,6 +184,7 @@ end
 ---------------------------------------------------------------------------
 -- Pin frames (our own buttons)
 ---------------------------------------------------------------------------
+local hoverQuests, HoverDots -- (1.3.8, F8) set further down
 local function PinTooltip(self)
   local pin = self.pin
   if not pin then return end
@@ -199,6 +200,7 @@ local function PinTooltip(self)
   if first then ns.PinCard(self, title, lines, hint, ns.PinCardKind(nil, first.questID))
   else ns.PinCard(self, title, lines, hint, ns.PinCardKind(pin.group and pin.group[1] or pin)) end
   if ns.SetHoverTooltip then ns.SetHoverTooltip(self, PinTooltip) end -- (1.3.4) Shift redraws it
+  if self.kind == "objective" then HoverDots(self) end
 end
 
 local function PinClick(self, button)
@@ -217,12 +219,12 @@ local function PinClick(self, button)
   end
   -- (1.1) Alt-click: "no quest here" (NotHere.lua)
   if button == "LeftButton" and pin and ns.True(ns.Value(IsAltKeyDown)) and ns.ReportPin then
-    if pin.kind ~= "turnin" and pin.kind ~= "objective" and pin.kind ~= "focus" then ns.ReportPin(pin) end
+    if (pin.kind ~= "turnin" or pin.group) and pin.kind ~= "objective" and pin.kind ~= "focus" then ns.ReportPin(pin) end
     return
   end
   if button ~= "LeftButton" or not pin or not curMap then return end
   local label = pin.group and ns.QuestGroupTitle(pin) or ns.QuestTitle(pin.questID)
-  ns.PointArrowFromPin(curMap, pin.x, pin.y, label) -- (1.2) also switches the arrow on
+  ns.PointArrowFromPin(curMap, pin.x, pin.y, label, nil, pin) -- (1.2) also switches the arrow on
 end
 
 local function SetQuestIcon(tex, kind)
@@ -243,14 +245,20 @@ local function NewPin()
   -- (1.3) dark ring behind the objective dots: a green dot on green ground stays visible
   b.ring = b:CreateTexture(nil, "ARTWORK")
   b.ring:SetPoint("CENTER", b, "CENTER", 0, 0)
-  if b.ring:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask") == false then
-    b.ring:SetTexture("Interface\\COMMON\\Indicator-Gray")
+  b.ringTex = "Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
+  if b.ring:SetTexture(b.ringTex) == false then
+    b.ringTex = "Interface\\COMMON\\Indicator-Gray"
+    b.ring:SetTexture(b.ringTex)
   end
   b.ring:SetVertexColor(0, 0, 0, 0.85)
   b.ring:Hide()
   b:RegisterForClicks("LeftButtonUp", "RightButtonUp") -- (1.3.5) right-click removes an entrance mark
   b:SetScript("OnEnter", ns.Guard("minimap tooltip", PinTooltip))
-  b:SetScript("OnLeave", function(self) ns.PinCardHide(self) if ns.SetHoverTooltip then ns.SetHoverTooltip(nil) end end)
+  b:SetScript("OnLeave", function(self)
+    ns.PinCardHide(self)
+    if ns.SetHoverTooltip then ns.SetHoverTooltip(nil) end
+    if hoverQuests then HoverDots(nil) end
+  end)
   b:SetScript("OnClick", ns.Guard("minimap click", PinClick))
   return b
 end
@@ -269,9 +277,24 @@ local function Give(e)
   free[#free + 1] = b
 end
 
+-- (1.3.8, F2) objects to click: a diamond in the quest colour with a dark edge, mobs keep the round dot
+local SQUARE, QUARTER = "Interface\\Buttons\\WHITE8X8", math.pi / 4
+local function Turn(tex, angle) if tex and tex.SetRotation then pcall(tex.SetRotation, tex, angle) end end
+local function Unturn(b)
+  if not b.shape then return end
+  b.shape = nil
+  Turn(b.icon, 0) Turn(b.ring, 0)
+  if b.icon.SetTexCoord then b.icon:SetTexCoord(0, 1, 0, 1) end
+  if b.ringTex then b.ring:SetTexture(b.ringTex) end
+  b.ring:SetVertexColor(0, 0, 0, 0.85)
+end
+
 local function Look(b, pin, scale)
   b.pin = pin
   stats.dressed = stats.dressed + 1
+  Unturn(b)
+  -- (review 6) a reused button: the texture coordinates an atlas or an item icon set before go
+  if b.icon.SetTexCoord then b.icon:SetTexCoord(0, 1, 0, 1) end
   if pin.kind == "entrance" or pin.kind == "dungeon" then
     -- (1.3.5) the game's dungeon entrance icon; the mark a bit larger than a quest marker, the others smaller
     b.ring:Hide()
@@ -284,19 +307,73 @@ local function Look(b, pin, scale)
   elseif pin.kind == "objective" then
     local d = pin.small and math.max(5, math.floor(DOT_SIZE * 0.75 + 0.5)) or DOT_SIZE -- (1.2) many spawns: smaller dots
     d = math.min(math.floor(d * (scale or 1) + 0.5), math.floor(d * 1.3)) -- (1.3.5) a bundle: a little larger, never above 1.3 times
-    b:SetSize(d, d)
-    b.icon:SetTexture("Interface\\COMMON\\Indicator-Yellow")
-    b.icon:SetVertexColor(ns.QuestColor(pin.questID))
-    b.ring:SetSize(d + 4, d + 4)
+    -- (1.3.8, F9) the place of use of a quest item: the item's icon in a frame of the quest's colour
+    local whole = b.members and #b.members > 1 and { members = b.members } or pin -- a bundle: all its spots
+    local item = ns.PinUseItem(whole)
+    local icon = item and C_Item and ns.Value(C_Item.GetItemIconByID, item) or nil
+    if icon then
+      local s = math.floor(d * 1.5 + 0.5)
+      b:SetSize(s, s)
+      b.icon:SetTexture(icon)
+      if b.icon.SetTexCoord then b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+      b.ring:SetTexture(SQUARE)
+      b.ring:SetVertexColor(ns.QuestColor(pin.questID))
+      b.ring:SetSize(s + 3, s + 3)
+      b.shape = "item"
+    elseif ns.IsObjectPin(whole) then
+      local s = math.max(4, math.floor(d * 0.75 + 0.5)) -- turned by 45 degrees it is as wide as the dot
+      b:SetSize(s, s)
+      b.icon:SetTexture(SQUARE)
+      b.ring:SetTexture(SQUARE)
+      Turn(b.icon, QUARTER) Turn(b.ring, QUARTER)
+      b.shape = "diamond"
+      b.ring:SetSize(s + 3, s + 3)
+    else
+      b:SetSize(d, d)
+      b.icon:SetTexture("Interface\\COMMON\\Indicator-Yellow")
+      b.ring:SetSize(d + 4, d + 4)
+    end
+    if icon then b.icon:SetVertexColor(1, 1, 1) else b.icon:SetVertexColor(ns.QuestColor(pin.questID)) end
     b.ring:Show()
   else
     b.ring:Hide()
     b:SetSize(QUEST_SIZE, QUEST_SIZE)
     SetQuestIcon(b.icon, pin.iconKind or pin.kind) -- (1.2) the picked quest of the zone list
   end
-  b:SetAlpha(pin.dimmed and 0.35 or (pin.kind == "dungeon" and 0.8) or 1)
+  b.baseAlpha = pin.dimmed and 0.35 or (pin.kind == "dungeon" and 0.8) or 1
+  b.close = nil
+  b:SetAlpha(b.baseAlpha)
   b.kind = pin.kind
 end
+
+-- (1.3.8, F8) A dot you stand on fades (the mob or the object is right there and the dot hid it and the player
+-- arrow); while the mouse is on a quest's dot the other quests' dots step back.
+local CLOSE_YARDS = 12
+-- hoverQuests: { [questID] = true } of the dot under the mouse
+local function QuestsOf(b)
+  local set = {}
+  if b.members and #b.members > 0 then
+    for _, m in ipairs(b.members) do if m.questID then set[m.questID] = true end end
+  elseif b.pin and b.pin.questID then set[b.pin.questID] = true end
+  return set
+end
+local function Alpha(b)
+  local a = b.baseAlpha or 1
+  if b.kind == "objective" then
+    if b.close then a = a * 0.35 end
+    if hoverQuests and b.pin then
+      local mine = hoverQuests[b.pin.questID]
+      for _, m in ipairs(not mine and b.members or {}) do if hoverQuests[m.questID] then mine = true break end end
+      if not mine then a = a * 0.3 end
+    end
+  end
+  return a
+end
+function HoverDots(b)
+  hoverQuests = b and b.kind == "objective" and QuestsOf(b) or nil
+  for _, e in ipairs(entries) do if e.btn then e.btn:SetAlpha(Alpha(e.btn)) end end
+end
+ns.MinimapHoverDots = HoverDots -- (tests)
 
 -- Hide every pin. The next update draws them again even when the player did
 -- not move (1.22: before, pins hidden for a moment, e.g. while the facing or
@@ -314,6 +391,7 @@ end
 -- dots near the player.
 local function MinimapPins(mapID)
   local base = ns.PinsForMapBase(mapID)
+  local was = nearAt
   nearAt = nil
   if not ns.db.objectivePins then return base end
   local _, px, py = PlayerOnZone()
@@ -321,13 +399,20 @@ local function MinimapPins(mapID)
   if px then pc, pn, pw = ns.WorldPos(mapID, px, py) end
   local radius = ns.MinimapRadius()
   if not (pc and radius) then return base end
+  -- (16.10. evening, /qd mem) a quest log update while walking: the dots around the place they were made for,
+  -- as long as the player is still near it (Update makes them anew beyond REBUILD_MOVE). Before, every update
+  -- took a slightly other set of dots, so the signature never matched and all minimap pins were made anew.
+  if was and was.map == mapID and was.c == pc and radius <= was.r * 1.05 and radius >= was.r * 0.95
+      and (pn - was.n) ^ 2 + (pw - was.w) ^ 2 <= (REBUILD_MOVE * was.r) ^ 2 then
+    pn, pw, radius = was.n, was.w, was.r
+  end
   local pins = {}
   for i, p in ipairs(base) do pins[i] = p end
   for _, o in ipairs(ns.ObjectivePointsNear(mapID, pc, pn, pw, radius * NEAR_REACH)) do
     o.kind = "objective"
     pins[#pins + 1] = o
   end
-  nearAt = { c = pc, n = pn, w = pw, r = radius }
+  nearAt = { c = pc, n = pn, w = pw, r = radius, map = mapID }
   return pins
 end
 
@@ -491,11 +576,13 @@ local function Update()
       if not b then
         b = Take()
         e.btn = b
-        Look(b, e.pin, e.scale)
         b.members = e.members
+        Look(b, e.pin, e.scale)
       end
       b:ClearAllPoints()
       b:SetPoint("CENTER", container, "CENTER", x, y)
+      local close = b.kind == "objective" and e.dn and (e.dn - pn) ^ 2 + (e.dw - pw) ^ 2 < CLOSE_YARDS * CLOSE_YARDS or nil
+      if close ~= b.close then b.close = close b:SetAlpha(Alpha(b)) end
       b:Show()
     elseif e.btn then
       Give(e)

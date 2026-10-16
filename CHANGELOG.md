@@ -1,5 +1,27 @@
 # Changes
 
+## 1.3.8
+
+- **Smoother:** far less work in the background. The quest list no longer rebuilds all quest points every second, unchanged map and minimap dots are reused, the quest log is read again only when it changes, the player's position is read without making new tables, and in a fight Questdon updates at most once a second. This removes the small stutters some players had with 1.3.7. /qd mem measures how much memory the quest addons take and which part of Questdon makes new memory.
+- **Breadcrumb warning:** when a breadcrumb you have not done leads to a quest, Questdon says so and leaves that quest to you instead of accepting it, because taking it makes the breadcrumb and its XP disappear. Breadcrumbs also leave the map once their quest is taken.
+- **Objects and mobs apart:** objects to click (crates, plants, chests) are diamonds on the map and minimap, mobs stay round dots, and the arrow says "click the objects" when you are there. Where a quest item is used, the pin shows the item's icon.
+- **Easier to read maps:** mouse over a dot and the other quests' dots step back; a dot you stand on fades so you see the mob itself.
+- **The arrow leads to the mobs:** far away it leads to a group of spawns instead of a lone one that is a little nearer.
+- **Quest item button:** a small watch shows that the button changes once the fight is over, the button shows charges and dims while you are far from where the item is used.
+- **Other addons:** selling junk, repairing and fast loot are left to Leatrix Plus, ElvUI or a vendor or loot addon that already does them (Questdon says so once). With Geardon, rewards that are an upgrade for you are marked before you take the quest.
+- **Quest log headings:** quests under a heading you collapsed in the game's quest log stay in Questdon's list and on the map.
+- **Search:** the quest book search finds "ärger" in "Ärger" and Cyrillic words in any case.
+- **A reward for your class:** a green frame marks the reward players of your class pick most often. Until enough of them have picked, it marks the one with the right armor and stats for your class, if it beats what you wear. The gold coin for the highest vendor price stays. What you pick yourself is shared anonymously (quest, class and item only).
+- **Quest givers where they really stand:** where players take or hand in a quest somewhere else than the data says, Questdon now shows that place (for example Shhh! We're Hunting Kobolds in Northshire). Plus the newest places, follow-ups and objectives learned while playing.
+- **Quest list under Leveldon:** docked under Leveldon's window, the handle at the bottom right sets how many quests the list shows; the width stays Leveldon's. Plus new ways over the hills in Elwynn Forest for the arrow.
+- **Group quests marked:** elite and other group quests say (Group) behind their name in the quest list, in the colour of their level.
+- **Timed quests:** the quest list shows the time left of a timed quest.
+- **No gold paid by Questdon:** also when the game opens the reward window right away, a quest with a gold cost is left to you.
+- **Undead start:** the arrow leads straight to Marla's grave (Death Knell's valley and Solliden Farmstead were taken for mountains), the ? of a quest handed in at a quest giver is no longer hidden under that giver's !, Discipline shows the Deathguards to punish, Fields of Grief all pumpkin patches and Scavenging Deathknell the equipment boxes.
+- **Fixes:** the quest item button no longer gets stuck when you drag it into a fight, the turn-in ? stays when Questie is installed but switched off, a failed quest's item leaves the button, and a quest you accept in a fight is shared with your group afterwards.
+- **Quest data:** many prerequisites, quest givers, levels and race and class rules corrected (warlock quests for every warlock race, hint quests no longer required).
+- **Newest quest data:** ATT's latest Forever data with new quests in Teldrassil, Darkshore, the Barrens and Duskwood, and the Mulgore chains linked in the right order.
+
 ## 1.3.7
 
 - **The old Questdon window is gone:** the quest list does its job now. At its bottom: quests in the log (yellow when nearly full), quest items no quest needs any more (click twice to destroy the first one) and your group's quest progress. The quest book button sits in the list's title bar, /qd panel switches the quest list. Dungeon quests: the minimap button, the quest book or /qd dungeons.

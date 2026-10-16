@@ -8,6 +8,8 @@ _G["BINDING_NAME_CLICK QuestdonTargetButton:LeftButton"] = L["Target a quest mob
 local LAST_BAG = NUM_BAG_SLOTS or 4
 local button
 local pendingRefresh = false
+-- (Questdon review 1) a drag that ends in combat, a /qd reset in combat: done when the fight is over
+local pendingStop, pendingReset = false, false
 
 ---------------------------------------------------------------------------
 -- Find the item to show
@@ -16,22 +18,25 @@ local pendingRefresh = false
 local function FromQuestLog()
   if not (C_QuestLog and GetQuestLogSpecialItemInfo) then return end
   local tracked = C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
-  local first
-  for i = 1, ns.Num(ns.Value(C_QuestLog.GetNumQuestLogEntries)) or 0 do
-    local info = ns.Value(C_QuestLog.GetInfo, i)
-    local questID = type(info) == "table" and not ns.True(info.isHeader) and ns.Num(info.questID)
-    if questID then
+  -- (Questdon review 3) nothing tracked: the quest the quest list picked
+  if not (tracked and tracked > 0) then tracked = ns.Num(ns.trackerFocus) end
+  local first, firstQuest
+  -- (16.10.) the kept quest log list (not C_QuestLog.GetInfo each second), in the log's order
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local questID = ns.Num(info.questID)
+    local i = questID and ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, questID))
+    if i and i > 0 then
       -- (1.0) a finished quest (ready for turn-in) needs its item no more, whatever the game's
       -- "show when complete" flag says
       local ok, link = pcall(GetQuestLogSpecialItemInfo, i)
-      if ok and link and ns.Usable(link) and not ns.IsQuestComplete(questID) then
+      if ok and link and ns.Usable(link) and not ns.IsQuestComplete(questID) and not ns.IsQuestFailed(questID) then -- (review 1) failed: no use either
         local id = ns.GetItemID(link)
-        if id and questID == tracked then return id, first end
-        first = first or id
+        if id and questID == tracked then return id, first, questID, firstQuest end
+        if id and not first then first, firstQuest = id, questID end
       end
     end
   end
-  return nil, first
+  return nil, first, nil, firstQuest
 end
 
 -- (1.3.5, Daniel 09.10.) An item in the bags that starts a quest (a looted book, a letter): one
@@ -43,6 +48,7 @@ local declined = {} -- [questID] = true: offer closed without taking it (this se
 local offerShown    -- questID of the quest dialog that is open
 local function StarterAllowed(qid)
   if declined[qid] then return false end
+  if ns.QuestLogFull and ns.QuestLogFull() then return false end -- (review 1) the click would only say "log full"
   if ns.QuestInData and not ns.QuestInData(qid) then return true end
   return ns.CanTakeQuest(qid) and true or false
 end
@@ -71,7 +77,8 @@ local function FromBags()
         local info = C_Container.GetContainerItemInfo(bag, slot)
         if info and ns.Num(info.itemID) and C_Item and ns.Value(C_Item.GetItemSpell, info.itemID)
           and not (ns.ItemQuestsFinished and ns.ItemQuestsFinished(info.itemID)) then
-          return info.itemID
+          local qid = ns.Num(q.questID)
+          return info.itemID, qid and ns.InQuestLog(qid) and qid or nil
         end
       end
     end
@@ -81,14 +88,18 @@ end
 -- 1.15: the tracked quest's own item comes first, also an item from the bags
 -- that an open "use it at a place" objective of that quest needs.
 -- (1.3.5, Daniel 10.10.) then an item that starts a quest you can take, then the rest.
+-- (1.3.8, F4) also the quest the item is for (nil for a starter or when unknown).
 local function FindQuestItem()
-  local tracked, first = FromQuestLog()
-  if tracked then return tracked end
+  local tracked, first, trackedQuest, firstQuest = FromQuestLog()
+  if tracked then return tracked, trackedQuest end
   local use = ns.TrackedUseItem and ns.TrackedUseItem()
-  if use and C_Item and ns.Value(C_Item.GetItemSpell, use) then return use end
+  if use and C_Item and ns.Value(C_Item.GetItemSpell, use) then
+    return use, C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID)) or nil
+  end
   local starter = StarterItem()
-  if starter then return starter end
-  return first or FromBags()
+  if starter then return starter, nil end
+  if first then return first, firstQuest end
+  return FromBags()
 end
 ns.FindQuestItem = FindQuestItem -- (tests)
 
@@ -103,7 +114,8 @@ ns.On("QUEST_FINISHED", function()
   offerShown = nil
   if not id then return end
   ns.After(1, function()
-    if not ns.InQuestLog(id) and not ns.IsQuestDone(id) then
+    -- (Questdon review 3) not when the full log refused it: the starter comes back once a slot is free
+    if not ns.InQuestLog(id) and not ns.IsQuestDone(id) and not ns.QuestLogFull() then
       declined[id] = true
       ns.QueueRefresh("itembutton")
     end
@@ -158,6 +170,13 @@ local function CreateButton()
   button.count = button:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
   button.count:SetPoint("BOTTOMRIGHT", -2, 2)
 
+  -- (1.3.8, F4) a small watch: the button changes once the fight is over (a secure button cannot change in combat)
+  button.wait = button:CreateTexture(nil, "OVERLAY")
+  button.wait:SetSize(14, 14)
+  button.wait:SetPoint("TOPRIGHT", button, "TOPRIGHT", 3, 3)
+  button.wait:SetTexture("Interface\\Icons\\INV_Misc_PocketWatch_01")
+  button.wait:Hide()
+
   button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
   button.cooldown:SetAllPoints()
 
@@ -168,6 +187,7 @@ local function CreateButton()
     if IsShiftKeyDown() and not InCombatLockdown() then self:StartMoving() end
   end)
   button:SetScript("OnDragStop", function(self)
+    if InCombatLockdown() then pendingStop = true return end
     self:StopMovingOrSizing()
     SavePosition()
   end)
@@ -177,6 +197,8 @@ local function CreateButton()
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetItemByID(self.itemID)
     local h = ns.Style.COLORS.textHint
+    if self.waiting then GameTooltip:AddLine(L["The button changes once the fight is over."], h[1], h[2], h[3], true) end
+    if self.far then GameTooltip:AddLine(L["Far from where it is used."], h[1], h[2], h[3], true) end
     GameTooltip:AddLine(L["Click: use. Shift-drag to move."], h[1], h[2], h[3], true)
     GameTooltip:Show()
   end)
@@ -185,28 +207,77 @@ local function CreateButton()
   ApplyPosition()
 end
 
+-- (1.3.8, F4) Charges count too (an item with 5 uses shows 5), like the game's own buttons.
+local function ItemUses(itemID)
+  local n = ns.Num(ns.Value(C_Item.GetItemCount, itemID, false, true))
+  local stack = ns.Num(ns.Value(C_Item.GetItemCount, itemID))
+  if stack and (not n or stack > n) then n = stack end
+  return n
+end
+local function ShowCount(itemID)
+  local count = ItemUses(itemID)
+  button.count:SetText(count and count > 1 and count or "")
+end
+
+-- (1.3.8, F4) Far from where the item is used (the item's quest's nearest known spot): the icon is dimmed. Unknown
+-- places and other zones leave it as it is.
+local FAR_YARDS = 150
+local function UpdateLook()
+  if not (button and button.itemID and button:IsShown()) then return end
+  local far = false
+  if ns.db.itemButtonDim ~= false and button.questID and ns.QuestNearestPoint then
+    local _, dist = ns.QuestNearestPoint(button.questID)
+    far = type(dist) == "number" and dist > FAR_YARDS
+  end
+  if far ~= button.far then
+    button.far = far
+    if button.icon.SetDesaturated then button.icon:SetDesaturated(far) end
+    button.icon:SetAlpha(far and 0.55 or 1)
+  end
+end
+ns.UpdateItemButtonLook = UpdateLook -- (tests)
+
+local function SetWaiting(on)
+  on = on and true or false
+  if button.waiting == on then return end
+  button.waiting = on
+  if on then button.wait:Show() else button.wait:Hide() end
+end
+
 local function Refresh()
   if not button then return end
-  if InCombatLockdown() then pendingRefresh = true return end
+  if InCombatLockdown() then
+    pendingRefresh = true
+    -- textures and text may change in combat, the secure attributes not: mark a coming change, keep the count true
+    if button.itemID then
+      local want = ns.Active("questItemButton") and FindQuestItem() or nil
+      SetWaiting(want ~= button.itemID)
+      ShowCount(button.itemID)
+    end
+    return
+  end
   pendingRefresh = false
+  SetWaiting(false)
 
-  local itemID = ns.Active("questItemButton") and FindQuestItem() or nil
+  local itemID, questID = nil, nil
+  if ns.Active("questItemButton") then itemID, questID = FindQuestItem() end
   if not itemID then
-    button.itemID = nil
+    button.itemID, button.questID = nil, nil
     button:SetAttribute("type", nil)
     button:Hide()
     return
   end
 
-  button.itemID = itemID
+  button.itemID, button.questID = itemID, questID
   button:SetScale(ns.db.itemButtonScale or 1)
   button:SetAttribute("type", "item")
   button:SetAttribute("item", "item:" .. itemID)
   button.icon:SetTexture(C_Item.GetItemIconByID(itemID))
-  local count = ns.Num(ns.Value(C_Item.GetItemCount, itemID))
-  button.count:SetText(count and count > 1 and count or "")
+  ShowCount(itemID)
   UpdateCooldown()
   button:Show()
+  button.far = nil
+  UpdateLook()
   -- (1.3.5) the button shows a quest starter for the first time: the small notice above it
   if ns.db.starterNotice ~= false and ns.StarterNotice then
     local starter, questID = StarterItem()
@@ -456,16 +527,22 @@ ns.RefreshItemButton = QueueRefresh
 
 function ns.ResetButtonPosition()
   ns.db.buttonPos = nil
-  if button and not InCombatLockdown() then ApplyPosition() end
+  if button and not InCombatLockdown() then ApplyPosition() elseif button then pendingReset = true end
+  if ns.ResetTargetButtonPosition then ns.ResetTargetButtonPosition() end -- (review 1) the target button with it
   ns.Print(L["Button position reset."])
 end
 
-ns.OnInit(CreateButton)
+ns.OnInit(function()
+  CreateButton()
+  ns.NewTicker(1, UpdateLook)
+end)
 ns.On("PLAYER_ENTERING_WORLD", QueueRefresh)
 ns.On("QUEST_LOG_UPDATE", QueueRefresh)
 ns.On("BAG_UPDATE_DELAYED", QueueRefresh)
 ns.On("SUPER_TRACKING_CHANGED", QueueRefresh)
 ns.On("BAG_UPDATE_COOLDOWN", UpdateCooldown)
 ns.On("PLAYER_REGEN_ENABLED", function()
+  if pendingStop and button then pendingStop = false button:StopMovingOrSizing() SavePosition() end
+  if pendingReset and button then pendingReset = false ApplyPosition() end
   if pendingRefresh then Refresh() end
 end)

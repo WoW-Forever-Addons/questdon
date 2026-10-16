@@ -52,7 +52,7 @@ local function MapName(mapID)
   local info = mapID and ns.Value(C_Map.GetMapInfo, mapID)
   local name = type(info) == "table" and info.name
   if type(name) == "string" and ns.Usable(name) and name ~= "" then return name end
-  return mapID and ("Map " .. mapID) or "?"
+  return mapID and L["Map %d"]:format(mapID) or "?"
 end
 
 ---------------------------------------------------------------------------
@@ -177,8 +177,7 @@ local function Focus(e, openMap)
   if not m then ns.Print(L["No position known for %s."]:format(ns.QuestTitle(e.questID))) return end
   ns.zoneFocus = { questID = e.questID, mapID = m, x = x, y = y, group = e.group, text = e.text, what = what }
   if ns.SetArrowTarget then
-    ns.db.arrow = true
-    if ns.ApplyArrow then ns.ApplyArrow() end
+    ns.EnsureArrow() -- (review 3) not a second arrow next to the list's compass
     ns.SetArrowTarget(m, x, y, ns.QuestTitle(e.questID))
   end
   if openMap and not InCombatLockdown() and OpenWorldMap then pcall(OpenWorldMap, m) end

@@ -251,7 +251,9 @@ ns.On("QUEST_TURNED_IN", function(_, questID)
 end)
 function ns.IsAutoComplete(questID)
   if autoComplete[questID] then return true end
-  local index = ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, questID))
-  local info = index and ns.Value(C_QuestLog.GetInfo, index)
-  return type(info) == "table" and ns.True(info.isAutoComplete) or false
+  -- (16.10.) from the kept quest log list (C_QuestLog.GetInfo makes a new table each time)
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    if info.questID == questID then return ns.True(info.isAutoComplete) or false end
+  end
+  return false
 end

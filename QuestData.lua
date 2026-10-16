@@ -72,7 +72,11 @@ function ns.IsQuestDone(questID)
   return ns.Memo("done", questID, ReadDone)
 end
 
-local function ReadInLog(questID) return (ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, questID)) or 0) > 0 end
+local function ReadInLog(questID)
+  if (ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, questID)) or 0) > 0 then return true end
+  -- (Questdon review 5) under a heading collapsed in Blizzard's quest log the quest has no index
+  return C_QuestLog.IsOnQuest ~= nil and ns.True(ns.Value(C_QuestLog.IsOnQuest, questID))
+end
 function ns.InQuestLog(questID)
   return ns.Memo("inLog", questID, ReadInLog)
 end
@@ -120,7 +124,9 @@ local function Alternatives(questID)
     for _, id in ipairs(pre) do
       if IsBreadcrumb(id) then alt = alt or {} alt[id] = true end
     end
-    if not alt and #pre > 1 then
+    -- (1.3.8, ATT a9d61d2 marks Elanaria (1684) a breadcrumb) the sibling test runs also when some of them are
+    -- breadcrumbs, so the warrior quests of Elwynn and Dun Morogh stay alternatives too
+    if #pre > 1 then
       local maps, key, siblings = {}, nil, true
       for _, id in ipairs(pre) do
         local p = Q[id]
@@ -135,7 +141,7 @@ local function Alternatives(questID)
         maps[p[MAP]], key = true, k
       end
       if siblings then
-        alt = {}
+        alt = alt or {}
         for _, id in ipairs(pre) do alt[id] = true end
       end
     end
@@ -175,11 +181,35 @@ local function PrereqsDone(questID, q, player)
   return not anyAlt or altDone
 end
 
+-- (Questdon review 5) The quests a breadcrumb leads to: its follow-ups, and where the data took the breadcrumb out of
+-- the target's prerequisites (breadcrumbs the server does not require) the generator's list
+-- (ns.EXTRA_BREADCRUMB_FOR, also the CMaNGOS breadcrumbs ATT does not flag). Before, those breadcrumbs had no
+-- follow-up left: their "!" stayed once the target was taken.
+local function CrumbFor(questID)
+  local t = ns.EXTRA_BREADCRUMB_FOR and ns.EXTRA_BREADCRUMB_FOR[questID]
+  return type(t) == "table" and t or nil
+end
+local function IsCrumb(questID) return IsBreadcrumb(questID) or CrumbFor(questID) ~= nil end
+local crumbsOf -- [target] = { breadcrumbs } (reverse of the list above)
+local function CrumbsOf(questID)
+  if not crumbsOf then
+    crumbsOf = {}
+    for b, targets in pairs(ns.EXTRA_BREADCRUMB_FOR or {}) do
+      for _, t in ipairs(targets) do crumbsOf[t] = crumbsOf[t] or {} table.insert(crumbsOf[t], b) end
+    end
+  end
+  return crumbsOf[questID]
+end
+function ns.ForgetBreadcrumbIndex() crumbsOf = nil end -- (tests)
+
 -- A breadcrumb is pointless (and refused by the server) once the quest it
 -- leads to is in the log or done.
 local function BreadcrumbObsolete(questID)
-  if not IsBreadcrumb(questID) then return false end
+  if not IsCrumb(questID) then return false end
   for _, nextID in ipairs(FollowUps()[questID] or {}) do
+    if ns.IsQuestDone(nextID) or ns.InQuestLog(nextID) then return true end
+  end
+  for _, nextID in ipairs(CrumbFor(questID) or {}) do
     if ns.IsQuestDone(nextID) or ns.InQuestLog(nextID) then return true end
   end
   return false
@@ -266,6 +296,8 @@ local function SkillsChanged()
 end
 ns.On("SKILL_LINES_CHANGED", SkillsChanged)
 ns.On("LEARNED_SPELL_IN_TAB", SkillsChanged)
+-- (Questdon review 5) the event of this client (LEARNED_SPELL_IN_TAB does not exist in it)
+ns.On("LEARNED_SPELL_IN_SKILL_LINE", SkillsChanged)
 ns.On("PLAYER_ENTERING_WORLD", function() skillSig = SkillSignature() end)
 
 -- Can this character pick up the quest right now? (ATT data)
@@ -320,13 +352,13 @@ function ns.WhyQuest(questID)
   local player = Player()
   local function Line(ok, text) out[#out + 1] = (ok and "|cff7fd17fok|r  " or "|cffff6060no|r  ") .. text end
   if not q then Line(false, "not in the data") return out end
-  out[#out + 1] = ("%d %s, map %s %s/%s, level %s"):format(questID, tostring(q[NAME] or "?"), tostring(q[MAP]), tostring(q[X]), tostring(q[Y]), tostring(q[LEVEL]))
+  out[#out + 1] = ("%d %s, map %s %s/%s, level %s"):format(questID, tostring(q[NAME] or "?"), tostring(q[MAP]), tostring(q[X]), tostring(q[Y]), tostring(q[LEVEL] or "?"))
   Line(not ns.IsQuestDone(questID), "not done yet")
   Line(not ns.InQuestLog(questID), "not in the quest log")
   Line(not ns.QuestKnownMissing(questID), "the server knows it")
   Line(Reachable(questID, player), ("faction, race, class (you: %s %s %s)"):format(tostring(player.faction), tostring(player.race), tostring(player.class)))
   if q[SKILL] then Line(ns.KnowsSkill(q[SKILL]), "profession " .. tostring(q[SKILL]) .. " learned") end
-  Line(not (q[LEVEL] and player.level and q[LEVEL] > player.level), ("level %s, you %s"):format(tostring(q[LEVEL]), tostring(player.level)))
+  Line(not (q[LEVEL] and player.level and q[LEVEL] > player.level), ("level %s, you %s"):format(tostring(q[LEVEL] or "?"), tostring(player.level)))
   Line(PrereqsDone(questID, q, player), "quests before it done")
   local active = ns.EXTRA_ACTIVE and ns.EXTRA_ACTIVE[questID]
   if active then Line(ns.InQuestLog(active), "helper quest, needs " .. active .. " in the log") end
@@ -412,6 +444,27 @@ function ns.BreadcrumbObsolete(questID)
   return BreadcrumbObsolete(questID)
 end
 
+-- (1.3.8, F3) The breadcrumbs leading to this quest that you can still take (gone once you take the quest), or nil.
+-- None once one of them is done or in the log (you came the breadcrumb's way).
+function ns.OpenBreadcrumbs(questID)
+  questID = ns.Num(questID)
+  local q = questID and Q[questID]
+  if not q then return nil end
+  local candidates, seen = {}, {}
+  for _, id in ipairs(q[PREREQS] or {}) do
+    if IsBreadcrumb(id) and not seen[id] then seen[id] = true candidates[#candidates + 1] = id end
+  end
+  for _, id in ipairs(CrumbsOf(questID) or {}) do
+    if not seen[id] then seen[id] = true candidates[#candidates + 1] = id end
+  end
+  local list
+  for _, id in ipairs(candidates) do
+    if ns.IsQuestDone(id) or ns.InQuestLog(id) then return nil end
+    if ns.CanTakeQuest(id) then list = list or {} list[#list + 1] = id end
+  end
+  return list
+end
+
 -- Started by an item (a drop or a found object), not by an NPC you can walk to.
 -- (1.0) Quest of a holiday or world event (flag "e"): its quest givers are
 -- only there while the event runs, so the data alone cannot say it is available.
@@ -424,7 +477,10 @@ end
 -- are always available: hidden unless the player wants them (they stay in the zone list as "repeatable")
 function ns.IsRepeatableQuest(questID)
   local q = Q[questID]
-  return q and q[FLAGS] and q[FLAGS]:find("r", 1, true) ~= nil or false
+  if q and q[FLAGS] and q[FLAGS]:find("r", 1, true) then return true end
+  -- (Questdon review 4) the client said so in a quest dialog (Quests.lua)
+  local c = ns.db and ns.db.clientRepeatable
+  return type(c) == "table" and questID ~= nil and c[questID] == true or false
 end
 local function HiddenRepeatable(id) return ns.db.hideRepeatable ~= false and ns.IsRepeatableQuest(id) end
 
@@ -448,20 +504,26 @@ end
 -- (1.3.6, Daniel 12.10.: "why don't we take Blizzard's levels?") the level the game shows for a quest: its
 -- difficulty level from the quest log ("[6] Ammo for Rumbleshot"), where our data has the level you may take it
 -- at (5). Kept once seen (QuestdonDB.questLevels), so map pins and lists show it later too. nil: not known.
+-- (Questdon review 2) the log's levels once per refresh, not a walk through the log per call (the quest list asks
+-- two or three times per quest)
+local function LogLevels()
+  local map = {}
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local id, lv = ns.Num(info.questID), ns.Num(info.level)
+    if id and lv and lv > 0 and not map[id] then map[id] = lv end
+  end
+  return map
+end
 function ns.GameQuestLevel(questID)
   questID = ns.Num(questID)
   if not questID then return nil end
-  for _, info in ipairs(ns.QuestLogEntries()) do
-    if info.questID == questID then
-      local lv = ns.Num(info.level)
-      if lv and lv > 0 then
-        if ns.db then
-          ns.db.questLevels = type(ns.db.questLevels) == "table" and ns.db.questLevels or {}
-          ns.db.questLevels[questID] = lv
-        end
-        return lv
-      end
+  local lv = ns.ScopeValue("logLevels", LogLevels)[questID]
+  if lv then
+    if ns.db then
+      ns.db.questLevels = type(ns.db.questLevels) == "table" and ns.db.questLevels or {}
+      if ns.db.questLevels[questID] ~= lv then ns.db.questLevels[questID] = lv end
     end
+    return lv
   end
   local fn = C_QuestLog and C_QuestLog.GetQuestDifficultyLevel
   if type(fn) == "function" then
@@ -477,6 +539,14 @@ function ns.QuestLevelTag(questID)
   local lv = ns.GameQuestLevel(questID) or ns.QuestLevel(questID)
   if lv then return (ns.LevelColor and ns.LevelColor(lv) or "") .. ("[%d]|r "):format(lv) end
   return "|cff737880[?]|r "
+end
+
+-- (1.3.8, Daniel 15.10.: "is there an elite mark in the list?") " (Group)" behind a group quest's name (Wowhead
+-- Forever's quest type 1: elites, Hogger, Book Return), in the colour of its level; "" for others.
+function ns.GroupTag(questID)
+  if not (ns.GROUP_QUESTS and ns.GROUP_QUESTS[questID]) then return "" end
+  local lv = ns.GameQuestLevel(questID) or ns.QuestLevel(questID)
+  return " " .. (lv and ns.LevelColor and ns.LevelColor(lv) or "|cffd0a050") .. "(" .. L["Group"] .. ")|r"
 end
 
 -- (1.22) "Level 12" or "Level unknown" for texts.
@@ -545,13 +615,15 @@ end
 -- refreshes the map pins, which would ask again (endless refresh while the map
 -- is open). The answer also tells whether the quest exists at all.
 function ns.QuestTitle(questID)
+  questID = ns.Num(questID) -- (Questdon review 2) nil or a secret: no error
+  if not questID then return "?" end
   local title = ns.Value(C_QuestLog.GetTitleForQuestID, questID)
   if type(title) == "string" and title ~= "" then return title end
   ns.RequestQuestData(questID)
   local learned = ns.db.learned[questID]
   if learned and learned.title then return learned.title end
   local q = Q[questID]
-  return q and q[NAME] or ("Quest " .. questID)
+  return q and q[NAME] or L["Quest %d"]:format(questID) -- (review 2) translated
 end
 
 -- (1.3.4) Zone variants of one quest ("Camping 101: Fishing" on Zephras Isle,
@@ -704,8 +776,11 @@ end
 
 -- Questie (or Forever Quest Pins) already draws this, so we do not.
 local function DrawnElsewhere(questID, what)
-  if ns.db.questieFirst and ns.AddOnLoaded("Questie") and ns.QuestieKnows(questID) == true then
-    return true
+  -- (Questdon review 2) only while Questie is on: switched off in its own options it draws nothing
+  if ns.db.questieFirst and ns.QuestieOn() and ns.QuestieKnows(questID) == true then
+    -- (Questdon review 3) and only while Questie draws that kind of mark itself (its map icons, its available
+    -- quests, its objectives)
+    return ns.QuestieDrawsMarks(what)
   end
   if what == "start" and ns.AddOnLoaded("ForeverQuestPins") then return true end
   return false
@@ -961,7 +1036,7 @@ function ns.ObjectiveTargets(questID, index, o, spots, onlyMap)
       Add = function(list, m, x, y, creature, scale) if m == onlyMap then add(list, m, x, y, creature, scale) end end
     end
     -- 1. spots this account has seen the counter go up (0-1 coordinates)
-    for i = 1, #spots, 3 do Add(out, spots[i], spots[i + 1], spots[i + 2], nil, 1) end
+    for i = 1, #spots, 3 do Add(out, spots[i], spots[i + 1], spots[i + 2], ns.OnlyObject(o), 1) end
     -- 2. ATT objective coordinates (0-100)
     for i = 1, #pts, 3 do Add(out, pts[i], pts[i + 1], pts[i + 2], o[1] and o[1][1], 100) end
     -- 3. (1.2) where the objective's creatures are: Wowhead's spawns (all of
@@ -1030,13 +1105,13 @@ function ns.ObjectiveTargets(questID, index, o, spots, onlyMap)
   if has then
     -- (1.26) the place of use is one exact spot (no objective area)
     if #use > 0 then
-      for _, p in ipairs(use) do p.useSpot = true end
+      for _, p in ipairs(use) do p.useSpot = true p.useItem = itemID end
       return use
     end
     return acquire
   end
   for _, p in ipairs(acquire) do p.needsItem = itemID out[#out + 1] = p end
-  for _, p in ipairs(use) do p.needsItem = itemID p.dimmed = true p.useSpot = true end
+  for _, p in ipairs(use) do p.needsItem = itemID p.dimmed = true p.useSpot = true p.useItem = itemID end
   return out, itemID, use
 end
 
@@ -1047,9 +1122,49 @@ local function ReadObjectives(questID)
   return type(c) == "table" and c or {}
 end
 local function ClientObjectives(questID)
-  return ns.Memo("objectives", questID, ReadObjectives)
+  return ns.LogMemo("objectives", questID, ReadObjectives) -- (16.10.) kept until the next quest log event
 end
 ns.ClientObjectives = ClientObjectives
+
+-- (1.3.8, F2) Objects (chests, plants, crates: "o<id>") are clicked, mobs are killed: drawn apart on the maps, and
+-- the arrow says what to click when you are there. A bundle counts as objects when all its spots are objects.
+function ns.IsObjectSpot(creature) return type(creature) == "string" and creature:sub(1, 1) == "o" end
+-- (review 6) the objective's only kind of target is objects: its first object (learned spots carry it), else nil
+function ns.OnlyObject(o)
+  local list = type(o) == "table" and o[1]
+  if type(list) ~= "table" or #list == 0 then return nil end
+  for _, c in ipairs(list) do if not ns.IsObjectSpot(c) then return nil end end
+  return list[1]
+end
+function ns.IsObjectPin(pin)
+  if type(pin) ~= "table" then return false end
+  if type(pin.members) == "table" and #pin.members > 0 then
+    for _, m in ipairs(pin.members) do if not ns.IsObjectSpot(m.creature) then return false end end
+    return true
+  end
+  return ns.IsObjectSpot(pin.creature)
+end
+-- (1.3.8, F9) The place of use of a quest item: the pin shows the item's icon. A bundle only when all its spots are
+-- places of use of the same item.
+function ns.PinUseItem(pin)
+  if type(pin) ~= "table" then return nil end
+  if type(pin.members) == "table" and #pin.members > 0 then
+    local item = pin.members[1].useItem
+    for _, m in ipairs(pin.members) do if m.useItem ~= item then return nil end end
+    return item
+  end
+  return pin.useItem
+end
+-- The objective's text without its count ("Sack of Grain: 2/8" -> "Sack of Grain"), nil if unreadable.
+function ns.ObjectiveThing(questID, index)
+  local o = ClientObjectives(questID)[index]
+  local text = type(o) == "table" and o.text
+  if type(text) ~= "string" or not ns.Usable(text) then return nil end
+  text = text:gsub("^%s*%d+%s*/%s*%d+%s*", ""):gsub("%s*%d+%s*/%s*%d+%s*$", "")
+  text = text:gsub("%s*:%s*$", ""):gsub("%s*\239\188\154%s*$", "") -- the colon as a whole (ASCII or full width)
+  text = text:gsub("^%s+", ""):gsub("%s+$", "")
+  return text ~= "" and text or nil
+end
 
 -- Is objective <index> still open? Unknown state counts as open. An index the
 -- loaded client list does not have (ATT knows more objectives than the server
@@ -1144,7 +1259,7 @@ local function BuildObjective(questID, index, o, spots, mapID)
   local pts = o[3] or {}
   -- 1. spots this account (and others) saw the counter go up (0-1)
   for i = 1, #spots, 3 do
-    if spots[i] == mapID and spots[i + 1] and spots[i + 2] then e.keep[#e.keep + 1] = { x = spots[i + 1], y = spots[i + 2] } end
+    if spots[i] == mapID and spots[i + 1] and spots[i + 2] then e.keep[#e.keep + 1] = { x = spots[i + 1], y = spots[i + 2], creature = ns.OnlyObject(o) } end
   end
   -- 2. the data's objective coordinates (0-100)
   local first = o[1] and o[1][1]
@@ -1180,7 +1295,7 @@ local function CachedObjective(questID, index, o, spots, mapID)
   o, spots = o or {}, spots or {}
   local n, sum = SpotsPrint(spots)
   local lv = ns.LearnVersion and ns.LearnVersion() or 0
-  local sv = ns.SharedVersion and ns.SharedVersion() or 0
+  local sv = ns.SharedPlacesVersion and ns.SharedPlacesVersion() or 0 -- (review 4) places only
   local byQuest = objCache[questID]
   local key = index * 100000 + mapID
   local e = byQuest and byQuest[key]
@@ -1254,7 +1369,33 @@ end
 -- "Use an item at a place" depends on the bags: worked out each time as before. The points of
 -- mapID, split into the ones always shown and the spawns.
 local function IsUse(o) return o ~= nil and o[USE] == "u" and #(o[2] or {}) > 0 end
+local useCache, useCacheSize = {}, 0
+local UseObjectiveNow
 local function UseObjective(id, index, o, spots, mapID)
+  -- (16.10. evening, /qd mem) kept while the data, the learned places and the item in the bags are the same: before,
+  -- every map and minimap build made all points of such an objective anew
+  spots = spots or {}
+  local n, sum = SpotsPrint(spots)
+  local lv = ns.LearnVersion and ns.LearnVersion() or 0
+  local sv = ns.SharedPlacesVersion and ns.SharedPlacesVersion() or 0
+  local has, itemID = HasItem(o)
+  local byQuest = useCache[id]
+  local key = index * 100000 + mapID
+  local c = byQuest and byQuest[key]
+  if c and c.o == o and c.n == n and c.sum == sum and c.lv == lv and c.sv == sv and c.has == has and c.item == itemID then
+    return c.keep, c.spawns
+  end
+  local keep, spawns = UseObjectiveNow(id, index, o, spots, mapID)
+  if not byQuest then
+    if useCacheSize >= 60 then useCache, useCacheSize = {}, 0 end
+    byQuest = {}
+    useCache[id] = byQuest
+    useCacheSize = useCacheSize + 1
+  end
+  byQuest[key] = { o = o, n = n, sum = sum, lv = lv, sv = sv, has = has, item = itemID, keep = keep, spawns = spawns }
+  return keep, spawns
+end
+function UseObjectiveNow(id, index, o, spots, mapID)
   local targets, _, usePts = ns.ObjectiveTargets(id, index, o, spots, mapID)
   local keep, spawns = {}, {}
   for _, p in ipairs(targets) do
@@ -1265,12 +1406,48 @@ local function UseObjective(id, index, o, spots, mapID)
   return keep, spawns
 end
 
+-- (16.10. evening, Daniel's /qd mem: about 1 MB of new memory a second) One store of quest mob dots for the world map
+-- and the minimap: the same point of the same objective is the same pin table as long as nothing on it changed
+-- (before, a newly learned spot made all pins of its objective anew, and two mobs on one spot took turns).
+-- [questID][index][x][y][creature * 2 + small] = pin
+-- The objective's text ("Boar slain: 3/8") is not kept on the pin: the tooltip reads it from the quest log when it
+-- shows (pin.text, through the metatable). Before, every kill made all pins of the objective anew and rebuilt the
+-- world map and the minimap.
+local function LiveObjectiveText(questID, index)
+  local state = questID and index and ClientObjectives(questID)[index]
+  local text = type(state) == "table" and state.text
+  return type(text) == "string" and ns.Usable(text) and text or nil
+end
+local PIN_META = { __index = function(t, k) if k == "text" then return LiveObjectiveText(t.questID, t.index) end end }
+ns.OBJECTIVE_PIN_META = PIN_META
+local pinStore, pinStoreCount = {}, 0
+local function StoredPin(id, index, x, y, _, creature, useItem, needsItem, dimmed, small, optional)
+  local byQ = pinStore[id] if not byQ then byQ = {} pinStore[id] = byQ end
+  local byI = byQ[index] if not byI then byI = {} byQ[index] = byI end
+  local byX = byI[x] if not byX then byX = {} byI[x] = byX end
+  local byY = byX[y] if not byY then byY = {} byX[y] = byY pinStoreCount = pinStoreCount + 1 end
+  -- the map and the minimap may differ in "small"; (review 7) objects ("o123") keep their own key: tonumber made
+  -- them all 0, so two objects on one spot shared the first one's pin
+  local key
+  if type(creature) == "string" then key = small and creature .. "|s" or creature
+  else key = (tonumber(creature) or 0) * 2 + (small and 1 or 0) end
+  local pin = byY[key]
+  if not (pin and pin.creature == creature and pin.useItem == useItem and pin.needsItem == needsItem and pin.dimmed == dimmed
+      and pin.small == small and pin.optional == optional) then
+    pin = setmetatable({ questID = id, index = index, x = x, y = y, creature = creature, useItem = useItem,
+      needsItem = needsItem, dimmed = dimmed, small = small, optional = optional }, PIN_META)
+    byY[key] = pin
+  end
+  return pin
+end
+-- quests that left the log: the store starts over when it is full (before a map or minimap build, not in between)
+local function TrimPinStore() if pinStoreCount > 8000 then pinStore, pinStoreCount = {}, 0 end end
 local function ObjectivePin(id, index, p, text, dim, many)
-  return { questID = id, index = index, x = p.x, y = p.y, text = text, creature = p.creature,
-    needsItem = p.needsItem, dimmed = p.dimmed or dim or nil, small = many, optional = dim }
+  return StoredPin(id, index, p.x, p.y, text, p.creature, p.useSpot and p.useItem or nil, p.needsItem, p.dimmed or dim or nil, many, dim)
 end
 
 function ns.ObjectivePointsOnMap(mapID)
+  TrimPinStore()
   local list = {}
   local total = 0
   if not mapID then return list end
@@ -1280,10 +1457,55 @@ function ns.ObjectivePointsOnMap(mapID)
     if use then
       keep, spawns = UseObjective(id, index, o, spots, mapID)
       nSpawns = #spawns
+      -- (16.10. evening) the same pins while the places are the same (as below)
+      local uc = useCache[id] and useCache[id][index * 100000 + mapID]
+      local many = (#keep + nSpawns > MANY_POINTS) or nil
+      if uc then
+        local c = uc.pinCache
+        if not (c and c.dim == dim and c.many == many) then
+          local l = {}
+          for _, p in ipairs(keep) do l[#l + 1] = ObjectivePin(id, index, p, text, dim, many) end
+          -- the spawns (many) thinned out evenly to what is left of MAX_OBJ_POINTS
+          local room = math.max(0, MAX_OBJ_POINTS - #keep)
+          if room > 0 and #spawns > 0 then
+            local step = #spawns > room and #spawns / room or 1
+            local k = 1
+            while k <= #spawns + 0.0001 do
+              l[#l + 1] = ObjectivePin(id, index, spawns[math.floor(k)], text, dim, many)
+              k = k + step
+            end
+          end
+          c = { dim = dim, many = many, list = l }
+          uc.pinCache = c
+        end
+        for _, pin in ipairs(c.list) do
+          if total >= MAX_MAP_POINTS then break end
+          total = total + 1
+          list[#list + 1] = pin
+        end
+        return
+      end
     else
       local e = CachedObjective(id, index, o, spots, mapID)
       keep, nSpawns = e.keep, e.total
       spawns = Thinned(e, math.max(0, MAX_OBJ_POINTS - #keep), mapID)
+      -- (16.10., stutter report on Discord) the pins of an objective that did not change are the same tables: each
+      -- quest log update built up to 400 new pins (half a MB) for every map build and signature check
+      local many = (#keep + nSpawns > MANY_POINTS) or nil
+      local c = e.pinCache
+      if not (c and c.keep == keep and c.spawns == spawns and c.dim == dim and c.many == many) then
+        local l = {}
+        for _, p in ipairs(keep) do l[#l + 1] = ObjectivePin(id, index, p, text, dim, many) end
+        for _, p in ipairs(spawns) do l[#l + 1] = ObjectivePin(id, index, p, text, dim, many) end
+        c = { keep = keep, spawns = spawns, dim = dim, many = many, list = l }
+        e.pinCache = c
+      end
+      for _, pin in ipairs(c.list) do
+        if total >= MAX_MAP_POINTS then break end
+        total = total + 1
+        list[#list + 1] = pin
+      end
+      return
     end
     -- learned spots, data points and the place of use always; (1.2) many points: smaller dots
     local many = (#keep + nSpawns > MANY_POINTS) or nil
@@ -1321,6 +1543,7 @@ local MAX_NEAR_TOTAL = 200
 local pool, kept, part = {}, {}, {}
 local function ByDistance(a, b) return a.d2 < b.d2 end
 function ns.ObjectivePointsNear(mapID, pc, pn, pw, reach)
+  TrimPinStore()
   local list = {}
   if not (mapID and pc and pn and pw and reach) then return list end
   -- the map's corners once, every point after that is arithmetic (a map is a rectangle in the world)
@@ -1332,21 +1555,22 @@ function ns.ObjectivePointsNear(mapID, pc, pn, pw, reach)
   local reach2 = reach * reach
   local used, nk = 0, 0 -- pool entries in use, kept entries
   local meta, first
-  local function Cand(x, y, creature, needsItem, dimmed)
+  local function Cand(x, y, creature, needsItem, dimmed, useItem)
     local dn, dw = n0 + x * nx + y * ny - pn, w0 + x * wx + y * wy - pw
     local d2 = dn * dn + dw * dw
     if d2 > reach2 then return end
     used = used + 1
     local c = pool[used]
     if not c then c = {} pool[used] = c end
-    c.x, c.y, c.creature, c.needsItem, c.dimmed, c.d2, c.meta = x, y, creature, needsItem, dimmed, d2, meta
+    c.x, c.y, c.creature, c.needsItem, c.dimmed, c.d2, c.meta, c.useItem = x, y, creature, needsItem, dimmed, d2, meta, useItem
   end
   EachMapObjective(function(id, index, o, spots, text, dim)
     meta = { id = id, index = index, text = text, dim = dim }
     first = used + 1
     if IsUse(o) then
       local keep, spawns = UseObjective(id, index, o, spots, mapID)
-      for _, p in ipairs(keep) do Cand(p.x, p.y, p.creature, p.needsItem, p.dimmed) end
+      -- (16.10.) the place of use keeps its item (the minimap showed a dot there instead of the item's icon)
+      for _, p in ipairs(keep) do Cand(p.x, p.y, p.creature, p.needsItem, p.dimmed, p.useSpot and p.useItem or nil) end
       for _, p in ipairs(spawns) do Cand(p.x, p.y, p.creature, p.needsItem, p.dimmed) end
     else
       local e = CachedObjective(id, index, o, spots, mapID)
@@ -1371,8 +1595,9 @@ function ns.ObjectivePointsNear(mapID, pc, pn, pw, reach)
   if nk > MAX_NEAR_TOTAL then table.sort(kept, ByDistance) end
   for k = 1, math.min(nk, MAX_NEAR_TOTAL) do
     local p, m = kept[k], kept[k].meta
-    list[#list + 1] = { questID = m.id, index = m.index, x = p.x, y = p.y, text = m.text, creature = p.creature,
-      needsItem = p.needsItem, dimmed = p.dimmed or m.dim or nil, small = m.many, optional = m.dim }
+    -- (16.10., stutter report) the same point of the same objective is the same pin table as long as nothing on it
+    -- changed: a minimap build made up to 200 new pins
+    list[#list + 1] = StoredPin(m.id, m.index, p.x, p.y, m.text, p.creature, p.useItem, p.needsItem, p.dimmed or m.dim or nil, m.many, m.dim)
   end
   for k = 1, nk do kept[k] = nil end
   for k = 1, used do pool[k].meta = nil end
@@ -1424,7 +1649,13 @@ end
 function ns.UsePlacesWithoutItem(questID)
   local refs, acquire = {}, false
   local giverRefs
-  EachOpenObjective(questID, function(_, targets, hint, usePts)
+  -- (Questdon review 4) only "use an item here" objectives can say so: the others' targets are not worked out
+  -- (this ran for every open objective of every quest on each quest list tick with the game's quest points)
+  local open, objs, learned = OpenIndices(questID, ClientObjectives(questID))
+  local any = false
+  for _, index in ipairs(open) do local o = objs[index] if o and o[USE] == "u" then any = true break end end
+  if not any then return refs, acquire end
+  EachOpenObjective(questID, function(index, targets, hint, usePts)
     if not hint then return end
     if #targets > 0 then acquire = true end
     for _, p in ipairs(usePts or {}) do refs[#refs + 1] = { p.mapID, p.x * 100, p.y * 100 } end
@@ -1453,6 +1684,27 @@ function ns.AtPlace(mapID, x, y, refs)
   return false
 end
 
+-- (1.3.8, F5) The open "use an item here" objectives whose item is used with this spell: { {questID, index}, ... }.
+function ns.UseObjectivesForSpell(spellID)
+  spellID = ns.Num(spellID)
+  local list = {}
+  if not (spellID and C_Item and C_Item.GetItemSpell) then return list end
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local questID = info.questID
+    if OBJ[questID] and not ns.IsQuestComplete(questID) then
+      for _, index in ipairs(OpenIndices(questID, ClientObjectives(questID))) do
+        if ns.IsUseObjective(questID, index) then
+          for _, itemID in ipairs(OBJ[questID][index][2]) do
+            local ok, _, sid = pcall(C_Item.GetItemSpell, itemID) -- the second answer (ns.Value keeps only the first)
+            if ok and ns.Num(sid) == spellID then list[#list + 1] = { questID, index } break end
+          end
+        end
+      end
+    end
+  end
+  return list
+end
+
 -- Item of an open "u" objective of the super-tracked quest that is in the
 -- bags (for the quest item button), else nil.
 function ns.TrackedUseItem()
@@ -1476,9 +1728,10 @@ end
 function ns.AllObjectivePoints(questID)
   local list = {}
   EachOpenObjective(questID, function(index, targets)
+    -- (16.10. evening, /qd mem) the targets are new tables of this call: marked in place, not copied
     for _, p in ipairs(targets) do
-      list[#list + 1] = { mapID = p.mapID, x = p.x, y = p.y, kind = "objective", needsItem = p.needsItem, index = index,
-        useSpot = p.useSpot }
+      p.kind, p.index = "objective", index
+      list[#list + 1] = p
     end
   end)
   return list
@@ -1498,14 +1751,29 @@ end
 -- and kills, not "use an item at a place"). For the target button.
 function ns.OpenObjectiveCreatures(questID)
   local list, seen = {}, {}
-  if not questID then return list end
-  local open, objs = OpenIndices(questID, ClientObjectives(questID))
-  for _, index in ipairs(open) do
-    local o = objs[index]
-    if o and o[USE] ~= "u" then
-      for _, cr in ipairs(o[1] or {}) do
-        if not seen[cr] then seen[cr] = true list[#list + 1] = cr end
-      end
+  if not questID or ns.IsQuestFailed(questID) then return list end -- (review 4) a failed quest needs no mob
+  local client = ClientObjectives(questID)
+  local open, objs = OpenIndices(questID, client)
+  -- (Questdon review 5) also the mobs Questdon learned (tooltips and nameplates had them, the target button not), and
+  -- objectives only learned credit knows
+  local done = {}
+  local function Add(index, o)
+    if done[index] then return end
+    done[index] = true
+    if o and o[USE] == "u" then return end
+    for _, cr in ipairs(o and o[1] or {}) do
+      if not seen[cr] then seen[cr] = true list[#list + 1] = cr end
+    end
+    local learned = ns.LearnedObjectiveCreatures and ns.LearnedObjectiveCreatures(questID, index, o ~= nil and #(o[1] or {}) > 0)
+    for _, cr in ipairs(learned or {}) do
+      if not seen[cr] then seen[cr] = true list[#list + 1] = cr end
+    end
+  end
+  for _, index in ipairs(open) do Add(index, objs[index]) end
+  local credit = type(ns.db.learnedCredit) == "table" and ns.db.learnedCredit[questID]
+  if type(credit) == "table" then
+    for index in pairs(credit) do
+      if type(index) == "number" and not objs[index] and IsOpen(client, index) and not IsOptional(client, index) then Add(index, nil) end
     end
   end
   return list
@@ -1562,8 +1830,7 @@ function ns.PointToNextQuest()
   local n = ns.NearestAvailableQuest()
   if not n then ns.Print(L["No quest available nearby."]) return end
   if ns.SetArrowTarget then
-    ns.db.arrow = true
-    if ns.ApplyArrow then ns.ApplyArrow() end
+    ns.EnsureArrow() -- (review 3) not a second arrow next to the list's compass
     ns.SetArrowTarget(n.mapID, n.x, n.y, ns.QuestTitle(n.questID))
   end
 end

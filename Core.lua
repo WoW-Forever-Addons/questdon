@@ -7,6 +7,7 @@ ns.defaults = {
   skipTrivial = true,
   highlightBest = true,
   autoPickBest = false,
+  suggestReward = true, -- (1.3.8) a green frame on the reward players of your class pick (or the class rule)
   sellJunk = true,
   autoRepair = true,
   useGuildRepair = false,
@@ -225,6 +226,32 @@ function ns.ScopeValue(key, fn)
   return v
 end
 function ns.InScope() return scopeDepth > 0 end
+-- (16.10. evening, /qd mem) The quest log changes only with its events: what is read from it (the list with
+-- C_QuestLog.GetInfo, a new table of about twenty fields per entry, and each quest's objectives) is kept from one
+-- quest log event to the next instead of one scope (the quest list, the compass, the item button and the arrow
+-- read it every second, each in its own scope). Outside a scope (tests, other addons) it is read directly as before.
+local logGen = 0
+function ns.LogGen() return logGen end
+function ns.ForgetQuestLog() logGen = logGen + 1 end
+local logValues, logValueGen = {}, {}
+-- (tests) QD_TEST_FRESH_LOG: the test harness changes its quest log without the game's events
+function ns.LogValue(key, fn)
+  if scopeDepth == 0 or QD_TEST_FRESH_LOG then return fn() end
+  if logValueGen[key] == logGen then return logValues[key] end
+  local v = fn()
+  logValues[key], logValueGen[key] = v, logGen
+  return v
+end
+local logMemo, logMemoGen = {}, {}
+function ns.LogMemo(kind, id, read)
+  if scopeDepth == 0 or QD_TEST_FRESH_LOG or type(id) ~= "number" or not ns.Usable(id) then return read(id) end
+  local gens = logMemoGen[kind]
+  if not gens then gens = {} logMemoGen[kind], logMemo[kind] = gens, {} end
+  if gens[id] == logGen then return logMemo[kind][id] end
+  local v = read(id)
+  logMemo[kind][id], gens[id] = v, logGen
+  return v
+end
 local scopeStats = { scopes = 0 }
 function ns.ScopeStats() return scopeStats end
 
@@ -243,7 +270,49 @@ local function Finish(outer, opened, ok, a, b, c)
   if opened then scopeDepth = 0 end
   if ok then return a, b, c end
 end
+-- (16.10. evening, Daniel's /qd mem: Questdon about 1 MB of new memory a second, Questie 6 KB) While /qd mem
+-- measures, every protected call counts the Lua memory it took (collectgarbage("count") before and after; the
+-- game runs one thing at a time). Calls inside another one count again under their own name (inner).
+local memProf -- { top = {}, inner = {} } while measuring
+local RawSafeCall
+local function Measure(prof, context, opened, kb, a, b, c)
+  local d = collectgarbage("count") - kb
+  if d > 0 then
+    local t = opened and prof.top or prof.inner
+    t[context] = (t[context] or 0) + d
+  end
+  return a, b, c
+end
+function ns.MemProfile(on)
+  if on then memProf = { top = {}, inner = {} } return memProf end
+  local was = memProf
+  memProf = nil
+  return was
+end
+-- "Arrow.lua:123" of the code that called the caller (for timers and event listeners)
+-- (review 7) the first place outside Core.lua: debugstack counts the pcall around it as a level too, so the fixed
+-- level landed on ns.After / ns.NewTicker / ns.On themselves and every part was named "Core.lua:..."
+local function Where(level)
+  if not debugstack then return "?" end
+  local ok, stack = pcall(debugstack, level, 6, 0)
+  if not ok or type(stack) ~= "string" then return "?" end
+  stack = stack:gsub("\\", "/")
+  local first
+  for at in stack:gmatch("([%w_]+%.lua:%d+)") do
+    if not at:find("^Core%.lua:") then return at end
+    first = first or at
+  end
+  return first or "?"
+end
+ns.CodeWhere = Where
+
 function ns.SafeCall(context, fn, ...)
+  if memProf then
+    return Measure(memProf, context, scopeDepth == 0, collectgarbage("count"), RawSafeCall(context, fn, ...))
+  end
+  return RawSafeCall(context, fn, ...)
+end
+function RawSafeCall(context, fn, ...)
   local outer = currentContext
   currentContext = context
   local opened = scopeDepth == 0
@@ -304,7 +373,8 @@ function ns.QueueRefresh(a, b, c, d)
     flushQueued = true
     if C_Timer and C_Timer.After then
       runGuarded = runGuarded or ns.Guard("timer", RunParts)
-      C_Timer.After(REFRESH_DELAY, runGuarded)
+      -- (16.10., stutter report) in a fight (kills and loot update the log again and again) once a second at most
+      C_Timer.After((InCombatLockdown and InCombatLockdown()) and 1 or REFRESH_DELAY, runGuarded)
     else
       ns.SafeCall("timer", RunParts)
     end
@@ -312,16 +382,18 @@ function ns.QueueRefresh(a, b, c, d)
 end
 
 function ns.After(delay, fn)
-  if C_Timer and C_Timer.After then C_Timer.After(delay, ns.Guard("timer", fn)) end
+  if C_Timer and C_Timer.After then C_Timer.After(delay, ns.Guard(memProf and "timer " .. Where(3) or "timer", fn)) end
 end
 
+-- (16.10.) a ticker says where it was made (made rarely; /qd mem names it)
 function ns.NewTicker(interval, fn, iterations)
-  if C_Timer and C_Timer.NewTicker then return C_Timer.NewTicker(interval, ns.Guard("timer", fn), iterations) end
+  if C_Timer and C_Timer.NewTicker then return C_Timer.NewTicker(interval, ns.Guard("ticker " .. Where(3), fn), iterations) end
 end
 
 -- Event dispatcher: several modules may listen to the same event.
 local frame = CreateFrame("Frame")
 local listeners, initCallbacks = {}, {}
+local listenerWhere = {}
 
 function ns.On(event, fn)
   if not listeners[event] then
@@ -331,10 +403,17 @@ function ns.On(event, fn)
     if not ok then listeners[event] = nil return false end
   end
   table.insert(listeners[event], fn)
+  listenerWhere[fn] = listenerWhere[fn] or Where(3) -- (16.10.) for /qd mem: which module's listener
   return true
 end
 
 function ns.OnInit(fn) table.insert(initCallbacks, fn) end
+
+-- (16.10.) the quest log read anew after each of its events (the first listener of each, before any reader)
+for _, e in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN", "UNIT_QUEST_LOG_CHANGED",
+    "QUEST_AUTOCOMPLETE", "QUEST_WATCH_LIST_CHANGED", "PLAYER_ENTERING_WORLD", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA" }) do
+  ns.On(e, ns.ForgetQuestLog)
+end
 
 frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(_, event, ...)
@@ -371,12 +450,19 @@ frame:SetScript("OnEvent", function(_, event, ...)
       QuestdonDB.showPanel, QuestdonDB.panelV138 = false, true
     end
     if not QuestdonDB.arrowV137 then
-      if QuestdonDB.tracker ~= false and QuestdonDB.trackerCompass ~= false then QuestdonDB.arrow = false end
+      -- (Questdon review 5) not when the list was closed: then the arrow is the only way shown
+      if QuestdonDB.tracker ~= false and QuestdonDB.trackerCompass ~= false and QuestdonDB.trackerShown ~= false then QuestdonDB.arrow = false end
       QuestdonDB.arrowV137 = true
     end
     -- (1.24) per character: what quest givers offered (Offers.lua)
     if type(QuestdonCharDB) ~= "table" then QuestdonCharDB = {} end
     ns.charDB = QuestdonCharDB
+    -- (Questdon review 5) once with 1.3.8: list, compass and arrow agree (a closed list or a compass off: the arrow);
+    -- later an arrow switched off by hand stays off
+    if ns.SyncArrowData and not QuestdonDB.arrowSyncV138 then
+      ns.SafeCall("arrow sync", ns.SyncArrowData, QuestdonDB)
+      QuestdonDB.arrowSyncV138 = true
+    end
     for _, fn in ipairs(initCallbacks) do ns.SafeCall("init", fn) end
     frame:UnregisterEvent("ADDON_LOADED")
     return
@@ -384,7 +470,11 @@ frame:SetScript("OnEvent", function(_, event, ...)
   if not ns.db then return end
   local list = listeners[event]
   if list then
-    for i = 1, #list do ns.SafeCall(event, list[i], event, ...) end
+    if memProf then
+      for i = 1, #list do ns.SafeCall(event .. " " .. (listenerWhere[list[i]] or "?"), list[i], event, ...) end
+    else
+      for i = 1, #list do ns.SafeCall(event, list[i], event, ...) end
+    end
   end
 end)
 
@@ -433,20 +523,48 @@ end
 
 -- Quest log entries (no headers, no hidden quests). (1.23) Read once per
 -- scope (see ns.SafeCall); callers only read the list.
+-- (Questdon review 5) A heading collapsed in Blizzard's quest log hides its quests from the log's index: the quest
+-- left Questdon's list, its dots and arrow went and its "!" came back. The quests last seen are kept (with their zone)
+-- as long as the game says you are on them.
+local lastSeen = {} -- [questID] = { info = , zone = }
+local function OnQuest(questID)
+  return C_QuestLog.IsOnQuest ~= nil and ns.True(ns.Value(C_QuestLog.IsOnQuest, questID))
+end
 local function ReadQuestLog()
   local list = {}
   if not C_QuestLog then return list end
+  local here, zone = {}, nil
   for i = 1, ns.Num(ns.Value(C_QuestLog.GetNumQuestLogEntries)) or 0 do
     local info = ns.Value(C_QuestLog.GetInfo, i)
+    if type(info) == "table" and ns.True(info.isHeader) then
+      zone = type(info.title) == "string" and ns.Usable(info.title) and info.title or zone
     -- secret flags count as "not a header / not hidden" only if the quest ID is readable
-    if type(info) == "table" and not ns.True(info.isHeader) and not ns.True(info.isHidden) and (ns.Num(info.questID) or 0) > 0 then
+    elseif type(info) == "table" and not ns.True(info.isHidden) and (ns.Num(info.questID) or 0) > 0 then
       list[#list + 1] = info
+      here[info.questID] = true
+      local e = lastSeen[info.questID]
+      if e then e.info, e.zone = info, zone else lastSeen[info.questID] = { info = info, zone = zone } end
     end
+  end
+  local kept
+  for id, e in pairs(lastSeen) do
+    if not here[id] then
+      if OnQuest(id) then kept = kept or {} kept[#kept + 1] = id else lastSeen[id] = nil end
+    end
+  end
+  if kept then
+    table.sort(kept)
+    for _, id in ipairs(kept) do list[#list + 1] = lastSeen[id].info end
   end
   return list
 end
+-- the zone heading a quest was last seen under (Tracker.lua, for quests under a collapsed heading)
+function ns.QuestLogZone(questID) local e = lastSeen[questID] return e and e.zone or nil end
+function ns.InCollapsedHeading(questID)
+  return lastSeen[questID] ~= nil and (ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, questID)) or 0) <= 0
+end
 function ns.QuestLogEntries()
-  return ns.ScopeValue("questLog", ReadQuestLog)
+  return ns.LogValue("questLog", ReadQuestLog)
 end
 
 -- Quest log full? (false if the client cannot tell). Counts only quests that
@@ -493,9 +611,38 @@ function ns.IsQuestComplete(questID)
   return ns.Memo("complete", questID, ReadComplete)
 end
 
+-- (Questdon review 1) seconds left of a timed quest in the log (the game's own tracker, which shows it, is
+-- hidden behind the quest list), nil when the quest has no timer
+function ns.QuestTimeLeft(questID)
+  if not (C_QuestLog and C_QuestLog.GetTimeAllowed) or not ns.Num(questID) then return nil end
+  local ok, total, elapsed = pcall(C_QuestLog.GetTimeAllowed, questID)
+  total, elapsed = ok and ns.Num(total), ok and ns.Num(elapsed)
+  if total and elapsed and total > 0 then return math.max(0, math.floor(total - elapsed)) end
+  return nil
+end
+
 -- Failed (escort died, timer ran out): the objectives no longer count.
 function ns.IsQuestFailed(questID)
   return ns.True(ns.Value(C_QuestLog.IsFailed, questID))
+end
+
+-- (Questdon review 5) Lower case beyond A-Z for the searches (lower() folds only ASCII): Latin-1 letters (À-Þ but
+-- not ×), Cyrillic А-Я and Ё. Korean and Chinese have no case.
+function ns.FoldCase(s)
+  s = tostring(s or ""):lower()
+  s = s:gsub("\195([\128-\158])", function(b)
+    local n = b:byte()
+    if n == 151 then return nil end -- ×
+    return "\195" .. string.char(n + 32)
+  end)
+  s = s:gsub("\208([\144-\175])", function(b)
+    local n = b:byte()
+    if n <= 159 then return "\208" .. string.char(n + 32) end -- А-П -> а-п
+    return "\209" .. string.char(n - 32) -- Р-Я -> р-я
+  end)
+  s = s:gsub("\208\129", "\209\145") -- Ё -> ё
+  s = s:gsub("\209\145", "\208\181") -- (review 6) ё -> е: most players type е
+  return s
 end
 
 function ns.AddOnLoaded(name)
@@ -532,14 +679,63 @@ function ns.Usable(v)
   return true
 end
 
-function ns.PlayerPosition()
-  if not C_Map then return nil end
-  local mapID = ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
-  if not mapID then return nil end
+local function MapRead(mapID)
   local pos = ns.Value(C_Map.GetPlayerMapPosition, mapID, "player")
   if type(pos) ~= "table" or not pos.GetXY then return nil end
   local ok, x, y = pcall(pos.GetXY, pos)
   if not ok or not (ns.Num(x) and ns.Num(y)) or (x == 0 and y == 0) then return nil end
+  return x, y
+end
+-- (16.10. evening, Daniel's /qd mem: about 1 MB of new memory a second) C_Map.GetPlayerMapPosition makes a new
+-- vector (a table with all of Vector2DMixin's functions) at each call, and the arrow, the compass, the minimap and the
+-- quest list ask about a hundred times a second. UnitPosition answers with plain numbers: the world position,
+-- turned into the map position with the map's corners (Arrow.lua). Checked against the map's own answer on each new
+-- map and every 20 seconds (which of its two numbers is north is checked too); one mismatch and it is not used again.
+local unitPos = { state = nil, order = nil, map = nil, at = -100 } -- state: nil unknown, true fine, false off
+local UNITPOS_TOLERANCE = 0.002 -- map units (2 to 8 yards on a zone map)
+local function FromUnitPosition(mapID)
+  if unitPos.state == false or type(UnitPosition) ~= "function" or not ns.MapFromWorld then return nil end
+  local ok, a, b, _, inst = pcall(UnitPosition, "player")
+  a, b, inst = ok and ns.Num(a), ok and ns.Num(b), ok and ns.Num(inst)
+  if not (a and b and inst) then return nil end -- instances, secret values: the map's answer
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if unitPos.state and unitPos.map == mapID and now - unitPos.at < 20 and now >= unitPos.at then
+    if unitPos.order == 1 then return ns.MapFromWorld(mapID, inst, a, b) end
+    return ns.MapFromWorld(mapID, inst, b, a)
+  end
+  -- check against the map's answer
+  local mx, my = MapRead(mapID)
+  if not mx then return nil end
+  local x1, y1 = ns.MapFromWorld(mapID, inst, a, b)
+  local x2, y2 = ns.MapFromWorld(mapID, inst, b, a)
+  local fit1 = x1 and math.abs(x1 - mx) < UNITPOS_TOLERANCE and math.abs(y1 - my) < UNITPOS_TOLERANCE
+  local fit2 = x2 and math.abs(x2 - mx) < UNITPOS_TOLERANCE and math.abs(y2 - my) < UNITPOS_TOLERANCE
+  if not x1 and not x2 then return mx, my end -- the map's corners not known yet: ask again next time
+  -- (review 7) where both world numbers are about equal (a line across every continent) both orders fit: that says
+  -- nothing about the order. Not learned there (it took order 1 and mirrored the position as soon as the player
+  -- walked on), and a known order is not switched off there; asked again at the next call.
+  if fit1 and fit2 then
+    if unitPos.state and unitPos.order then unitPos.map, unitPos.at = mapID, now end
+    return mx, my
+  end
+  local order = fit1 and 1 or fit2 and 2 or nil
+  if not order or (unitPos.order and order ~= unitPos.order) then
+    unitPos.state = false -- does not fit this client: the map's answer from now on
+    return mx, my
+  end
+  unitPos.state, unitPos.order, unitPos.map, unitPos.at = true, order, mapID, now
+  return mx, my
+end
+function ns.UnitPositionState() return unitPos.state, unitPos.order end -- (diag, tests)
+function ns.ResetUnitPosition() unitPos.state, unitPos.order, unitPos.map, unitPos.at = nil, nil, nil, -100 end -- (tests)
+
+function ns.PlayerPosition()
+  if not C_Map then return nil end
+  local mapID = ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
+  if not mapID then return nil end
+  local x, y = FromUnitPosition(mapID)
+  if not x then x, y = MapRead(mapID) end
+  if not x then return nil end
   return mapID, x, y
 end
 
@@ -555,7 +751,7 @@ end
 
 SLASH_QUESTDON1 = "/qd"
 SLASH_QUESTDON2 = "/questdon"
-ns.HELP = L["Commands: /qd (options), /qd panel, /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd zone (quests of the zone), /qd journal (quest journal), /qd search [text], /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd reset (reset button position)"]
+ns.HELP = L["Commands: /qd (options), /qd list (quest list), /qd arrow, /qd xpbar, /qd next, /qd xp, /qd dungeons, /qd zone (quests of the zone), /qd journal (quest journal), /qd search [text], /qd group, /qd questie, /qd export, /qd diag (diagnostics), /qd missing (nonexistent quests), /qd xpcheck (XP sources), /qd nettest (channel test), /qd nothere (targeted NPC has no quest: hide it; undo, list), /qd why [quest ID] (why no !), /qd reset (reset button position)"]
 SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
   local raw = strtrim and strtrim(msg or "") or (msg or "")
   msg = raw:lower()
@@ -611,6 +807,8 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
   elseif msg:match("^why%s+%d+$") then
     -- (1.3.6) why a quest has no "!" (QuestData.lua ns.WhyQuest)
     for _, l in ipairs(ns.WhyQuest(tonumber(msg:match("(%d+)$")))) do print("|cffffd100Questdon|r " .. l) end
+  elseif msg == "mem" or msg:match("^mem%s+%d+$") then
+    if ns.MemoryCheck then ns.MemoryCheck(tonumber(msg:match("(%d+)$"))) end
   elseif msg == "diag" then
     if ns.OpenDiag then ns.OpenDiag() end
   elseif msg == "xpcheck" or msg == "xpcheck reset" then

@@ -32,10 +32,14 @@ end
 function ns.AbandonQuest(questID)
   if InCombatLockdown() then ns.Print(L["Not possible in combat."]) return false end
   questID = ns.Num(questID)
-  if not questID or (ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, questID)) or 0) <= 0 then return false end
+  if not questID or not ns.InQuestLog(questID) then return false end
   if not (C_QuestLog.SetSelectedQuest and C_QuestLog.SetAbandonQuest and C_QuestLog.AbandonQuest) then return false end
   local previous = ns.Num(ns.Value(C_QuestLog.GetSelectedQuest))
-  if not pcall(C_QuestLog.SetSelectedQuest, questID) then return false end
+  local collapsed = (ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, questID)) or 0) <= 0
+  if not pcall(C_QuestLog.SetSelectedQuest, questID) or (collapsed and ns.Num(ns.Value(C_QuestLog.GetSelectedQuest)) ~= questID) then
+    ns.Print(L["Open its zone heading in the quest log first."])
+    return false
+  end
   local ok = pcall(C_QuestLog.SetAbandonQuest) and pcall(C_QuestLog.AbandonQuest)
   if previous and previous > 0 and previous ~= questID
       and (ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, previous)) or 0) > 0 then

@@ -49,13 +49,13 @@ end
 -- Localised name: the client's name of the dungeon map, else ATT's English name.
 function ns.DungeonName(inst)
   local d = D[inst]
-  if not d then return inst and ("Dungeon " .. tostring(inst)) or "?" end
+  if not d then return inst and L["Dungeon %d"]:format(tonumber(inst) or 0) or "?" end
   if d[UIMAP] and C_Map then
     local info = ns.Value(C_Map.GetMapInfo, d[UIMAP])
     local name = type(info) == "table" and info.name
     if type(name) == "string" and ns.Usable(name) and name ~= "" then return name end
   end
-  return d[NAME_EN] or ("Dungeon " .. tostring(inst))
+  return d[NAME_EN] or L["Dungeon %d"]:format(tonumber(inst) or 0)
 end
 
 ---------------------------------------------------------------------------
@@ -378,8 +378,7 @@ function ns.MarkEntrance(inst)
   mark = { inst = inst, mapID = m, x = x, y = y, at = Now(), name = name, source = source }
   markStats.set = markStats.set + 1
   if ns.SetArrowTarget then
-    ns.db.arrow = true
-    if ns.ApplyArrow then ns.ApplyArrow() end
+    ns.EnsureArrow() -- (review 3) not a second arrow next to the list's compass
     ns.SetArrowTarget(m, x, y, L["Entrance: %s"]:format(name), "entrance")
   end
   if not markTicker then markTicker = ns.NewTicker(1, CheckMark) end
@@ -909,8 +908,7 @@ function ns.PointToDungeonQuest()
     end
   end
   if not (m and ns.SetArrowTarget) then ns.Print(L["No dungeon quest giver or entrance nearby."]) return false end
-  ns.db.arrow = true
-  if ns.ApplyArrow then ns.ApplyArrow() end
+  ns.EnsureArrow() -- (review 3) not a second arrow next to the list's compass
   ns.SetArrowTarget(m, x, y, label)
   return true
 end

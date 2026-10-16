@@ -66,6 +66,17 @@ function ns.WorldPos(mapID, x, y)
   return t.c, n, w
 end
 
+-- (16.10. evening, /qd mem) The other way round: the map position (0-1) of a world position on mapID, nil when the
+-- map's corners are not known or it is another continent. For the player's position from UnitPosition (Core.lua).
+function ns.MapFromWorld(mapID, c, n, w)
+  local t = Transform(mapID)
+  if not t or t.c ~= c then return nil end
+  local det = t.nx * t.wy - t.ny * t.wx
+  if det == 0 then return nil end
+  local dn, dw = n - t.n0, w - t.w0
+  return (dn * t.wy - t.ny * dw) / det, (t.nx * dw - dn * t.wx) / det
+end
+
 local function PlayerWorld()
   local mapID, x, y = ns.PlayerPosition()
   if not mapID then return nil end
@@ -76,6 +87,8 @@ end
 -- target many times per second, and targets do not move.
 local cT, cMap, cX, cY, cC, cN, cW
 local function TargetWorld(target)
+  -- (Questdon review 4) the quest list's cached points carry their world position (worked out once)
+  if target._wc then return target._wc, target._wn, target._ww end
   if cT == target and cMap == target.mapID and cX == target.x and cY == target.y then return cC, cN, cW end
   local tc, tn, tw = ns.WorldPos(target.mapID, target.x, target.y)
   if tc then cT, cMap, cX, cY, cC, cN, cW = target, target.mapID, target.x, target.y, tc, tn, tw end
@@ -182,9 +195,65 @@ end
 
 -- (1.3.6) The nearest known point of a quest (the arrow's choice for it) and its distance; for the
 -- quest list (Tracker.lua). nil for a quest that completes from the log or has no point.
+-- (Questdon review 2) The list asks for every quest each second (3 MB of new point tables a second with 20
+-- quests): a quest's points are kept until the quest log, the bags or the game's quest points change, the
+-- zone changes, or 5 seconds passed; only the distances are measured again.
+-- (review 3: still rebuilt after every loot and log update, 10 ms a second) kept per quest while its state is the
+-- same: complete, failed, which objectives are done, the game's point, learned and shared data; quests whose places
+-- depend on the bags (an item to use, an item still to get) are worked out again after a bag change; 30 s at most.
+local nearCache, nearAt, nearSig, nearBags = {}, {}, {}, {}
+local function ForgetNear() nearCache, nearAt, nearSig, nearBags = {}, {}, {}, {} end
+for _, e in ipairs({ "ZONE_CHANGED_NEW_AREA", "PLAYER_ENTERING_WORLD" }) do ns.On(e, ForgetNear) end
+ns.On("BAG_UPDATE_DELAYED", function()
+  for q in pairs(nearBags) do nearCache[q] = nil end
+  nearBags = {}
+end)
+ns.ForgetNearestPoints = ForgetNear -- (learned data, tests)
+local sigParts = {}
+local function PointsSig(questID)
+  local n = 0
+  local function Add(v) n = n + 1 sigParts[n] = tostring(v) end
+  Add(ns.IsQuestComplete(questID)) Add(ns.IsQuestFailed(questID)) Add(ns.IsAutoComplete(questID))
+  for _, o in ipairs(ns.ClientObjectives(questID)) do
+    Add(type(o) == "table" and ns.True(o.finished))
+    Add(type(o) == "table" and ns.Num(o.numRequired)) -- (16.10.) area or exact spot (ns.IsAreaObjective)
+  end
+  local m, x, y = ns.QuestPOI(questID)
+  Add(m) Add(x) Add(y)
+  Add(ns.LearnVersion and ns.LearnVersion() or 0) Add(ns.SharedPlacesVersion and ns.SharedPlacesVersion() or 0)
+  Add(ns.QuestSpotVersion and ns.QuestSpotVersion(questID) or 0) -- (16.10.) the quest's own new spots
+  for i = n + 1, #sigParts do sigParts[i] = nil end
+  return table.concat(sigParts, "|")
+end
+-- (16.10. evening, Daniel's /qd mem: 1.0 to 1.5 MB of new memory a second, Questie 6 KB) the arrow's own target
+-- (BuildAuto, NextAuto) took the quest's places anew at every update: all spawns as new tables. It shares these.
+local nearSpecial = {}
+local function CachedPoints(questID)
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  local points = nearCache[questID]
+  local sig = PointsSig(questID)
+  if points == nil or sig ~= nearSig[questID] or now - (nearAt[questID] or 0) > 30 or now < (nearAt[questID] or 0) then
+    local special
+    points, special = QuestPoints(questID)
+    if special == "autocomplete" or type(points) ~= "table" then points = false end
+    nearSpecial[questID] = special
+    nearCache[questID], nearAt[questID], nearSig[questID] = points, now, sig
+    local bags = points == false or #points == 0
+    for _, p in ipairs(points or {}) do if p.useSpot or p.needsItem then bags = true break end end
+    -- (review 4) each point's world position once, not every second (3700 conversions a tick with 28 quests)
+    for _, p in ipairs(points or {}) do
+      if p.mapID and p.x and p.y then
+        local c, n, w = ns.WorldPos(p.mapID, p.x, p.y)
+        if c then p._wc, p._wn, p._ww = c, n, w end
+      end
+    end
+    nearBags[questID] = bags or nil
+  end
+  return points, nearSpecial[questID]
+end
 function ns.QuestNearestPoint(questID)
-  local points, special = QuestPoints(questID)
-  if special == "autocomplete" or type(points) ~= "table" then return nil end
+  local points = CachedPoints(questID)
+  if not points then return nil end
   return Nearest(points)
 end
 
@@ -258,6 +327,45 @@ local function MobInSight(questID)
 end
 ns.ObjectiveMobInSight = MobInSight
 
+-- (1.3.8, F10) Far from the objective area the arrow leads to where the spots are many (a group of spawns near
+-- you), not to a lone spawn that happens to be a little nearer: each of the CLUSTER_CAND nearest spots scores its
+-- neighbours within CLUSTER_R yards against its distance. Close by (CLUSTER_FAR) the nearest spot wins as before.
+-- The current target stays unless another spot scores a quarter better.
+local CLUSTER_R, CLUSTER_FAR, CLUSTER_CAND = 70, 150, 30
+local function Cluster(t, pc, pn, pw)
+  local pts, cand = {}, {}
+  for _, p in ipairs(t.points) do
+    if not p._wc and p.mapID and p.x and p.y then
+      local c, n, w = ns.WorldPos(p.mapID, p.x, p.y)
+      if c then p._wc, p._wn, p._ww = c, n, w end
+    end
+    if p._wc == pc then
+      local dn, dw = p._wn - pn, p._ww - pw
+      pts[#pts + 1] = p
+      cand[#cand + 1] = { p = p, d = math.sqrt(dn * dn + dw * dw) }
+    end
+  end
+  if #pts < 4 then return nil end
+  table.sort(cand, function(a, b) return a.d < b.d end)
+  local r2 = CLUSTER_R * CLUSTER_R
+  local best, bestScore, curScore
+  for k = 1, math.min(#cand, CLUSTER_CAND) do
+    local c = cand[k]
+    local n = 0
+    for _, q in ipairs(pts) do
+      local dn, dw = q._wn - c.p._wn, q._ww - c.p._ww
+      if dn * dn + dw * dw <= r2 then n = n + 1 end
+    end
+    local score = n / (c.d + 150) -- n counts the spot itself
+    if not bestScore or score > bestScore then best, bestScore = c, score end
+    if c.p.mapID == t.mapID and c.p.x == t.x and c.p.y == t.y then curScore = score end
+  end
+  if not best then return nil end
+  if curScore and curScore * 1.25 >= bestScore then return nil, true end
+  return best.p, best.d
+end
+ns.ArrowCluster = Cluster -- (tests)
+
 -- Re-pick the nearest area point of the auto target and work out the state.
 local function CheckArea(t)
   local now = Now()
@@ -277,9 +385,17 @@ local function CheckArea(t)
       if p.mapID == t.mapID and p.x == t.x and p.y == t.y then curDist = d end
     end
   end
-  if best and (not curDist or bestDist < curDist - SWITCH_YARDS) then
-    t.mapID, t.x, t.y, t.source, t.label = best.mapID, best.x, best.y, best.source, t.LabelFor and t.LabelFor(best) or t.label
-    curDist = bestDist
+  local pick, pickDist, far = best, bestDist, false
+  if best and (curDist or bestDist) > CLUSTER_FAR and not area.inside and ns.db.arrowClusters ~= false then
+    local c, cd = Cluster(t, pc, pn, pw)
+    if c then pick, pickDist, far = c, cd, true
+    elseif cd == true then pick = nil end -- the current target is still as good: kept
+  end
+  if pick and (far or not curDist or pickDist < curDist - SWITCH_YARDS) then
+    t.mapID, t.x, t.y, t.source, t.label = pick.mapID, pick.x, pick.y, pick.source, t.LabelFor and t.LabelFor(pick) or t.label
+    t.creature, t.index = pick.creature, pick.index
+    t.cluster = far or nil -- (review 6) picked as a group: kept when the target is built anew
+    curDist = pickDist
   end
   area.dist = curDist
   if MobInSight(t.questID) then
@@ -337,11 +453,13 @@ local function NextAuto()
   nextSig, nextAt = sig, now
   nextCache = nil
   local best, bestD, bestID
+  local hidden = ns.TrackerHidden and ns.TrackerHidden() or {}
   for _, info in ipairs(ns.QuestLogEntries()) do
     local id = info.questID
-    if id and not ns.IsQuestFailed(id) then
-      local points, special = QuestPoints(id)
-      if special ~= "autocomplete" then
+    -- (Questdon review 4) not a quest you hid from the quest list
+    if id and not ns.IsQuestFailed(id) and not hidden[id] then
+      local points, special = CachedPoints(id)
+      if points and special ~= "autocomplete" then
         local p, d = Nearest(points)
         if p and d then
           local finished = p.kind == "turnin" or p.kind == "guess"
@@ -359,16 +477,26 @@ end
 function ns.DismissNextTarget() nextDismissed = LogSignature() end
 
 local function BuildAuto()
+  local prev = auto
   auto = nil
   if not (ns.ArrowRuns and ns.ArrowRuns() and C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID) then return end
   local questID = ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
   if not questID or questID == 0 or not ns.InQuestLog(questID) then auto = NextAuto() return end
-  local points, special = QuestPoints(questID)
+  local points, special = CachedPoints(questID)
   if special == "autocomplete" then
     auto = { label = L["%s: complete it from the quest log"]:format(ns.QuestTitle(questID)), questID = questID }
     return
   end
+  points = points or {}
   local p = Nearest(points)
+  local kept
+  -- (review 6) built anew (ticker, loot, bags): the spot picked before stays the start (its group, the quarter rule)
+  if p and prev and prev.questID == questID and prev.points and prev.cluster then
+    for _, q in ipairs(points) do if q.mapID == prev.mapID and q.x == prev.x and q.y == prev.y then p, kept = q, true break end end
+  end
+  -- (Questdon review 5) all of the quest's places on another continent: the first one, so the arrow and the card say
+  -- "Other zone or no position" instead of nothing
+  if not p and type(points) == "table" and points[1] and points[1].mapID then p = points[1] end
   if p then
     local title = ns.QuestTitle(questID)
     local function LabelFor(q)
@@ -379,7 +507,8 @@ local function BuildAuto()
       elseif q.needsItem then return L["%s: first get %s"]:format(title, ns.ItemName(q.needsItem)) end
       return title
     end
-    auto = { mapID = p.mapID, x = p.x, y = p.y, label = LabelFor(p), questID = questID, source = p.source }
+    auto = { mapID = p.mapID, x = p.x, y = p.y, label = LabelFor(p), questID = questID, source = p.source,
+      creature = p.creature, index = p.index, cluster = kept }
     -- (1.25) kill and collect objectives: all places, for the objective area
     if p.area then
       local list = {}
@@ -391,6 +520,9 @@ end
 
 function ns.UpdateArrowTarget()
   BuildAuto()
+  -- a new target sits on the nearest spot: pick again at the next update (a group of spots far away), not after
+  -- AREA_CHECK
+  if auto and auto.points then area.checkAt = nil end
   -- (1.26) no area for this target (turn-in, exact spot, nothing tracked): leave the area state
   if not (auto and auto.points) and area.inside then
     area.inside, area.reason = false, nil
@@ -406,13 +538,24 @@ local function Tracked()
   return id or 0
 end
 -- (1.3.5) kind (optional): what the target is ("entrance": a marked dungeon entrance, Dungeons.lua)
-function ns.SetArrowTarget(mapID, x, y, label, kind)
-  manual = { mapID = mapID, x = x, y = y, label = label, tracked = Tracked(), kind = kind }
+-- spot (1.3.8): the clicked pin's { creature = , index = } (an object to click there).
+function ns.SetArrowTarget(mapID, x, y, label, kind, questID, spot)
+  questID = ns.Num(questID)
+  manual = { mapID = mapID, x = x, y = y, label = label, tracked = Tracked(), kind = kind, questID = questID,
+    inLog = questID and ns.InQuestLog(questID) or nil,
+    creature = type(spot) == "table" and spot.creature or nil, index = type(spot) == "table" and spot.index or nil }
   if arrow and ns.ArrowRuns() then arrow:Show() end
 end
 
 function ns.ClearArrow()
   manual = nil
+end
+
+-- (1.3.8, F2) At an object's spot: what to click there ("Here: click the objects for Sack of Grain"); nil for mobs.
+function ns.ArrivedText(t)
+  if type(t) ~= "table" or not ns.IsObjectSpot(t.creature) then return nil end
+  local thing = t.questID and t.index and ns.ObjectiveThing(t.questID, t.index)
+  return thing and L["Here: click the objects for %s"]:format(thing) or L["Here: click the quest objects"]
 end
 
 -- Another addon (QuestdonAPI) can point the arrow; a clicked pin still wins.
@@ -454,7 +597,22 @@ ns.CorpseTarget = CorpseTarget
 
 local function Target()
   if manual and manual.tracked ~= Tracked() then manual = nil end -- (1.2) another quest picked
-  return CorpseTarget() or manual or external or auto
+  -- (Questdon review 4) a clicked pin of a quest: gone once the quest is turned in or abandoned, a clicked objective
+  -- dot once the quest is finished (the compass led there for good, the arrow's right-click is hidden with it)
+  local mq = manual and manual.questID
+  if mq and ((manual.kind == "available" and ns.IsQuestDone(mq)) or (manual.inLog and not ns.InQuestLog(mq))
+      or (manual.inLog and manual.kind == "objective" and ns.IsQuestComplete(mq))) then
+    manual = nil
+  end
+  -- (Questdon review 5) a clicked dot of an objective that is done now (the quest's other objectives still open)
+  if manual and mq and manual.kind == "objective" and manual.index and ns.ClientObjectives then
+    local o = ns.ClientObjectives(mq)[manual.index]
+    if type(o) == "table" and ns.True(o.finished) then manual = nil end
+  end
+  -- (Questdon review 3) the guide's step only while its window is shown (Leveldon closed: your own quest)
+  local ext, g = external, ns.guideFrame
+  if ext and type(g) == "table" and g.IsShown and not g:IsShown() then ext = nil end
+  return CorpseTarget() or manual or ext or auto
 end
 ns.ArrowTarget = Target
 
@@ -614,9 +772,27 @@ local function TextSize(fs)
 end
 
 local lastLabel, lastDist, lastDistColor
+-- (Questdon review 3) "240 yards, the way around" in its parts, in every language: the plain distance (the
+-- "%d yards" text of the number) and the rest when the text starts with it; else the whole text and no way
+function ns.SplitDistance(full, dist)
+  if type(full) ~= "string" then return nil, nil end
+  dist = dist or tonumber(full:match("%d+"))
+  if not dist then return full, nil end
+  local short = L["%d yards"]:format(dist)
+  if full == short then return short, nil end
+  -- (review 4) only with a separator after it: "240 m" is no prefix of "240 mètres, ..."
+  local rest = full:sub(#short + 1)
+  if full:sub(1, #short) == short and (rest == "" or rest:find("^[%s,，、:：]")) then
+    local way = rest:gsub("^[%s,，、:：]+", "")
+    return short, way ~= "" and way or nil
+  end
+  return full, nil
+end
+
 local function SetTexts(self, label, dist, distColor)
   label, dist = label or "", dist or ""
   state.label, state.distText, state.distColor = label, dist, distColor
+  state.distShort, state.distWay = nil, nil -- (review 3) set by the caller for "N yards, the way ..." only
   if Ghost() then label, dist = "", "" end
   if label == lastLabel and dist == lastDist and distColor == lastDistColor and not self.box.estimated then return end
   lastLabel, lastDist, lastDistColor = label, dist, distColor
@@ -685,7 +861,7 @@ local function Update(self)
   if inArea then
     if not dist or dist <= AREA_ENTER then
       ShowNeedle(self, false) ShowSeal(self, true)
-      SetTexts(self, t.label, L["In the objective area"], "good")
+      SetTexts(self, t.label, ns.ArrivedText(t) or L["In the objective area"], "good")
       return
     end
     SetTexts(self, t.label, L["In the objective area, nearest spot %d yards"]:format(dist), "good")
@@ -697,10 +873,13 @@ local function Update(self)
   end
   if dist < ARRIVED_YARDS then
     ShowNeedle(self, false) ShowSeal(self, true)
-    SetTexts(self, t.label, L["Arrived"], "good")
-    if manual == t then manual = nil end
+    local hint = ns.ArrivedText(t)
+    SetTexts(self, t.label, hint or L["Arrived"], "good")
+    -- a clicked object: kept while you stand there (the hint), dropped once you walk on
+    if manual == t then if hint then t.arrived = true else manual = nil end end
     return
   end
+  if manual == t and t.arrived and dist > 30 then manual = nil end
   ShowSeal(self, false)
   -- (1.3.6, Daniel: "with mountains in the way I have to run around") a known way around (Paths.lua): the
   -- needle points at its next waypoint, the distance stays the target's
@@ -714,6 +893,10 @@ local function Update(self)
   if not inArea then
     local fmt = (cave and L["%d yards, first to the way in"]) or (wp and L["%d yards, the way around"]) or L["%d yards"]
     SetTexts(self, t.label, fmt:format(dist), "textSecondary")
+    -- (Questdon review 3) the distance and the way apart for the quest list's card (it parsed the translated text:
+    -- "240 yards," kept its comma, zhTW showed the way twice): the plain distance, and the rest of the text when it
+    -- starts with it
+    state.distShort, state.distWay = ns.SplitDistance(fmt:format(dist), dist)
   end
   local facing = ns.Num(ns.Value(GetPlayerFacing))
   if facing then
@@ -737,8 +920,9 @@ local function Tooltip(self)
   if t == auto and t.points and area.inside then
     lines[#lines + 1] = { L["In the objective area"], area.reason == "mob" and L["quest mobs nearby"] or L["near a known spot"], "good" }
   end
-  local hint = L["Right-click: drop a clicked target."]
-  if not ns.db.arrowLocked then hint = hint .. " " .. L["Drag to move."] end
+  -- (Questdon review 5) the right-click only when there is a clicked target to drop
+  local hint = (manual and t == manual) and L["Right-click: drop a clicked target."] or nil
+  if not ns.db.arrowLocked then hint = hint and (hint .. " " .. L["Drag to move."]) or L["Drag to move."] end
   Style.Tooltip(self, t.label or L["Direction arrow"], lines, hint)
 end
 
@@ -851,6 +1035,7 @@ end
 
 function ns.ToggleArrow()
   ns.db.arrow = not ns.db.arrow
+  ns.db.arrowAuto = nil -- (review 4) your choice, kept when the quest list comes back
   ns.ApplyArrow()
 end
 

@@ -12,6 +12,22 @@ local function Profile()
   return p
 end
 
+-- (Questdon review 1) Questie loaded and switched on in its own options
+function ns.QuestieOn() return Profile() ~= nil end
+-- (Questdon review 3) Questie draws this kind of map mark itself: its map icons and the kind's own switch
+-- (Questie's QuestieOptionsDefaults.lua, checked 16.10.: enableMapIcons, enableAvailable, enableObjectives,
+-- enableTurnins); an option it does not have counts as on
+local KIND_SWITCH = { start = "enableAvailable", objective = "enableObjectives", turnin = "enableTurnins" }
+function ns.QuestieDrawsMarks(kind)
+  local p = Profile()
+  if not p or p.enableMapIcons == false then return false end
+  -- (review 4) its minimap icons off: Questdon draws its own (world map and minimap share one pin list, so the
+  -- world map may show both addons' marks then; nothing on the minimap was worse)
+  if p.enableMiniMapIcons == false then return false end
+  local sw = KIND_SWITCH[kind]
+  return not (sw and p[sw] == false)
+end
+
 -- Which Questdon feature Questie covers, and how to read Questie's switch for it.
 local OVERLAPS = {
   autoAccept = function(p)
@@ -58,7 +74,9 @@ end
 
 function ns.PrintQuestieStatus()
   if not Profile() then
-    ns.Print(L["Questie is not loaded. All Questdon features are active."])
+    -- (Questdon review 3) loaded but switched off in its own options is not "not loaded"
+    ns.Print(ns.AddOnLoaded("Questie") and L["Questie is switched off. All Questdon features are active."]
+      or L["Questie is not loaded. All Questdon features are active."])
     return
   end
   if not ns.db.questieFirst then

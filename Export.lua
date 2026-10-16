@@ -271,6 +271,17 @@ function ns.ExportRecords(all)
   for _, line in ipairs(ns.EntranceRecords and ns.EntranceRecords() or {}) do records[#records + 1] = line end
   -- (1.3.6) where you walked (Paths.lua): ways around mountains for others
   for _, line in ipairs(ns.WalkRecords and ns.WalkRecords() or {}) do records[#records + 1] = line end
+  -- (1.3.8) the reward each of your characters picked by hand: "R quest class tree item" (Rewards.lua)
+  local picks = type(ns.db.rewardPicks) == "table" and ns.db.rewardPicks or {}
+  local pickKeys = {}
+  for k in pairs(picks) do if type(k) == "string" then pickKeys[#pickKeys + 1] = k end end
+  table.sort(pickKeys)
+  for _, key in ipairs(pickKeys) do
+    local p = picks[key]
+    if type(p) == "table" and Int(p.q) and p.q > 0 and Int(p.i) and p.i > 0 and Int(p.c) and p.c > 0 and p.c < 20 then
+      records[#records + 1] = ("R %d %d %d %d"):format(p.q, p.c, Int(p.t) and p.t <= 3 and p.t or 0, p.i)
+    end
+  end
 
   return records
 end

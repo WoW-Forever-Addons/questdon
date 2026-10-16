@@ -1127,7 +1127,7 @@ local function RangeText(z)
   return L["%d to %d"]:format(z.min, z.max or z.min)
 end
 
-local function Norm(s) return tostring(s or ""):lower() end
+local function Norm(s) return ns.FoldCase(s) end -- (review 5) "ärger" finds "Ärger", "кобольды" "Кобольды"
 
 ---------------------------------------------------------------------------
 -- Building the lists
@@ -1253,7 +1253,7 @@ local function QuestSubText(e)
   local giver = givers and ns.LocalNpcName(givers[1])
   local learned = ns.db.learned and ns.db.learned[e.questID]
   giver = giver or (learned and learned.start and learned.start.npc)
-  return giver and (L["Quest giver"] .. ": " .. giver) or nil
+  return giver and (L["Quest giver"] .. L[": "] .. giver) or nil
 end
 
 -- (1.3) quests only in the older data: a note until Forever confirms them
@@ -1427,7 +1427,7 @@ ns.QuestBookSelectZone = SelectZone
 
 local function ZoneRow(z, shown, here)
   local m = z.map
-  return { kind = "zone", h = 34, map = m, name = MapName(m) or ("Map " .. m), range = RangeText(z),
+  return { kind = "zone", h = 34, map = m, name = MapName(m) or L["Map %d"]:format(m), range = RangeText(z),
     here = m == here, selected = m == shown,
     onClick = function() SelectZone(m) end,
     tooltip = function()
@@ -1441,7 +1441,7 @@ local function ZoneRow(z, shown, here)
         local n = st.groups and st.groups[g]
         if n and n > 0 then lines[#lines + 1] = { L[ns.ZONE_GROUP_TITLE[g]], tostring(n) } end
       end
-      return MapName(m) or ("Map " .. m), lines
+      return MapName(m) or L["Map %d"]:format(m), lines
     end }
 end
 
@@ -2707,13 +2707,13 @@ function ns.QuestObjectiveWhere(id)
   if #order == 0 then return nil end
   table.sort(order, function(a, b) if count[a] ~= count[b] then return count[a] > count[b] end return a < b end)
   local names = {}
-  for i = 1, math.min(2, #order) do names[#names + 1] = MapName(order[i]) or ("Map " .. order[i]) end
+  for i = 1, math.min(2, #order) do names[#names + 1] = MapName(order[i]) or L["Map %d"]:format(order[i]) end
   return L["Where: %s"]:format(table.concat(names, ", "))
 end
 
 local function Where(m, x, y)
   if not m then return nil end
-  local name = MapName(m) or ("Map " .. m)
+  local name = MapName(m) or L["Map %d"]:format(m)
   if x and y then return ("%s  %.1f, %.1f"):format(name, x, y) end
   return name
 end
@@ -3143,7 +3143,7 @@ local function RenderZone(reset)
   lists.zones:SetItems(ZoneListItems(), true)
   local hero = P.hero
   local info = m and ZONE_INFO[m]
-  hero.name:SetText(m and (MapName(m) or ("Map " .. m)) or L["Unknown zone"])
+  hero.name:SetText(m and (MapName(m) or L["Map %d"]:format(m)) or L["Unknown zone"])
   local meta = {}
   if info then meta[#meta + 1] = ContinentName(info.cont) end
   if info and info.min then meta[#meta + 1] = L["Level %s"]:format(RangeText(info)) elseif info then meta[#meta + 1] = L["City"] end

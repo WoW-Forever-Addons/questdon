@@ -34,7 +34,7 @@ local registered = false
 local function Enabled() return ns.db and ns.db.nameplateIcons end
 
 local function QuestieDrawsNameplates(questID)
-  if not (ns.db.questieFirst and ns.AddOnLoaded("Questie")) then return false end
+  if not (ns.db.questieFirst and ns.QuestieOn()) then return false end -- (review 2) Questie switched off draws nothing
   local p = type(Questie) == "table" and type(Questie.db) == "table" and Questie.db.profile
   if type(p) ~= "table" or p.nameplateEnabled == false then return false end
   return ns.QuestieKnows and ns.QuestieKnows(questID) == true

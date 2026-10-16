@@ -178,7 +178,8 @@ end
 
 -- Alt-click on a "!" (world map, minimap): every quest of that pin.
 function ns.ReportPin(pin)
-  if type(pin) ~= "table" or pin.kind == "turnin" or pin.kind == "objective" then return 0 end
+  -- (review 7) a giver's marker that a turn-in joined has kind "turnin" (its first member): its quests still count
+  if type(pin) ~= "table" or (pin.kind == "turnin" and not pin.group) or pin.kind == "objective" then return 0 end
   local ids, npc = {}, nil
   for _, p in ipairs(pin.group or { pin }) do
     if p.questID and p.kind ~= "turnin" then

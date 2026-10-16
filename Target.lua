@@ -83,6 +83,9 @@ ns.LearnMobName = Learn
 local function TrackedQuest()
   local questID = C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
   if questID and questID > 0 and ns.InQuestLog(questID) then return questID end
+  -- (Questdon review 3) nothing tracked: the quest the quest list picked
+  local f = ns.Num(ns.trackerFocus)
+  if f and f > 0 and ns.InQuestLog(f) then return f end
 end
 
 -- Names (in data order) of the open objective creatures whose name is known.
@@ -190,9 +193,12 @@ ns.RegisterRefresh("targetbutton", Refresh)
 local function QueueRefresh() ns.QueueRefresh("targetbutton") end
 ns.RefreshTargetButton = QueueRefresh
 
+-- (Questdon review 1) called by /qd reset and "Reset positions" with the item button (it had no caller); in a
+-- fight once the fight is over
+local pendingReset = false
 function ns.ResetTargetButtonPosition()
   ns.db.targetButtonPos = nil
-  if button and not InCombatLockdown() then ApplyPosition() end
+  if button and not InCombatLockdown() then ApplyPosition() elseif button then pendingReset = true end
 end
 
 -- (1.28) names are in the language of the client that saw them: a different
@@ -213,6 +219,7 @@ ns.On("SUPER_TRACKING_CHANGED", QueueRefresh)
 ns.On("NAME_PLATE_UNIT_ADDED", function(_, unit) Learn(unit) end)
 ns.On("PLAYER_TARGET_CHANGED", function() Learn("target") end)
 ns.On("PLAYER_REGEN_ENABLED", function()
+  if pendingReset and button then pendingReset = false ApplyPosition() end
   if pendingStop and button then
     pendingStop = false
     button:StopMovingOrSizing()

@@ -205,6 +205,9 @@ ns.On("QUEST_DETAIL", function()
   if not ns.db.learnQuests then return end
   local id = ns.Num(ns.Value(GetQuestID))
   if not id or id == 0 then return end
+  -- (Questdon review 1) shared by a player: says nothing about where the quest starts (it was learned as
+  -- "started from an item" and shared as an I line)
+  if ns.True(ns.Value(UnitIsPlayer, "npc")) then return end
   local here = Here()
   if here then
     here.item = here.npc == nil or nil -- no NPC: started from an item
@@ -333,6 +336,11 @@ local progressReady = false
 local learnVersion = 0
 function ns.LearnedChanged() learnVersion = learnVersion + 1 end
 function ns.LearnVersion() return learnVersion end
+-- (16.10., stutter report) a new spot changes only its quest: the map's per-objective cache sees the spots itself
+-- (count and sum), the arrow asks per quest. Before, every spot (also every nearby sighting) made all quests'
+-- points be worked out again.
+local spotVersion = {}
+function ns.QuestSpotVersion(questID) return spotVersion[questID] or 0 end
 
 -- Remember a spot (0-1) for an objective. true if it was new.
 function ns.AddObjectiveSpot(questID, index, map, x, y)
@@ -353,11 +361,40 @@ function ns.AddObjectiveSpot(questID, index, map, x, y)
   spots[#spots + 1] = map
   spots[#spots + 1] = math.floor(x * 1000 + 0.5) / 1000
   spots[#spots + 1] = math.floor(y * 1000 + 0.5) / 1000
-  learnVersion = learnVersion + 1
+  spotVersion[questID] = (spotVersion[questID] or 0) + 1
   return true
 end
 
+-- (1.3.8, F5) Where a quest item was used: the counter of a "use it here" objective often goes up a moment later
+-- (a summoned mob, a flight, walking on): the place of use is where the item's spell went off, not where you stand
+-- when the log updates. Kept USE_SECS seconds for the objectives that item serves.
+local USE_SECS = 20
+local lastUse -- { t, map, x, y, for = { ["questID:index"] = true } }
+local function OnCast(unit, spellID)
+  if unit ~= "player" or not (ns.db and ns.db.learnQuests and ns.UseObjectivesForSpell) then return end
+  if spellID == nil or not ns.Usable(spellID) then return end
+  local list = ns.UseObjectivesForSpell(spellID)
+  if #list == 0 then return end
+  local map, x, y = ns.PlayerPosition()
+  if not map then return end
+  local serves = {}
+  for _, e in ipairs(list) do serves[e[1] .. ":" .. e[2]] = true end
+  lastUse = { t = ns.Num(ns.Value(GetTime)) or 0, map = map, x = x, y = y, serves = serves }
+end
+ns.NoteItemCast = OnCast -- (tests)
+function ns.LastItemUse() return lastUse end -- (tests)
+-- only the player's own casts (a unit event: the casts of every mob and party member never reach Questdon)
+local castFrame = CreateFrame("Frame")
+if castFrame.RegisterUnitEvent and pcall(castFrame.RegisterUnitEvent, castFrame, "UNIT_SPELLCAST_SUCCEEDED", "player") then
+  castFrame:SetScript("OnEvent", ns.Guard("item use", function(_, _, unit, _, spellID) OnCast(unit, spellID) end))
+end
+
 local function AddSpot(questID, index)
+  local u = lastUse
+  if u and u.serves[questID .. ":" .. index] and (ns.Num(ns.Value(GetTime)) or 0) - u.t <= USE_SECS then
+    ns.AddObjectiveSpot(questID, index, u.map, u.x, u.y)
+    return
+  end
   ns.AddObjectiveSpot(questID, index, ns.PlayerPosition())
 end
 
@@ -453,13 +490,19 @@ local function NoteCredit(questID, index, o)
   db.learnedCredit[questID] = q
   local c = q[index] or {}
   q[index] = c
-  local newCreature = false
+  local newCreature, changed = false, false
   for _, src in ipairs(credit) do
     c[src[1]] = c[src[1]] or {}
-    if src[1] == "c" and not c.c[src[2]] then newCreature = true end
+    local before = c[src[1]][src[2]]
+    if src[1] == "c" and not before then newCreature = true end
     Bump(c[src[1]], src[2])
+    -- (Questdon review 5) the second credit makes a creature count where the data names others: index it then too
+    if src[1] == "c" and c.c[src[2]] == 2 then newCreature = true end
+    -- (Questdon review 4) what the objectives use changes only with a new source or one seen twice (the
+    -- threshold of LearnedObjectiveCreatures): every kill credit rebuilt all quests' points before
+    if not before or c[src[1]][src[2]] == 2 then changed = true end
   end
-  learnVersion = learnVersion + 1
+  if changed then learnVersion = learnVersion + 1 end
   -- (1.2) a mob newly known to count for this objective: nameplates, tooltips,
   -- sightings and the map use it from now on
   if newCreature and ns.ResetCreatureIndex then ns.ResetCreatureIndex() end

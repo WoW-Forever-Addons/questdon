@@ -30,6 +30,8 @@ local dots = { x = {}, y = {}, n = 0 }
 local sig
 local function Dots()
   local w = ns.ArrowWay and ns.ArrowWay()
+  -- (Questdon review 4) nothing leads (list closed, arrow off): no way dots left behind
+  if ns.ArrowRuns and not ns.ArrowRuns() then w = nil end
   if not (Enabled() and w and w.t and w.wp and ns.PathLine) then dots.n = 0 sig = nil return nil end
   local line = ns.PathLine(w.t, w.wp, w.cave)
   if not line or #line.pts < 2 then dots.n = 0 sig = nil return nil end

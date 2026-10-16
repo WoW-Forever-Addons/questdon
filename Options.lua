@@ -34,6 +34,7 @@ local PAGES = {
     { key = "autoTurnIn", name = "Auto turn in quests", tip = "Turns in completed quests. Quests with several reward choices or a gold cost, and repeatable quests, are left to you.", blockedBy = QuestieBlocks("autoTurnIn") },
     { header = "Rewards" },
     { key = "highlightBest", name = "Highlight most valuable reward", tip = "Marks the reward with the highest vendor price with a gold coin." },
+    { key = "suggestReward", name = "Suggest a reward for your class", tip = "A green frame marks the reward players of your class pick most. Until enough players have picked, it marks the one with armor and stats for your class that beats what you wear." },
     { key = "autoPickBest", name = "Auto pick most valuable reward", tip = "Picks the highest vendor price reward when auto turn-in is on. Careful: ignores possible upgrades.", parent = "autoTurnIn" },
     { header = "Chains and group" },
     { key = "chainHint", name = "Hint for the next quest in a chain", tip = "After turning in a quest, names the follow-up quest and its zone in the chat." },
@@ -72,7 +73,7 @@ local PAGES = {
     -- (1.3.5) dungeon entrances
     { header = "Dungeon entrances" },
     { key = "dungeonPins", name = "Dungeon entrances on the map", tip = "The entrance of every dungeon and raid Questdon knows, on the world map. Mouse over: level range and your quests there. Click: the dungeon in the quest book. Right-click: the arrow leads you there.", onChange = RefreshPins },
-    { key = "dungeonPinsMinimap", name = "Dungeon entrances on the minimap", tip = "The same entrances on the minimap, but only when you are within about 300 yards, so the edge of the minimap stays clear.", onChange = RefreshPins },
+    { key = "dungeonPinsMinimap", name = "Dungeon entrances on the minimap", tip = "The same entrances on the minimap, but only when you are within about 300 yards, so the edge of the minimap stays clear.", parent = "minimapPins", onChange = RefreshPins },
     { header = "Learning" },
     { key = "learnQuests", name = "Learn quest locations", tip = "Remembers where you accept and turn in quests and where your objective counters went up (account wide), so your other characters see them on the map too." },
     { key = "shareLearned", name = "Share learned data with guild and group", tip = "Sends what you learned and the data does not have yet (only numbers: quest, NPC, map and item numbers, coordinates) to Questdon players in your guild and group. What two or more players reported is used by everyone, also when this is off.", parent = "learnQuests" },
@@ -86,12 +87,20 @@ local PAGES = {
     { header = "Quest list" },
     { key = "tracker", name = "Show the quest list", tip = "Your quests in Questdon's own window instead of Blizzard's quest tracker: on top the quest you picked with a compass, below the others; the tabs switch between nearby, by zone and by level. Click a quest to pick it, Shift-click to read it. /qd list toggles it.", onChange = function()
         -- (1.3.7) without the list its compass is gone too: the arrow comes back
-        if ns.db.tracker == false then ns.db.arrow = true if ns.RefreshSettingsUI then ns.RefreshSettingsUI() end end
+        if ns.SyncArrowWithList then ns.SyncArrowWithList() end -- (review 4) and gone again with the list
         if ns.UpdateTracker then ns.UpdateTracker(true) end if ns.ApplyArrowLook then ns.ApplyArrowLook() end end },
     -- (1.3.7, Daniel 13.10.: "by default the compass in the list and the arrow off; switch it off and the old arrow
     -- comes back; both at once must be possible")
     { key = "trackerCompass", name = "Compass in the quest list", tip = "A compass on the card of the picked quest. Off: the separate direction arrow comes back. Both at once: also switch on 'Show window' under Direction arrow.", parent = "tracker", onChange = function()
-        ns.db.arrow = not ns.db.trackerCompass
+        -- (Questdon review 5) off: the arrow window leads; on: the list's compass leads when the list is there (the
+        -- window goes, as before), else the window stays and goes with the list's return
+        local db = ns.db
+        local listOn = db.tracker ~= false and db.trackerShown ~= false
+        if db.trackerCompass == false then
+          db.arrow, db.arrowAuto = true, nil
+        else
+          db.arrow, db.arrowAuto = not listOn, (not listOn) or nil
+        end
         ApplyArrow()
         if ns.UpdateTracker then ns.UpdateTracker(true) end
         if ns.RefreshSettingsUI then ns.RefreshSettingsUI() end
@@ -104,7 +113,7 @@ local PAGES = {
     { key = "trackerAlpha", kind = "slider", name = "Background opacity", tip = "From a dark window down to no background and no frame, only the text. Shift + mouse wheel over the title bar does it too.", min = 0, max = 1, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then f:SetBackgroundAlpha(ns.db.trackerAlpha) end end },
     { key = "trackerCombatFade", name = "Dim in combat", tip = "Dims the window to 40 % while you are in combat.", parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then ns.Style.CombatFade(f, ns.db.trackerCombatFade) end end },
     { header = "Direction arrow" },
-    { key = "arrow", name = "Show window", tip = "Arrow with distance to the quest you track in the quest log or tracker (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = ArrowLook },
+    { key = "arrow", name = "Show window", tip = "Arrow with distance to the quest you track in the quest log or tracker (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = function(...) ns.db.arrowAuto = nil ArrowLook(...) end }, -- (review 4) your choice
     { key = "arrowLocked", name = "Lock window", tip = "The arrow can no longer be dragged.", parent = "arrow" },
     { key = "arrowNext", name = "Move on to the next quest by itself", tip = "When no quest is tracked (after a turn-in, or after you arrived at a clicked target), the arrow points to the nearest turn-in of a finished quest, or to an open objective close by when that is nearer. Click the arrow to put it aside until your quest log changes.", parent = "arrow", onChange = function() ns.UpdateArrowTarget() end },
     { key = "pathDots", name = "Show the way as dots", tip = "Where the arrow leads around a mountain or first to the way into a cave, dots on the world map and minimap show the way.", parent = "arrow" },
@@ -163,7 +172,9 @@ local function Status()
   for _ in pairs(ns.db.learned or {}) do learned = learned + 1 end
   local att = ns.ATT_META and ns.ATT_META.quests or 0
   lines[#lines + 1] = L["Quest database: %d quests from All The Things, %d learned"]:format(att, learned)
-  if ns.AddOnLoaded("Questie") then
+  if ns.AddOnLoaded("Questie") and not (ns.QuestieOn and ns.QuestieOn()) then
+    lines[#lines + 1] = L["Questie is switched off."] -- (Questdon review 3)
+  elseif ns.AddOnLoaded("Questie") then
     lines[#lines + 1] = ns.db.questieFirst and L["Questie is loaded and has priority."] or L["Questie is loaded, priority is off."]
   else
     lines[#lines + 1] = L["Questie is not loaded."]
@@ -181,7 +192,11 @@ local TOOLS = {
   { "Test the arrow", "Test", function()
       local map, x, y = ns.PlayerPosition()
       if map and ns.SetArrowTarget then
-        ns.db.arrow = true
+        -- (Questdon review 5) the window for the test only: taken back after a while when the list shows the way
+        if not ns.db.arrow then
+          ns.db.arrow, ns.db.arrowAuto = true, true
+          ns.After(30, function() if ns.db.arrowAuto and ns.SyncArrowWithList then ns.SyncArrowWithList() end end)
+        end
         ApplyArrow()
         ns.SetArrowTarget(map, x, math.max(0, y - 0.03), L["Test: a bit to the north"])
       end

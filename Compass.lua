@@ -131,7 +131,7 @@ function ns.NewCompass(parent, size)
   end
   if f.north then
     if f.north.SetFont then pcall(function() local p = f.north:GetFont() if p then f.north:SetFont(p, 8, "OUTLINE") end end) end
-    f.north:SetText("N")
+    f.north:SetText(ns.L["N"]) -- (review 4) north in the client's language
     f.north:Hide()
   end
   for k, fn in pairs(Methods) do f[k] = fn end
