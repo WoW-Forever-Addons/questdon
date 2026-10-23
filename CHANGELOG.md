@@ -2,6 +2,10 @@
 
 ## 1.3.10
 
+- **Symbols over the right mobs and items:** when the game lists a quest's goals in another order than Questdon's data (Slimy Menace and An Enticing Offer after a Forever update), Questdon now matches them by the names of the mobs and items, so what you still need gets its symbol and finished goals lose theirs. What Questdon had learned for these two quests in the wrong order is dropped once. Questdon also remembers the order it saw, and while a quest's order is unclear it learns nothing for it rather than something wrong.
+
+- **Lighter while questing:** a kill or a loot no longer makes the quest list, the walking routes, the quest item check and the sounds work everything out again; counts and XP are written into the list in place, the arrow no longer makes new garbage at every frame while it follows a guide like Leveldon, and the world map no longer draws its pins anew while it is closed or when nothing on it changed. Fewer small stutters while you quest.
+
 - **Better data from your play:** with "Learn quest locations" on, Questdon also notes what an NPC is when you use it (vendor, trainer, innkeeper, flight master, spirit healer) and adds it to /qd export, so Forever's new zones get their trainers and inns.
 
 - **Open data only:** Questdon's quest data now comes only from open sources: All The Things, the open Classic database CMaNGOS (positions converted to Forever's maps with the client's own map frames), ForeverDB and what Questdon players record. Quest texts before you take a quest are in English; once a quest is in your log the game shows its own text in your language.

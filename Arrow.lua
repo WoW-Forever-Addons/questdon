@@ -119,7 +119,8 @@ function ns.NeedleDiag()
   if not mapID then return "no player position" end
   local function F(v, f) return ns.Num(v) and (f):format(v) or "-" end
   local pc, pn, pw = PlayerWorld()
-  local us, uo = ns.UnitPositionState and ns.UnitPositionState()
+  local us, uo -- (23.10.) not "a and f()": that keeps only the first value, the order always read nil
+  if ns.UnitPositionState then us, uo = ns.UnitPositionState() end
   local fac = ns.Num(ns.Value(GetPlayerFacing))
   local s = ("player map %s at %s %s, world %s %s %s, unitpos %s/%s, facing %s"):format(tostring(mapID), F(x, "%.4f"),
     F(y, "%.4f"), tostring(pc), F(pn, "%.0f"), F(pw, "%.0f"), tostring(us), tostring(uo),
@@ -278,6 +279,23 @@ local function StampSame(questID, st)
     and st.sv == (ns.QuestSpotVersion and ns.QuestSpotVersion(questID) or 0)
 end
 ns.QuestStampFill, ns.QuestStampSame = StampFill, StampSame -- (the API keeps its places by the same state)
+-- (23.10., /qd mem) which part of the state changed, for the "... new: <why>" counts (only while /qd mem runs)
+local function StampWhy(questID, st)
+  if type(st) ~= "table" then return "first" end
+  if st.c ~= (ns.IsQuestComplete(questID) and true or false) or st.f ~= (ns.IsQuestFailed(questID) and true or false)
+      or st.a ~= (ns.IsAutoComplete(questID) and true or false) then return "complete" end
+  local mask, req, n = ObjState(questID)
+  if st.mask ~= mask or st.req ~= req or st.n ~= n then return "objectives" end
+  local m, x, y = ns.QuestPOI(questID)
+  if st.m ~= m or st.x ~= x or st.y ~= y then return "game point" end
+  if st.lv ~= (ns.LearnVersion and ns.LearnVersion() or 0) then return "learned" end
+  if st.pv ~= (ns.SharedPlacesVersion and ns.SharedPlacesVersion(questID) or 0) then return "shared" end
+  if st.sv ~= (ns.QuestSpotVersion and ns.QuestSpotVersion(questID) or 0) then return "spots" end
+  return "time"
+end
+function ns.QuestStampWhy(questID, st, label)
+  if ns.MemProfiling and ns.MemProfiling() then ns.MemCount(label .. ": " .. StampWhy(questID, st)) end
+end
 -- (16.10. evening, Daniel's /qd mem: 1.0 to 1.5 MB of new memory a second, Questie 6 KB) the arrow's own target
 -- (BuildAuto, NextAuto) took the quest's places anew at every update: all spawns as new tables. It shares these.
 local nearSpecial = {}
@@ -289,6 +307,8 @@ local function CachedPoints(questID)
   -- quest anew each 30 s) the state stamp, the bags and the zone catch every change; the time is only a safety net
   if points == nil or not ns.MemPart("near stamp", StampSame, questID, nearSig[questID]) or now - (nearAt[questID] or 0) > NEAR_SECS or now < (nearAt[questID] or 0) then
     ns.MemCount("near points new")
+    if points ~= nil then ns.QuestStampWhy(questID, nearSig[questID], "near points new")
+    elseif ns.MemProfiling and ns.MemProfiling() then ns.MemCount(nearSig[questID] and "near points new: bags or zone" or "near points new: first") end
     local special
     points, special = QuestPoints(questID)
     if special == "autocomplete" or type(points) ~= "table" then points = false end
@@ -389,8 +409,12 @@ ns.ObjectiveMobInSight = MobInSight
 -- neighbours within CLUSTER_R yards against its distance. Close by (CLUSTER_FAR) the nearest spot wins as before.
 -- The current target stays unless another spot scores a quarter better.
 local CLUSTER_R, CLUSTER_FAR, CLUSTER_CAND = 70, 150, 30
+-- (23.10., Daniel's /qd mem with Leveldon's target far from its places: arrow 15 KB a second) the spots and their
+-- distances in three kept arrays, sorted by index with one comparator: no table per spot and call any more
+local clPts, clD, clIdx = {}, {}, {}
+local function ByDist(a, b) return clD[a] < clD[b] end
 local function Cluster(t, pc, pn, pw)
-  local pts, cand = {}, {}
+  local np = 0
   for _, p in ipairs(t.points) do
     if not p._wc and p.mapID and p.x and p.y then
       local c, n, w = ns.WorldPos(p.mapID, p.x, p.y)
@@ -398,28 +422,36 @@ local function Cluster(t, pc, pn, pw)
     end
     if p._wc == pc then
       local dn, dw = p._wn - pn, p._ww - pw
-      pts[#pts + 1] = p
-      cand[#cand + 1] = { p = p, d = math.sqrt(dn * dn + dw * dw) }
+      np = np + 1
+      clPts[np], clD[np], clIdx[np] = p, math.sqrt(dn * dn + dw * dw), np
     end
   end
-  if #pts < 4 then return nil end
-  table.sort(cand, function(a, b) return a.d < b.d end)
+  for k = np + 1, #clIdx do clPts[k], clD[k], clIdx[k] = nil, nil, nil end
+  if np < 4 then
+    for k = 1, np do clPts[k] = nil end
+    return nil
+  end
+  table.sort(clIdx, ByDist)
   local r2 = CLUSTER_R * CLUSTER_R
   local best, bestScore, curScore
-  for k = 1, math.min(#cand, CLUSTER_CAND) do
-    local c = cand[k]
+  for k = 1, math.min(np, CLUSTER_CAND) do
+    local i = clIdx[k]
+    local cp = clPts[i]
     local n = 0
-    for _, q in ipairs(pts) do
-      local dn, dw = q._wn - c.p._wn, q._ww - c.p._ww
+    for j = 1, np do
+      local q = clPts[j]
+      local dn, dw = q._wn - cp._wn, q._ww - cp._ww
       if dn * dn + dw * dw <= r2 then n = n + 1 end
     end
-    local score = n / (c.d + 150) -- n counts the spot itself
-    if not bestScore or score > bestScore then best, bestScore = c, score end
-    if c.p.mapID == t.mapID and c.p.x == t.x and c.p.y == t.y then curScore = score end
+    local score = n / (clD[i] + 150) -- n counts the spot itself
+    if not bestScore or score > bestScore then best, bestScore = i, score end
+    if cp.mapID == t.mapID and cp.x == t.x and cp.y == t.y then curScore = score end
   end
+  local bp, bd = best and clPts[best], best and clD[best]
+  for k = 1, np do clPts[k] = nil end -- (the old target's spots are not kept alive)
   if not best then return nil end
   if curScore and curScore * 1.25 >= bestScore then return nil, true end
-  return best.p, best.d
+  return bp, bd
 end
 ns.ArrowCluster = Cluster -- (tests)
 

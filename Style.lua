@@ -513,6 +513,7 @@ local ICONS = {
   options  = { atlas = { "QuestLog-icon-setting" },    file = "Interface\\Buttons\\UI-OptionsButton" },
   back     = { atlas = { "common-icon-backarrow" },     file = "Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Up" },
   forward  = { atlas = { "common-icon-forwardarrow" },  file = "Interface\\Buttons\\UI-SpellbookIcon-NextPage-Up" },
+  report   = { atlas = {},                              file = "Interface\\Buttons\\UI-GuildButton-PublicNote-Up" }, -- (Leveldon 0.1.7)
 }
 Style.ICONS = ICONS
 

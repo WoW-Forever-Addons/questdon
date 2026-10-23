@@ -465,10 +465,22 @@ function ns.MemoryCheck(seconds)
       end
     end
     -- (18.10.) how often the quest list made its rows anew
-    for _, k in ipairs({ "tracker rebuild", "tracker log read", "near points new", "creature index build" }) do
+    -- (23.10.) also how often the walking NPCs and the bag check for quest items were worked out again
+    for _, k in ipairs({ "tracker rebuild", "tracker log read", "near points new", "creature index build", "walks npcs new", "orphan scan" }) do
       local rb = prof and prof.calls and prof.calls[k .. " (inner)"]
       if rb then ns.Print(string.format("  %s: %.1f/s", k, rb / memRun.seconds)) end
     end
+    -- (23.10.) who makes the world map draw ("map from <file:line>") and why quest places were worked out again
+    -- ("API points new: <why>", "near points new: <why>"), the most frequent first
+    local why = {}
+    for k, n in pairs(prof and prof.calls or {}) do
+      local label = type(k) == "string" and k:match("^(.-) %(inner%)$")
+      if label and (label:find("^map from ") or label:find("^API points new: ") or label:find("^near points new: ")) then
+        why[#why + 1] = { label, n }
+      end
+    end
+    table.sort(why, function(a, b) return a[2] > b[2] end)
+    for i = 1, math.min(10, #why) do ns.Print(string.format("  %s: %.1f/s", why[i][1], why[i][2] / memRun.seconds)) end
     memRun = nil
   end, seconds)
 end

@@ -132,9 +132,13 @@ local function SpotKnown(questID, index, map, x, y)
   return false
 end
 
+-- (23.10., /qd mem round 2) no new table for a missing list: the share send builds all lines every few minutes
+local NOKEYS = {}
+local KINDS = { "c", "o", "i" }
 local function SortedKeys(t)
+  if type(t) ~= "table" then return NOKEYS end
   local keys = {}
-  for k in pairs(t or {}) do
+  for k in pairs(t) do
     if Int(k) and k > 0 then keys[#keys + 1] = k end
   end
   table.sort(keys)
@@ -160,11 +164,11 @@ function ns.ExportRecords(all)
   local learned = ns.db.learned or {}
   local learnedObj = ns.db.learnedObj or {}
   local quests = {}
-  for _, id in ipairs(SortedKeys(learned)) do quests[id] = true end
-  for _, id in ipairs(SortedKeys(learnedObj)) do quests[id] = true end
+  for id in pairs(learned) do if Int(id) and id > 0 then quests[id] = true end end
+  for id in pairs(learnedObj) do if Int(id) and id > 0 then quests[id] = true end end
 
   local credits = type(ns.db.learnedCredit) == "table" and ns.db.learnedCredit or {}
-  for _, id in ipairs(SortedKeys(credits)) do quests[id] = true end
+  for id in pairs(credits) do if Int(id) and id > 0 then quests[id] = true end end
 
   for _, id in ipairs(SortedKeys(quests)) do
     local e = learned[id]
@@ -229,7 +233,7 @@ function ns.ExportRecords(all)
       for _, index in ipairs(SortedKeys(cr)) do
         local c = cr[index]
         if type(c) == "table" then
-          for _, kind in ipairs({ "c", "o", "i" }) do
+          for _, kind in ipairs(KINDS) do
             for _, sid in ipairs(SortedKeys(c[kind])) do
               local n = c[kind][sid]
               if Int(n) and n > 0 and (all or not CreditKnown(id, index, kind, sid)) then
@@ -282,6 +286,12 @@ function ns.ExportRecords(all)
   for _, line in ipairs(ns.WalkSeenRecords and ns.WalkSeenRecords() or {}) do records[#records + 1] = line end
   -- (22.10.) what an NPC is (Services.lua): "V npc role map x y"
   for _, line in ipairs(ns.NpcRoleRecords and ns.NpcRoleRecords() or {}) do records[#records + 1] = line end
+  -- (23.10.) objective orders the game showed other than the data's, seen for sure: "Y quest 2,1" (QuestData.lua)
+  local orders = type(ns.db.objOrder) == "table" and ns.db.objOrder or {}
+  local orderKeys = {}
+  for q, v in pairs(orders) do if Int(q) and q > 0 and type(v) == "string" and v:match("^%d+[,%d]*$") then orderKeys[#orderKeys + 1] = q end end
+  table.sort(orderKeys)
+  for _, q in ipairs(orderKeys) do records[#records + 1] = ("Y %d %s"):format(q, orders[q]) end
   -- (1.3.8) the reward each of your characters picked by hand: "R quest class tree item" (Rewards.lua)
   local picks = type(ns.db.rewardPicks) == "table" and ns.db.rewardPicks or {}
   local pickKeys = {}

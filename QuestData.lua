@@ -1150,14 +1150,164 @@ end
 
 -- The client's objectives of a quest in the log ({} if unreadable).
 -- (1.23) Read once per scope; callers only read the list.
+-- (23.10., Daniel: Slimy Menace, no symbol over the Murloc Streamrunners) the game may list a quest's objectives in
+-- another order than the data: Forever swapped the two of 99128 between 13.10. and 23.10. (Leveldon's reports), so
+-- the Streamrunners asked about the murlocs' finished line and the murlocs about the Streamrunners' open one. The
+-- kill objectives are matched to the data by the names of their mobs (the longest name in the text wins, a tie
+-- counts as no match); the list callers get is in the data's order, the game's own order stays in list.game (shown
+-- in the quest list and the quest book) and list.order says how it was moved (Learn.lua, Notify.lua).
+-- (23.10., Daniel: An Enticing Offer 99130, all vials collected and their marks still shown) collect objectives too:
+-- matched by the names of their items (the game's item name, in the client's language).
+local multiKill = {} -- [questID] = true when the data names mobs or items for two objectives or more (static)
+local function MultiKill(questID)
+  local v = multiKill[questID]
+  if v ~= nil then return v end
+  local n = 0
+  for index, o in pairs(OBJ[questID] or {}) do
+    if type(index) == "number" and type(o) == "table" then
+      local has = false
+      for slot = 1, 2 do
+        for _, id in ipairs(type(o[slot]) == "table" and o[slot] or {}) do if type(id) == "number" then has = true break end end
+      end
+      if has then n = n + 1 end
+    end
+  end
+  v = n >= 2
+  multiKill[questID] = v
+  return v
+end
+-- { { data index, name, "monster" or "item" }, ... }
+local function MobNames(questID)
+  local names = {}
+  for index, o in pairs(OBJ[questID] or {}) do
+    if type(index) == "number" and type(o) == "table" and type(o[1]) == "table" then
+      for _, cr in ipairs(o[1]) do
+        if type(cr) == "number" then
+          local here = ns.LocalNpcName and ns.LocalNpcName(cr)
+          if type(here) == "string" and here ~= "" then names[#names + 1] = { index, here, "monster" } end
+          local data = ns.CreatureName(cr)
+          if type(data) == "string" and data ~= "" and data ~= here then names[#names + 1] = { index, data, "monster" } end
+        end
+      end
+    end
+    if type(index) == "number" and type(o) == "table" and type(o[2]) == "table" then
+      for _, item in ipairs(o[2]) do
+        if type(item) == "number" then
+          local name = C_Item and ns.Value(C_Item.GetItemNameByID, item)
+          if type(name) ~= "string" or name == "" then name = ns.Value(GetItemInfo, item) end
+          if type(name) == "string" and name ~= "" then names[#names + 1] = { index, name, "item" }
+          elseif C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, item) end -- known next time
+        end
+      end
+    end
+  end
+  return names
+end
+-- (23.10., Daniel: "the wrong assignment must not come back") An order seen for sure through the names is kept
+-- account-wide (QuestdonDB.objOrder, "2,1": the game's line 1 is the data's objective 2), goes out in /qd export
+-- (Y lines) and into the data (EXTRA_OBJ_ORDER, Extra_Quests.lua); it is used when the names are not known (an item
+-- the client has not loaded yet, a language without names).
+local function ParseOrder(s, count)
+  if type(s) ~= "string" then return nil end
+  local t, seen = {}, {}
+  for v in s:gmatch("%d+") do
+    v = tonumber(v)
+    if v < 1 or v > count or seen[v] then return nil end
+    t[#t + 1], seen[v] = v, true
+  end
+  return #t == count and t or nil
+end
+-- does the data say anything about the quest's objectives (then its order matters)?
+local function DataHasObjectives(questID)
+  for index in pairs(OBJ[questID] or {}) do if type(index) == "number" then return true end end
+  return false
+end
+-- { [game index] = data index } for the whole list, or nil when it stays as the game has it; second: true when the
+-- order is known (names, a kept order, or nothing to mix up). Learn.lua and POI.lua learn only then.
+local function DataOrder(questID, client)
+  local count = #client
+  if count < 2 or not DataHasObjectives(questID) then return nil, true end
+  local toData, used, moved, matched = {}, {}, false, 0
+  local names = MultiKill(questID) and MobNames(questID) or {}
+  if #names >= 2 then
+    for j, o in ipairs(client) do
+      local text = type(o) == "table" and o.text
+      local otype = type(o) == "table" and o.type ~= nil and ns.Usable(o.type) and o.type or nil
+      -- a kill objective by its mobs, a collect objective by its items (unknown type: both)
+      if (otype == nil or otype == "monster" or otype == "item") and type(text) == "string" and ns.Usable(text) then
+        local best, blen, tie
+        for _, e in ipairs(names) do
+          local len = #e[2]
+          if (otype == nil or otype == e[3]) and (not blen or len >= blen) and text:find(e[2], 1, true) then
+            if not blen or len > blen then best, blen, tie = e[1], len, false
+            elseif e[1] ~= best then tie = true end
+          end
+        end
+        if best and not tie then
+          if used[best] or best > count then toData, used, moved, matched = {}, {}, false, 0 break end -- no clear answer
+          toData[j], used[best] = best, true
+          matched = matched + 1
+          if best ~= j then moved = true end
+        end
+      end
+    end
+  end
+  -- all lines but one placed by their names: the last one takes the free place
+  if matched >= count - 1 then
+    local free = {}
+    for i = 1, count do if not used[i] then free[#free + 1] = i end end
+    local k = 0
+    for j = 1, count do
+      if not toData[j] then k = k + 1 toData[j] = free[k] end
+    end
+    local db = ns.db
+    if type(db) == "table" then
+      local keep = moved and table.concat(toData, ",") or nil
+      if type(db.objOrder) ~= "table" then db.objOrder = {} end
+      if db.objOrder[questID] ~= keep then db.objOrder[questID] = keep end
+    end
+    return moved and toData or nil, true
+  end
+  -- the names do not tell: the order seen before (own play, then the data)
+  local kept = type(ns.db) == "table" and type(ns.db.objOrder) == "table" and ns.db.objOrder[questID] or nil
+  local t = ParseOrder(kept, count) or ParseOrder(ns.EXTRA_OBJ_ORDER and ns.EXTRA_OBJ_ORDER[questID], count)
+  if t then
+    for j = 1, count do if t[j] ~= j then return t, true end end
+    return nil, true
+  end
+  return nil, false
+end
+-- worked out once per quest log event (the arrow and the nameplates read outside the quest displays' scope too)
+local orderGen, orderOf, sureOf = {}, {}, {}
+local function CachedOrder(questID, client)
+  local gen = not QD_TEST_FRESH_LOG and ns.LogGen and ns.LogGen()
+  if gen and orderGen[questID] == gen then return orderOf[questID] or nil end
+  local toData, sure = DataOrder(questID, client)
+  sureOf[questID] = sure and true or false
+  if gen then orderGen[questID], orderOf[questID] = gen, toData or false end
+  return toData
+end
 local function ReadObjectives(questID)
   local c = ns.Value(C_QuestLog.GetQuestObjectives, questID)
-  return type(c) == "table" and c or {}
+  if type(c) ~= "table" then return {} end
+  local toData = CachedOrder(questID, c)
+  if not toData then return c end
+  local view, order = { game = c }, {}
+  for j = 1, #c do view[toData[j]] = c[j] order[j] = toData[j] end
+  view.order = table.concat(order, ",")
+  return view
 end
+ns.ObjectiveDataOrder = DataOrder -- (tests)
 local function ClientObjectives(questID)
   return ns.LogMemo("objectives", questID, ReadObjectives) -- (16.10.) kept until the next quest log event
 end
 ns.ClientObjectives = ClientObjectives
+-- (23.10.) is the quest's objective order known (Learn.lua and POI.lua learn places and mobs only then)?
+function ns.ObjectiveOrderSure(questID)
+  local list = ClientObjectives(questID)
+  if #list < 2 and not list.game then return true end
+  return sureOf[questID] ~= false
+end
 
 -- (1.3.8, F2) Objects (chests, plants, crates: "o<id>") are clicked, mobs are killed: drawn apart on the maps, and
 -- the arrow says what to click when you are there. A bundle counts as objects when all its spots are objects.
@@ -1793,7 +1943,18 @@ end
 -- { {mapID, x, y (0-100)}, ... } of all open "u" objectives without their item:
 -- known places of use plus quest giver and turn-in (heuristic, see above).
 -- Second value: true if a place to get one of these items is known.
+-- (23.10., Daniel's /qd mem 20.10.: "near stamp" 11 KB a second at 36 calls) the quest list's state check asks this
+-- for every quest with a game point each second: a quest without any "use an item" objective answers with one kept
+-- empty list (read only) instead of five new tables
+local NO_REFS = {}
+local function HasUseObjective(questID)
+  for _, o in pairs(OBJ[questID] or NO_REFS) do
+    if type(o) == "table" and o[USE] == "u" then return true end
+  end
+  return false
+end
 function ns.UsePlacesWithoutItem(questID)
+  if not HasUseObjective(questID) then return NO_REFS, false end
   local refs, acquire = {}, false
   local giverRefs
   -- (Questdon review 4) only "use an item here" objectives can say so: the others' targets are not worked out

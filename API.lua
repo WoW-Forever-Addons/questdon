@@ -24,15 +24,22 @@ local API = { version = VERSION }
 -- origin } origin (1.13): nil = ATT's current Forever data, "o" = only in ATT's older classic data
 -- (zzOLD, may be gone in Forever), "of" = zzOLD but marked by ATT as added in Forever.
 -- dungeon (1.18): ATT instance ID of the dungeon the quest belongs to, else nil (see QuestDungeon).
+-- (23.10., Daniel's /qd mem with Leveldon: "API GetQuest" 3 KB a second at 2.5 calls) the data does not change: one
+-- answer table per quest, kept (callers only read it)
+local questAnswers = {}
 function API.GetQuest(questID)
   local q = Q[questID]
   if not q then return nil end
-  return {
+  local kept = questAnswers[questID]
+  if kept and kept.q == q then return kept.out end
+  local out = {
     questID = questID, mapID = q[1], x = q[2], y = q[3], faction = q[4], minLevel = q[5],
     prereqs = Copy(q[6]), givers = Copy(q[7]), flags = q[8] or "", name = q[13], origin = q[14],
     dungeon = q[15],
     classes = Copy(q[9]), -- (1.3.6) class IDs of a class quest (1 warrior ... 11 druid), else nil
   }
+  questAnswers[questID] = { q = q, out = out }
+  return out
 end
 
 function API.QuestTitle(questID) return ns.QuestTitle(questID) end
@@ -94,6 +101,7 @@ ns.On("BAG_UPDATE_DELAYED", function()
   for q, c in pairs(apiPts) do if c.bags then apiPts[q] = nil end end
 end)
 local lastBags
+local apiSeen = {} -- (23.10., /qd mem) quests whose places were asked for before (to tell a forgotten entry from a first one)
 function ns.ForgetApiPoints() apiPts = {} end -- (tests)
 local BuildObjectivePoints
 function API.ObjectivePoints(questID)
@@ -102,6 +110,10 @@ function API.ObjectivePoints(questID)
   local now = ns.Num(ns.Value(GetTime)) or 0
   local c = apiPts[questID]
   if c and now - c.at <= 30 and now >= c.at and ns.QuestStampSame(questID, c.st) then return c.list end
+  -- (23.10.) while /qd mem runs: why the places were worked out again ("first" also after a bag or zone change)
+  if c and ns.QuestStampWhy then ns.QuestStampWhy(questID, c.st, "API points new")
+  elseif ns.MemProfiling and ns.MemProfiling() then ns.MemCount(apiSeen[questID] and "API points new: bags or zone" or "API points new: first") end
+  apiSeen[questID] = true
   local list = BuildObjectivePoints(questID)
   apiPts[questID] = { st = ns.QuestStampFill(questID, {}), at = now, list = list, bags = lastBags or #list == 0 }
   return list
@@ -114,9 +126,11 @@ function BuildObjectivePoints(questID)
     list[1] = { mapID = m, x = x, y = y, source = source, index = openIndex }
   end
   lastBags = false
+  -- (23.10.) the points of AllObjectivePoints are new tables of this call: handed on as they are (they were copied
+  -- into a second set of tables)
   for _, p in ipairs(ns.AllObjectivePoints(questID)) do
     if p.needsItem or p.useSpot then lastBags = true end
-    list[#list + 1] = { mapID = p.mapID, x = p.x, y = p.y, needsItem = p.needsItem, index = p.index }
+    list[#list + 1] = p
   end
   return list
 end
@@ -211,6 +225,13 @@ function API.DistanceTo(mapID, x, y)
   if not ns.DistanceAndBearing then return nil end
   distTarget.mapID, distTarget.x, distTarget.y = mapID, x, y
   return ns.DistanceAndBearing(distTarget)
+end
+
+-- (23.10., Leveldon's /lvd mem) the player's map and position (0-1) as Questdon reads it: from UnitPosition where it
+-- fits the map, so no new vector table as with C_Map.GetPlayerMapPosition. nil without a position.
+function API.PlayerPosition()
+  if not ns.PlayerPosition then return nil end
+  return ns.PlayerPosition()
 end
 
 -- Arrow: point it at a target { mapID, x, y (0-1), label } or nil to release it.

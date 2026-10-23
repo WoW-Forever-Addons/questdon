@@ -2648,7 +2648,8 @@ local PlaceDetail
 local function ObjectiveTexts(id)
   local out = {}
   if ns.InQuestLog(id) then
-    for _, o in ipairs(ns.ClientObjectives(id) or {}) do
+    local list = ns.ClientObjectives(id) or {}
+    for _, o in ipairs(list.game or list) do -- (23.10.) in the game's order
       if type(o) == "table" and type(o.text) == "string" and ns.Usable(o.text) and o.text ~= "" then
         out[#out + 1] = { "- " .. o.text, ns.True(o.finished) and "good" or "textPrimary" }
       end

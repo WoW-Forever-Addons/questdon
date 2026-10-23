@@ -312,6 +312,25 @@ end
 -- The arrow's next point on the way to target t ({ mapID, x, y } 0-1), or nil for the straight line
 local state = { key = nil, wps = nil, at = -1e9 }
 local function Now() return ns.Num(ns.Value(GetTime)) or 0 end
+-- (23.10., Daniel's /qd mem with Leveldon's target: arrow 15 KB a second at 27 calls) no closure per call (Recalc
+-- was one, with eight upvalues), one probe table for the reached check, and the answer table kept while the
+-- waypoint stays the same (a new table only when the way moves on)
+local function Recalc(now, key, inside, m, px, py, t, tway)
+  if now - state.at < RECALC and state.key == key then return end
+  state.key, state.at = key, now
+  local ok, wps
+  if inside then ok, wps = pcall(ns.PathInside, m, px, py, t.x, t.y, tway) else ok, wps = pcall(ns.PathFor, m, px, py, t.x, t.y) end
+  state.wps = ok and wps or nil
+end
+local probe = {}
+local function Answer(m, cell, wx, wy)
+  local o = state.out
+  if not (o and o.mapID == m and state.outCell == cell) then
+    o = { mapID = m, x = wx, y = wy }
+    state.out, state.outCell = o, cell
+  end
+  return o
+end
 function ns.PathNext(t)
   if not (t and t.mapID and t.x and t.y) or ns.db.arrowPaths == false then return nil end
   local m, px, py = ns.PlayerPosition()
@@ -323,20 +342,14 @@ function ns.PathNext(t)
   local inside = tway and Indoors() and InsideOf(ins, me) == tway
   local key = ("%d:%.3f:%.3f:%s"):format(t.mapID, t.x, t.y, inside and "in" or "out")
   local now = Now()
-  local function Recalc()
-    if now - state.at < RECALC and state.key == key then return end
-    state.key, state.at = key, now
-    local ok, wps
-    if inside then ok, wps = pcall(ns.PathInside, m, px, py, t.x, t.y, tway) else ok, wps = pcall(ns.PathFor, m, px, py, t.x, t.y) end
-    state.wps = ok and wps or nil
-  end
-  if state.key ~= key then Recalc() end
+  if state.key ~= key then Recalc(now, key, inside, m, px, py, t, tway) end
   local wps = state.wps
   if not wps then return nil end
   -- reached waypoints go; the last one is the target itself (the arrow takes it from there)
   while #wps > 1 do
     local wx, wy = Center(wps[1])
-    local d = ns.DistanceAndBearing({ mapID = m, x = wx, y = wy })
+    probe.mapID, probe.x, probe.y = m, wx, wy
+    local d = ns.DistanceAndBearing(probe)
     if d and d <= REACHED then table.remove(wps, 1) else break end
   end
   if #wps <= 1 then return nil end
@@ -361,14 +374,14 @@ function ns.PathNext(t)
   local cx, cy = me % N, math.floor(me / N)
   local tx, ty = wps[1] % N, math.floor(wps[1] / N)
   if math.max(math.abs(cx - tx), math.abs(cy - ty)) > OFF_WAY * 6 then
-    Recalc()
+    Recalc(now, key, inside, m, px, py, t, tway)
     wps = state.wps
     if not wps or #wps <= 1 then return nil end
     wx, wy = Center(wps[1])
   end
-  return { mapID = m, x = wx, y = wy }
+  return Answer(m, wps[1], wx, wy)
 end
-function ns.PathReset() state.key, state.wps, state.at, state.me = nil, nil, -1e9, nil end -- (tests)
+function ns.PathReset() state.key, state.wps, state.at, state.me, state.out, state.outCell = nil, nil, -1e9, nil, nil, nil end -- (tests)
 
 -- (11.10., Daniel: "a dotted line on the map and minimap") the way the arrow leads, as points on the zone map
 -- ({ mapID, { x, y }, ... } 0-1, from you to the target), or nil when it points straight. way: the point the

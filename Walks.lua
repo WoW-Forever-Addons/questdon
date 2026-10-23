@@ -116,23 +116,33 @@ local function Relevant(mapID)
   return out
 end
 
-local relevant = { } -- [mapID] = { npcs = {}, sig = "", at = time, gen = logGen, level = level }
+-- (23.10., Daniel's /qd mem 20.10.: "walks" 23 KB a second at 8.7 calls) every quest log event (each kill, each loot)
+-- worked the NPCs out again: every open objective's mobs, every pin of the map. What they depend on is the log's
+-- state (ns.QuestLogState: which quests, which complete, which objectives done): only its change counts now.
+local relevant = { } -- [mapID] = { npcs = {}, sig = "", at = time, gen = logGen, level = level, state =, count = }
 local function RelevantNpcs(mapID)
   local r = relevant[mapID]
   local now = type(GetTime) == "function" and GetTime() or 0
   local gen = ns.LogGen and ns.LogGen() or 0
   local level = ns.PlayerLevel and ns.PlayerLevel() or 0
-  if r and r.gen == gen and r.level == level and now - r.at < RELEVANT_EVERY then return r end
+  if r and r.level == level and now - r.at < RELEVANT_EVERY and now >= r.at then
+    if r.gen == gen then return r end
+    local state, count = ns.QuestLogState()
+    if state == r.state and count == r.count then r.gen = gen return r end
+  end
+  ns.MemCount("walks npcs new")
+  local state, count = ns.QuestLogState()
   if not NpcsOnMap(mapID) then
-    r = { npcs = {}, sig = "", at = now, gen = gen, level = level }
+    r = { npcs = {}, sig = "", at = now, gen = gen, level = level, state = state, count = count }
   else
     local npcs = ns.ScopeCall and ns.ScopeCall(Relevant, mapID) or Relevant(mapID)
-    r = { npcs = npcs, sig = table.concat(npcs, ","), at = now, gen = gen, level = level }
+    r = { npcs = npcs, sig = table.concat(npcs, ","), at = now, gen = gen, level = level, state = state, count = count }
   end
   relevant[mapID] = r
   return r
 end
 ns.WalkNpcs = function(mapID) return Relevant(mapID) end -- (tests)
+ns.WalkRelevant = RelevantNpcs -- (tests)
 function ns.ForgetWalks() relevant = {} end
 
 ---------------------------------------------------------------------------

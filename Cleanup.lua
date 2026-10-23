@@ -330,6 +330,7 @@ end
 -- tooltips. It is kept until something it depends on happens, or 15 seconds
 -- pass, so the panel's regular refreshes cost nothing. Callers only read it.
 local function BuildOrphans()
+  ns.MemCount("orphan scan") -- (23.10.) /qd mem: how often the bags are scanned
   local list = {}
   if not (C_Container and C_Container.GetContainerItemQuestInfo) then return list end
   local texts, special, openEnded = ObjectiveTexts()
@@ -394,10 +395,17 @@ end
 
 local orphanCache, orphanCacheAt
 function ns.InvalidateOrphans() orphanCache = nil end
-for _, event in ipairs({ "BAG_UPDATE_DELAYED", "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED",
+for _, event in ipairs({ "BAG_UPDATE_DELAYED", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED",
     "GET_ITEM_INFO_RECEIVED", "ITEM_DATA_LOAD_RESULT", "PLAYER_ENTERING_WORLD" }) do
   ns.On(event, ns.InvalidateOrphans)
 end
+-- (23.10., /qd mem) a quest log event only when the log's state changed: each kill and loot scanned all bags again
+-- (the 15 seconds above stay the safety net)
+local orphanH, orphanN
+ns.On("QUEST_LOG_UPDATE", function()
+  local h, n = ns.QuestLogState()
+  if h ~= orphanH or n ~= orphanN then orphanH, orphanN = h, n ns.InvalidateOrphans() end
+end)
 function ns.OrphanQuestItems()
   local now = GetTime and GetTime() or 0
   if orphanCache and orphanCacheAt and now - orphanCacheAt < 15 then return orphanCache end

@@ -167,91 +167,91 @@ local function Pos(v) v = tonumber(v) return v and v >= 0 and v <= 100 and v or 
 -- Returns key, value, count, kind (or nil for a bad line).
 -- value: what has to agree between reporters; positions are compared loosely.
 local PARSE = {
-  S = function(l)
+  S = function(l, nov)
     local q, m, x, y, npc, f = l:match("^S (%d+) (%d+) (%d+%.%d) (%d+%.%d) (%d+) ([AH%-])$")
     if not (Int(q, 1e6) and Int(m, 1e5) and Pos(x) and Pos(y) and Int(npc, 1e7)) then return nil end
-    return "S " .. q, { m = tonumber(m), x = tonumber(x), y = tonumber(y), id = tonumber(npc), f = f }
+    return "S " .. q, nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y), id = tonumber(npc), f = f }
   end,
-  G = function(l)
+  G = function(l, nov)
     local q, m, x, y, obj, f = l:match("^G (%d+) (%d+) (%d+%.%d) (%d+%.%d) (%d+) ([AH%-])$")
     if not (Int(q, 1e6) and Int(m, 1e5) and Pos(x) and Pos(y) and Int(obj, 1e7)) then return nil end
-    return "G " .. q, { m = tonumber(m), x = tonumber(x), y = tonumber(y), id = tonumber(obj), f = f }
+    return "G " .. q, nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y), id = tonumber(obj), f = f }
   end,
-  T = function(l)
+  T = function(l, nov)
     local q, m, x, y, npc = l:match("^T (%d+) (%d+) (%d+%.%d) (%d+%.%d) (%d+)$")
     if not (Int(q, 1e6) and Int(m, 1e5) and Pos(x) and Pos(y) and Int(npc, 1e7)) then return nil end
-    return "T " .. q, { m = tonumber(m), x = tonumber(x), y = tonumber(y), id = tonumber(npc) }
+    return "T " .. q, nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y), id = tonumber(npc) }
   end,
-  I = function(l)
+  I = function(l, nov)
     local q, item, f = l:match("^I (%d+) (%d+) ([AH%-])$")
     if not (Int(q, 1e6) and Int(item, 1e7)) then return nil end
-    return "I " .. q, { v = item }
+    return "I " .. q, nov or { v = item }
   end,
-  O = function(l)
+  O = function(l, nov)
     local q, i, m, x, y = l:match("^O (%d+) (%d+) (%d+) (%d+%.%d) (%d+%.%d)$")
     if not (Int(q, 1e6) and Int(i, 21) and tonumber(i) >= 1 and Int(m, 1e5) and Pos(x) and Pos(y)) then return nil end
     -- one fact per spot: a grid of NEAR map units
     return ("O %s %s %s %d %d"):format(q, i, m, math.floor(tonumber(x) / NEAR), math.floor(tonumber(y) / NEAR)),
-      { m = tonumber(m), x = tonumber(x), y = tonumber(y) }
+      nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y) }
   end,
-  F = function(l)
+  F = function(l, nov)
     local q, prev, v = l:match("^F (%d+) (%d+) ([12])$")
     if not (Int(q, 1e6) and Int(prev, 1e6)) then return nil end
-    return ("F %s %s"):format(q, prev), { v = "1" }, tonumber(v)
+    return ("F %s %s"):format(q, prev), nov or { v = "1" }, tonumber(v)
   end,
-  K = function(l)
+  K = function(l, nov)
     local q, i, kind, id, n = l:match("^K (%d+) (%d+) ([coi]) (%d+) (%d+)$")
     if not (Int(q, 1e6) and Int(i, 21) and tonumber(i) >= 1 and Int(id, 1e7) and Int(n, 1e4)) then return nil end
-    return ("K %s %s %s %s"):format(q, i, kind, id), { v = "1" }, tonumber(n)
+    return ("K %s %s %s %s"):format(q, i, kind, id), nov or { v = "1" }, tonumber(n)
   end,
-  D = function(l)
+  D = function(l, nov)
     local item, kind, id, n, m, x, y = l:match("^D (%d+) ([co]) (%d+) (%d+) (%d+) (%d+%.%d) (%d+%.%d)$")
     if not (Int(item, 1e7) and Int(id, 1e7) and Int(n, 1e4) and Int(m, 1e5) and Pos(x) and Pos(y)) then return nil end
-    return ("D %s %s %s"):format(item, kind, id), { v = "1" }, tonumber(n)
+    return ("D %s %s %s"):format(item, kind, id), nov or { v = "1" }, tonumber(n)
   end,
-  A = function(l)
+  A = function(l, nov)
     local q, lv = l:match("^A (%d+) (%d+)$")
     if not (Int(q, 1e6) and Int(lv, 100) and tonumber(lv) >= 1) then return nil end
-    return "A " .. q, { v = lv }
+    return "A " .. q, nov or { v = lv }
   end,
-  X = function(l)
+  X = function(l, nov)
     local q = l:match("^X (%d+)$")
     if not Int(q, 1e6) then return nil end
-    return "X " .. q, { v = "1" }
+    return "X " .. q, nov or { v = "1" }
   end,
   -- (1.3.6) a dungeon's way in (Entrances.lua): one fact per dungeon and zone map; reports within NEAR
   -- map units agree, a second way in on the same map is another variant (Uldaman, Stratholme)
-  E = function(l)
+  E = function(l, nov)
     local inst, m, x, y = l:match("^E (%d+) (%d+) (%d+%.%d) (%d+%.%d)$")
     if not (Int(inst, 1e6) and Int(m, 1e5) and Pos(x) and Pos(y)) then return nil end
-    return ("E %s %s"):format(inst, m), { m = tonumber(m), x = tonumber(x), y = tonumber(y) }
+    return ("E %s %s"):format(inst, m), nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y) }
   end,
   -- (1.3.6) a block of walked cells (Paths.lua): stored apart (ns.StoreWalk), cell by cell
-  W = function(l)
+  W = function(l, nov)
     local m, b, mask = l:match("^W (%d+) (%d+) (%x+)$")
     if not (Int(m, 1e5) and Int(b, 100) and mask and #mask == 25) then return nil end
-    return ("W %s %s"):format(m, b), { v = mask:lower() }
+    return ("W %s %s"):format(m, b), nov or { v = mask:lower() }
   end,
   -- (1.3.8) the reward a player of a class (and talent tree) picked by hand (Rewards.lua): one fact per
   -- quest, class, tree and item, so the reporters of a fact are the players who picked that item
-  R = function(l)
+  R = function(l, nov)
     local q, c, t, item = l:match("^R (%d+) (%d+) ([0-3]) (%d+)$")
     if not (Int(q, 1e6) and Int(c, 20) and tonumber(c) >= 1 and Int(item, 1e7)) then return nil end
-    return ("R %s %s %s %s"):format(q, c, t, item), { v = "1" }
+    return ("R %s %s %s %s"):format(q, c, t, item), nov or { v = "1" }
   end,
   -- (17.10.) where a walking NPC was seen (Walks.lua): one fact per NPC, map and NEAR grid cell, like the
   -- objective spots; confirmed points tell whether the NPC's route is right
-  P = function(l)
+  P = function(l, nov)
     local npc, m, x, y = l:match("^P (%d+) (%d+) (%d+%.%d) (%d+%.%d)$")
     if not (Int(npc, 1e7) and Int(m, 1e5) and Pos(x) and Pos(y)) then return nil end
     return ("P %s %s %d %d"):format(npc, m, math.floor(tonumber(x) / NEAR), math.floor(tonumber(y) / NEAR)),
-      { m = tonumber(m), x = tonumber(x), y = tonumber(y) }
+      nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y) }
   end,
   -- (1.1) the quest giver never offers this quest (NotHere.lua)
-  N = function(l)
+  N = function(l, nov)
     local q, npc = l:match("^N (%d+) (%d+) [ma]$")
     if not (Int(q, 1e6) and Int(npc, 1e7)) then return nil end
-    return "N " .. q, { v = "1" }
+    return "N " .. q, nov or { v = "1" }
   end,
 }
 
@@ -282,11 +282,12 @@ function ns.ParseSampleLine(line)
   return p and p(line) or nil
 end
 
-function ns.ParseShareLine(line)
+-- nov: (23.10.) no value table (true in its place), for the send list that only needs key and count
+function ns.ParseShareLine(line, nov)
   if type(line) ~= "string" or #line > 80 then return nil end
   local p = PARSE[line:sub(1, 1)]
   if not p then return nil end
-  return p(line)
+  return p(line, nov)
 end
 local Parse = ns.ParseShareLine
 
@@ -679,15 +680,21 @@ local function Walk(t, depth, acc)
     if type(k) == "number" then acc[2] = (acc[2] + k * 11) % 1000000007 end
   end
 end
+-- (23.10., /qd mem round 2: share about 1.4 MB at once with 8224 shared facts) without "shared" and "shareSent":
+-- others' facts come in every minute and made each quiet minute build all export lines again, though they only
+-- decide what is left out as known. Returns the fingerprint and the part of the own facts (without sampleOut).
+local FP_OWN = { "learned", "learnedObj", "learnedCredit", "learnedDrops", "learnedItemStarts", "rewardPicks" }
 local fpAcc = { 0, 0 }
 local function ExportFingerprint()
   fpAcc[1], fpAcc[2] = 0, 0
-  for _, key in ipairs({ "learned", "learnedObj", "learnedCredit", "learnedDrops", "learnedItemStarts", "rewardPicks", "shared", "shareSent", "sampleOut" }) do
+  for _, key in ipairs(FP_OWN) do
     local t = ns.db[key]
     if type(t) == "table" then Walk(t, 1, fpAcc) end
     fpAcc[1] = fpAcc[1] + 1000003
   end
-  return fpAcc[1] * 1000000007 + fpAcc[2]
+  local own = fpAcc[1] * 1000000007 + fpAcc[2]
+  if type(ns.db.sampleOut) == "table" then Walk(ns.db.sampleOut, 1, fpAcc) end
+  return fpAcc[1] * 1000000007 + fpAcc[2], own
 end
 local quiet = { fp = nil, nextDue = nil } -- the last flush that had nothing to send
 ns.ShareQuietState = function() return quiet end -- (tests)
@@ -699,9 +706,9 @@ local function Pending()
   local due = Clock() - RESEND
   nextDueSeen = nil
   for _, line in ipairs(ns.ExportRecords and ns.ExportRecords(false) or {}) do
-    local key, value, count = Parse(line)
+    local key, _, count = Parse(line, true) -- (23.10.) no value table per line
     if key then
-      local sig = Signature(line, value, count)
+      local sig = Signature(line, nil, count)
       local skip = false
       if line:sub(1, 1) == "O" then
         local obj = line:match("^O (%d+ %d+) ")
@@ -710,7 +717,11 @@ local function Pending()
       end
       if not skip then
         local best = Best(shared[key])
-        local known = best and best.n >= KNOWN and Same(best, value)
+        local known = false
+        if best and best.n >= KNOWN then
+          local _, value = Parse(line)
+          known = value and Same(best, value) or false
+        end
         if sent[key] ~= sig then
           if known then
             sent[key] = sig -- known well enough already
@@ -731,6 +742,15 @@ local function Pending()
   for _, e in ipairs(again) do list[#list + 1] = e end
   return list
 end
+
+-- (23.10., /qd mem round 2) The list of what is due is kept from one send to the next: a few thousand own facts
+-- go out at FACTS_PER_HOUR over hours, and every minute built all export lines again (4.5 MB a send with 7500
+-- facts in the bench). Built anew when it is used up, when the own facts changed and the list is REBUILD_GAP
+-- seconds old, and after BACKLOG_AGE (play time lines, walked cells, facts due again).
+local REBUILD_GAP = 600
+local BACKLOG_AGE = 3600
+local backlog = { list = nil, pos = 1, fp = nil, at = 0 }
+ns.ShareBacklog = function() return backlog end -- (tests)
 
 -- Messages sent within the last hour (session).
 local sentTimes = {}
@@ -767,38 +787,46 @@ function ns.ShareFlush()
   local budget = math.min(MAX_PER_FLUSH, HourBudget(), math.floor(SENDS_PER_FLUSH / #channels))
   local facts = FactBudget()
   if budget <= 0 or facts <= 0 then return 0 end
-  local fp = ExportFingerprint()
+  local fp, own = ExportFingerprint()
   if quiet.fp == fp and (not quiet.nextDue or Clock() < quiet.nextDue) then
     stats.quiet = (stats.quiet or 0) + 1
     return 0
   end
-  local pending = Pending()
-  if #pending == 0 then quiet.fp, quiet.nextDue = fp, nextDueSeen else quiet.fp, quiet.nextDue = nil, nil end
+  local age = Now() - backlog.at
+  if not (backlog.list and backlog.pos <= #backlog.list and age >= 0 and age < BACKLOG_AGE
+      and (backlog.fp == own or age < REBUILD_GAP)) then
+    local list = Pending()
+    backlog.list, backlog.pos, backlog.fp, backlog.at = list, 1, own, Now()
+    stats.built = (stats.built or 0) + 1
+    if #list == 0 then quiet.fp, quiet.nextDue = fp, nextDueSeen else quiet.fp, quiet.nextDue = nil, nil end
+  end
   -- (1.3.9) play time lines first, within their own hour budget (Timing.lua keeps when each was sent)
   local samples = ns.db.shareTimes ~= false and ns.SamplesDue and ns.SamplesDue(math.min(SampleBudget(), facts)) or {}
-  if #samples > 0 then
-    local all = {}
-    for _, e in ipairs(samples) do all[#all + 1] = { nil, nil, e[1], sample = e } end
-    for _, p in ipairs(pending) do all[#all + 1] = p end
-    pending = all
-  end
+  local smp = {}
+  for _, e in ipairs(samples) do smp[#smp + 1] = { nil, nil, e[1], sample = e } end
+  -- the items to send: the play time lines, then the kept list from where the last send stopped
+  local list, base, nS = backlog.list, backlog.pos - 1, #smp
+  local total = nS + #list - base
+  local function Item(k) if k <= nS then return smp[k] end return list[base + k - nS] end
   -- own play time lines waiting to go out again hours later: the quiet skip ends when the next one is due
   local sd = quiet.fp and ns.SamplesNextDue and ns.SamplesNextDue()
   if sd and (not quiet.nextDue or sd < quiet.nextDue) then quiet.nextDue = sd end
   local sent, at = DB().shareSent, DB().shareSentAt
-  local msgs, i = 0, 1
-  while i <= #pending and msgs < budget and facts > 0 do
+  local msgs, i, done = 0, 1, 1
+  while i <= total and msgs < budget and facts > 0 do
     seq = (seq + 1) % 1000
     local head = ("D2:%d:%s:"):format(seq, MyToken())
     local parts, used, size = {}, {}, #head
-    while i <= #pending and #parts < facts and size + #pending[i][3] + (#parts > 0 and 1 or 0) <= MAX_MSG do
-      parts[#parts + 1] = pending[i][3]
-      used[#used + 1] = pending[i]
-      size = size + #pending[i][3] + (#parts > 1 and 1 or 0)
+    while i <= total and #parts < facts and size + #Item(i)[3] + (#parts > 0 and 1 or 0) <= MAX_MSG do
+      local item = Item(i)
+      parts[#parts + 1] = item[3]
+      used[#used + 1] = item
+      size = size + #item[3] + (#parts > 1 and 1 or 0)
       i = i + 1
     end
-    if #parts == 0 then i = i + 1 -- a line that never fits (cannot happen with export lines)
+    if #parts == 0 then i = i + 1 done = i -- a line that never fits (cannot happen with export lines)
     elseif SendTo(head .. table.concat(parts, ";"), channels) then
+      done = i
       msgs = msgs + 1
       sentTimes[#sentTimes + 1] = Now()
       factTimes[#factTimes + 1] = { Now(), #used }
@@ -820,6 +848,8 @@ function ns.ShareFlush()
       break
     end
   end
+  -- what went out (or never fits) is done; a refused message stays for the next send
+  backlog.pos = base + 1 + math.max(0, done - 1 - nS)
   return msgs
 end
 
@@ -990,6 +1020,9 @@ function ns.ResetShared()
   wipe(db.shared)
   sharedCount, version, placeVersion = 0, version + 1, placeVersion + 1
   pruneGen, spotCache = pruneGen + 1, nil -- (16.10.) every quest's places anew
+  -- (23.10.) learned data deleted (Options.lua calls this): the kept send list goes too
+  backlog.list, backlog.pos, backlog.fp, backlog.at = nil, 1, nil, 0
+  quiet.fp, quiet.nextDue = nil, nil
 end
 
 ---------------------------------------------------------------------------

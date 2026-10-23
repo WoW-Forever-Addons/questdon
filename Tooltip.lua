@@ -86,6 +86,12 @@ function ns.ResetCreatureIndex()
   if ns.RefreshNameplates then ns.QueueRefresh("nameplates") end
 end
 
+-- (23.10., Daniel's /qd mem after a reload: "sighting index" 32 KB a second) the index (about 1 MB, kept for the
+-- session) was built at the first nameplate in the world: now right at login or reload, while the loading screen ends
+ns.On("PLAYER_ENTERING_WORLD", function(_, isLogin, isReload)
+  if (isLogin or isReload) and ns.db then Index() end
+end)
+
 -- (1.22) Index entries of one creature (nameplate icons): objectives
 -- (encoded, see ns.ObjectiveEntry) and quests it gives { questID, ... }, or nil.
 function ns.CreatureQuestIndex(creatureID)

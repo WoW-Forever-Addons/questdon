@@ -191,7 +191,8 @@ function Learn()
   if not ns.AddObjectiveSpot then return end
   for _, info in ipairs(ns.QuestLogEntries()) do
     local id = info.questID
-    if not ns.IsQuestComplete(id) and not ns.IsQuestFailed(id) then
+    -- (23.10.) not while the order of several objectives is not known for sure (QuestData.lua DataOrder)
+    if not ns.IsQuestComplete(id) and not ns.IsQuestFailed(id) and (not ns.ObjectiveOrderSure or ns.ObjectiveOrderSure(id)) then
       local m, x, y, level = ns.BlizzardQuestPoint(id)
       local total, open, index, types = ns.ObjectiveState(id)
       -- not for escorts and other events: the POI may be the end of the escort

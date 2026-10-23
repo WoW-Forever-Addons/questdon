@@ -258,6 +258,31 @@ function ns.LogMemo(kind, id, read)
   logMemo[kind][id], gens[id] = v, logGen
   return v
 end
+-- (23.10., /qd mem) the log's state as two plain numbers: which quests, which are complete or failed, which objectives
+-- are done (h), and how many quests (n). A quest log event without such a change (most kills and loots) leaves both as they
+-- were, so what depends only on them is not worked out again (Walks.lua, Cleanup.lua). Once per log event in a scope.
+local stateGen, stateH, stateN = nil, 0, 0
+local NO_OBJECTIVES = {}
+function ns.QuestLogState()
+  local cached = scopeDepth > 0 and not QD_TEST_FRESH_LOG
+  if cached and stateGen == logGen then return stateH, stateN end
+  local h, n = 0, 0
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local q = ns.Num(info.questID)
+    if q then
+      n = n + 1
+      local mask = (ns.IsQuestComplete(q) and 1 or 0) + (ns.IsQuestFailed and ns.IsQuestFailed(q) and 2 ^ 21 or 0)
+      for i, o in ipairs(ns.ClientObjectives and ns.ClientObjectives(q) or NO_OBJECTIVES) do
+        if i > 20 then break end
+        if type(o) == "table" and ns.True(o.finished) then mask = mask + 2 ^ i end
+      end
+      h = (h * 31 + q * 3 + mask) % 4294967291
+    end
+  end
+  if cached then stateGen = logGen end
+  stateH, stateN = h, n
+  return h, n
+end
 local scopeStats = { scopes = 0 }
 function ns.ScopeStats() return scopeStats end
 
@@ -343,9 +368,12 @@ local function Where(level)
   local ok, stack = pcall(debugstack, level, 6, 0)
   if not ok or type(stack) ~= "string" then return "?" end
   stack = stack:gsub("\\", "/")
+  -- (23.10., Leveldon's /lvd mem) the game writes [Interface/AddOns/Questdon/Arrow.lua]:123: in function <...:100>:
+  -- with the bracket after ".lua" allowed the calling line is found, not the start of the function around it
   local first
-  for at in stack:gmatch("([%w_]+%.lua:%d+)") do
-    if not at:find("^Core%.lua:") then return at end
+  for file, line in stack:gmatch('([%w_]+%.lua)["%]]*:(%d+)') do
+    local at = file .. ":" .. line
+    if file ~= "Core.lua" then return at end
     first = first or at
   end
   return first or "?"
@@ -358,6 +386,7 @@ function ns.MemPart(label, fn, ...)
   if not memProf then return fn(...) end
   return Measure(memProf, label, false, collectgarbage("count"), fn(...))
 end
+function ns.MemProfiling() return memProf ~= nil end -- (23.10.) a part that names its caller only while /qd mem runs
 function ns.MemCount(label)
   if memProf then memProf.calls[label .. " (inner)"] = (memProf.calls[label .. " (inner)"] or 0) + 1 memProf.inner[label] = memProf.inner[label] or 0 end
 end
@@ -614,13 +643,13 @@ local function ReadQuestLog()
       list[#list + 1] = info
       here[info.questID] = true
       local e = lastSeen[info.questID]
-      if e then e.info, e.zone = info, zone else lastSeen[info.questID] = { info = info, zone = zone } end
+      if e then e.info, e.zone, e.index = info, zone, i else lastSeen[info.questID] = { info = info, zone = zone, index = i } end
     end
   end
   local kept
   for id, e in pairs(lastSeen) do
     if not here[id] then
-      if OnQuest(id) then kept = kept or {} kept[#kept + 1] = id else lastSeen[id] = nil end
+      if OnQuest(id) then kept = kept or {} kept[#kept + 1] = id e.index = nil else lastSeen[id] = nil end
     end
   end
   if kept then
@@ -631,6 +660,9 @@ local function ReadQuestLog()
 end
 -- the zone heading a quest was last seen under (Tracker.lua, for quests under a collapsed heading)
 function ns.QuestLogZone(questID) local e = lastSeen[questID] return e and e.zone or nil end
+-- (23.10.) its row in the game's log at the last read (nil under a collapsed heading); the quest list read the whole
+-- log a second time for zone and row (a new table of about twenty fields per row, at every quest log event)
+function ns.QuestLogIndex(questID) local e = lastSeen[questID] return e and e.index or nil end
 function ns.InCollapsedHeading(questID)
   return lastSeen[questID] ~= nil and (ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, questID)) or 0) <= 0
 end

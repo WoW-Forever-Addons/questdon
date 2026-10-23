@@ -401,6 +401,31 @@ function ns.DropContinentSpots()
 end
 ns.OnInit(function() ns.DropContinentSpots() end)
 
+-- (23.10.) Quests whose objectives Forever lists in another order than the data: what was learned for them before
+-- Questdon matched the order (credit and spots under the wrong objective, also others' shared spots) is dropped once.
+local MOVED_ORDER = { 99128, 99130 } -- Slimy Menace, An Enticing Offer
+function ns.DropMovedOrderData()
+  local db = ns.db
+  if not db or db.movedOrderFix == 1 then return 0 end
+  local n = 0
+  for _, q in ipairs(MOVED_ORDER) do
+    if type(db.learnedCredit) == "table" and db.learnedCredit[q] then db.learnedCredit[q] = nil n = n + 1 end
+    if type(db.learnedObj) == "table" and db.learnedObj[q] then db.learnedObj[q] = nil n = n + 1 end
+    spotVersion[q] = (spotVersion[q] or 0) + 1
+    if type(db.shared) == "table" then
+      local o, k = "O " .. q .. " ", "K " .. q .. " "
+      for key in pairs(db.shared) do
+        if type(key) == "string" and (key:sub(1, #o) == o or key:sub(1, #k) == k) then db.shared[key] = nil n = n + 1 end
+      end
+    end
+  end
+  db.movedOrderFix = 1
+  learnVersion = learnVersion + 1
+  if ns.ResetCreatureIndex then ns.ResetCreatureIndex() end
+  return n
+end
+ns.OnInit(function() ns.DropMovedOrderData() end)
+
 -- (1.3.8, F5) Where a quest item was used: the counter of a "use it here" objective often goes up a moment later
 -- (a summoned mob, a flight, walking on): the place of use is where the item's spell went off, not where you stand
 -- when the log updates. Kept USE_SECS seconds for the objectives that item serves.
@@ -552,13 +577,29 @@ end
 -- (1.2) Creatures that gave credit for an objective (learned), { ids } or nil.
 -- A creature counts once it gave credit twice, or once when the data names no
 -- creature for that objective (new Forever quests).
+-- (23.10., Daniel: An Enticing Offer, the petals' marks on the boars) a creature the data names for another objective
+-- of the quest, and not for this one, does not count for this one: until 23.10. the game's order (vials first) was taken
+-- for the data's, and the boars and bears that dropped the vials were learned for the petals
+local function OtherObjectiveCreature(questID, index, id)
+  local objs = ns.ATT_OBJECTIVES and ns.ATT_OBJECTIVES[questID]
+  if type(objs) ~= "table" then return false end
+  local mine, other = false, false
+  for i, o in pairs(objs) do
+    if type(i) == "number" and type(o) == "table" and type(o[1]) == "table" then
+      for _, cr in ipairs(o[1]) do
+        if cr == id then if i == index then mine = true else other = true end end
+      end
+    end
+  end
+  return other and not mine
+end
 function ns.LearnedObjectiveCreatures(questID, index, dataHasCreatures)
   local q = type(ns.db.learnedCredit) == "table" and ns.db.learnedCredit[questID]
   local c = q and q[index] and q[index].c
   if type(c) ~= "table" then return nil end
   local list
   for id, n in pairs(c) do
-    if type(id) == "number" and (n >= 2 or not dataHasCreatures) then
+    if type(id) == "number" and (n >= 2 or not dataHasCreatures) and not OtherObjectiveCreature(questID, index, id) then
       list = list or {}
       list[#list + 1] = id
     end
@@ -627,10 +668,17 @@ local function ScanProgress()
     seen[info.questID] = true
     local id = info.questID
     local old = progress[id]
-    local now = {}
-    for index, o in ipairs(ns.ClientObjectives(id)) do
+    local list = ns.ClientObjectives(id)
+    -- (23.10.) counted in the data's order (QuestData.lua DataOrder); when that order changed since the last look,
+    -- the counters are only taken over (no credit from a moved line)
+    local now = { order = list.order }
+    if old and old.order ~= now.order then old = nil end
+    -- (23.10., Daniel: "the wrong assignment must not come back") several objectives in an order not known for sure
+    -- (no names to match yet): nothing learned for them, rather than a mob or place under the wrong objective
+    local sure = not ns.ObjectiveOrderSure or ns.ObjectiveOrderSure(id)
+    for index, o in ipairs(list) do
       now[index] = type(o) == "table" and ns.Num(o.numFulfilled) or 0
-      if progressReady and ns.db.learnQuests and old and old[index] and now[index] > old[index] then
+      if progressReady and ns.db.learnQuests and sure and old and old[index] and now[index] > old[index] then
         AddSpot(id, index)
         NoteCredit(id, index, o)
       end

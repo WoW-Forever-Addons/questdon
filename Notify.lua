@@ -18,15 +18,22 @@ local OBJECTIVE_SOUND = { "UI_QUEST_ROLLING_FORWARD_01", "IG_QUEST_LIST_SELECT" 
 local function Text(v) return type(v) == "string" and ns.Usable(v) and v ~= "" and v or nil end
 
 local function Read(questID)
-  local state = { complete = ns.IsQuestComplete(questID), failed = ns.IsQuestFailed(questID), objectives = {} }
   local objectives = ns.ClientObjectives(questID)
+  -- (23.10.) order: the objectives come in the data's order (QuestData.lua DataOrder); a change is no news
+  local state = { complete = ns.IsQuestComplete(questID), failed = ns.IsQuestFailed(questID), objectives = {}, order = objectives.order }
   for i, o in ipairs(objectives) do
     state.objectives[i] = type(o) == "table" and ns.True(o.finished)
   end
   return state, objectives
 end
 
+-- (23.10., /qd mem) nothing to tell while the log's state (quests, complete, failed, objectives done) is the same:
+-- each kill and loot read every quest into new tables before
+local scanH, scanN
 local function Scan(silent)
+  local h, n = ns.QuestLogState()
+  if not silent and h == scanH and n == scanN then return end
+  scanH, scanN = h, n
   local seen = {}
   for _, info in ipairs(ns.QuestLogEntries()) do
     local id = info.questID
@@ -39,7 +46,7 @@ local function Scan(silent)
       elseif state.complete and not old.complete then
         if ns.Active("soundQuest") then PlayFirst(QUEST_SOUND) end
         if ns.db.notifyText then ns.Warn(L["Quest complete: %s"]:format(Text(info.title) or "?")) end
-      else
+      elseif old.order == state.order then
         for i, done in ipairs(state.objectives) do
           if done and old.objectives[i] == false then
             if ns.Active("soundObjective") then PlayFirst(OBJECTIVE_SOUND) end

@@ -91,47 +91,24 @@ function ns.BlizzTrackerHidden() return blizzHidden ~= nil end -- (tests)
 ---------------------------------------------------------------------------
 -- The quest log with its zone headings, and what we need per quest
 ---------------------------------------------------------------------------
-local ReadLogWithZones
-local function LogWithZones()
-  -- (16.10.) the rows kept until the next quest log event; the entries are new (Entries fills them)
-  return ns.LogValue("logWithZones", ReadLogWithZones) -- read only
-end
-function ReadLogWithZones()
-  local out, zone = {}, nil
-  if not C_QuestLog then return out end
-  for i = 1, ns.Num(ns.Value(C_QuestLog.GetNumQuestLogEntries)) or 0 do
-    local info = ns.Value(C_QuestLog.GetInfo, i)
-    if type(info) == "table" then
-      if ns.True(info.isHeader) then
-        zone = type(info.title) == "string" and ns.Usable(info.title) and info.title or zone
-      elseif not ns.True(info.isHidden) and (ns.Num(info.questID) or 0) > 0 then
-        out[#out + 1] = { questID = info.questID, zone = zone, index = i }
-      end
-    end
-  end
-  -- (Questdon review 5) quests under a heading collapsed in Blizzard's quest log, with the zone last seen
-  local have = {}
-  for _, e in ipairs(out) do have[e.questID] = true end
-  for _, info in ipairs(ns.QuestLogEntries()) do
-    local id = info.questID
-    if not have[id] then
-      have[id] = true
-      out[#out + 1] = { questID = id, zone = ns.QuestLogZone and ns.QuestLogZone(id) or nil }
-    end
-  end
-  return out
-end
+-- (23.10., Daniel's /qd mem 20.10.: "tracker log" 22 KB a second) the list read the game's log a second time for
+-- each quest's zone heading and row: a new table of about twenty fields per row at every quest log event. The kept
+-- log (ns.QuestLogEntries) knows both (ns.QuestLogZone, ns.QuestLogIndex).
 
-local ReadObjectives
--- (16.10. late, /qd mem: the quest list's ticker 87 KB a second standing) kept from one quest log event to the next
-local function Objectives(id) return ns.LogMemo("trackerObjectives", id, ReadObjectives) end
-function ReadObjectives(id)
-  local out = {}
-  for _, o in ipairs(ns.ClientObjectives(id) or {}) do
+-- (16.10. late, /qd mem: the quest list's ticker 87 KB a second standing) read once per quest log event (Entries);
+-- (23.10.) into the entry's own tables: the same tables from one event to the next, only their values change
+local function FillObjectives(out, id)
+  local n = 0
+  local list = ns.ClientObjectives(id) or {}
+  for _, o in ipairs(list.game or list) do -- (23.10.) in the game's order
     if type(o) == "table" and type(o.text) == "string" and ns.Usable(o.text) and o.text ~= "" then
-      out[#out + 1] = { text = o.text, done = ns.True(o.finished), have = ns.Num(o.numFulfilled), need = ns.Num(o.numRequired) }
+      n = n + 1
+      local t = out[n]
+      if not t then t = {} out[n] = t end
+      t.text, t.done, t.have, t.need = o.text, ns.True(o.finished), ns.Num(o.numFulfilled), ns.Num(o.numRequired)
     end
   end
+  for i = #out, n + 1, -1 do out[i] = nil end
   return out
 end
 
@@ -155,7 +132,7 @@ end
 -- one quest log event to the next (the log's state, the player's level, 10 s at most); each second only the
 -- distances are measured again. Outside a protected call (tests, other addons) they are read anew as before.
 local ENTRY_SECS = 10
-local entryList, entryByID, entryGen, entryLevel, entryAt = {}, {}, nil, nil, nil
+local entryList, entryByID, entryGen, entryLevel, entryAt, entryRead = {}, {}, nil, nil, nil, 0
 local greyAsk = {}
 local function FillEntry(e, id)
   e.title = ns.QuestTitle(id)
@@ -166,7 +143,7 @@ local function FillEntry(e, id)
   greyAsk.questID, greyAsk.level = id, e.level
   e.grey = not e.complete and ns.IsGreyQuestInfo and ns.IsGreyQuestInfo(greyAsk) and true or false
   e.failed = ns.IsQuestFailed and ns.IsQuestFailed(id) or false
-  e.objs = Objectives(id)
+  e.objs = FillObjectives(e.objs or {}, id)
   local open
   for _, o in ipairs(e.objs) do if not o.done then open = open or o end end
   e.open = open
@@ -178,16 +155,20 @@ local function Entries()
       or not entryAt or now - entryAt > ENTRY_SECS or now < entryAt then
     entryGen, entryLevel, entryAt = gen, level, now
     ns.MemCount("tracker log read")
-    local list, byID = {}, {}
-    for _, r in ipairs(LogWithZones()) do
-      local id = r.questID
-      local e = entryByID[id] or {}
-      e.questID, e.zone, e.index = id, r.zone, r.index
+    -- (23.10.) the list, the index and every entry are kept and filled again (they were new at each quest log event)
+    entryRead = entryRead + 1
+    local list, n = entryList, 0
+    for _, info in ipairs(ns.QuestLogEntries()) do
+      local id = info.questID
+      local e = entryByID[id]
+      if not e then e = {} entryByID[id] = e end
+      e.questID, e.zone, e.index, e.read = id, ns.QuestLogZone(id), ns.QuestLogIndex(id), entryRead
       FillEntry(e, id)
-      byID[id] = e
-      list[#list + 1] = e
+      n = n + 1
+      list[n] = e
     end
-    entryList, entryByID = list, byID
+    for i = #list, n + 1, -1 do list[i] = nil end
+    for id, e in pairs(entryByID) do if e.read ~= entryRead then entryByID[id] = nil end end
   end
   local pc, pn, pw
   if ns.PlayerWorld then pc, pn, pw = ns.PlayerWorld() end
@@ -582,7 +563,7 @@ function ns.ShowQuestText(id)
     Style.Row(reader):SetText(hintText, B.textPrimary or "textPrimary")
     any = true
   end
-  local objs = ns.InQuestLog(id) and Objectives(id) or {}
+  local objs = ns.InQuestLog(id) and FillObjectives({}, id) or {}
   for _, o in ipairs(objs) do
     Style.Row(reader):SetText("- " .. o.text, o.done and "good" or (B.textSecondary or "textSecondary")):SetIndent(8)
   end
@@ -758,8 +739,8 @@ local function ColorDot(questID)
   local r, g, b = ns.QuestColor(questID)
   return ("|cff%02x%02x%02x\226\128\162|r "):format(math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
 end
-local function RowFor(e, focusID)
-  local row = Style.Row(panel):SetGapBefore(QUEST_GAP)
+local COMPLETE_TEXT = { 0.62, 0.92, 0.62 }
+local function QuestRowText(e)
   local title = (ns.QuestLevelTag(e.questID) or "") .. (e.title or "") .. ns.GroupTag(e.questID)
   title = ColorDot(e.questID) .. title
   local sub
@@ -771,7 +752,22 @@ local function RowFor(e, focusID)
   -- (Questdon review 1) a timed quest: the time left in front (the game's tracker that shows it is hidden)
   local clock = Clock(e)
   if clock then sub = sub and (clock .. "  " .. sub) or clock end
-  row:SetText(sub and (title .. "\n" .. sub) or title, e.complete and { 0.62, 0.92, 0.62 } or (B.textPrimary or "textPrimary"))
+  return sub and (title .. "\n" .. sub) or title, e.complete and COMPLETE_TEXT or (B.textPrimary or "textPrimary")
+end
+-- (23.10., Daniel's /qd mem 20.10.: the list made anew about every 10 s while questing, some 250 KB each time) a kill
+-- (XP) or an objective counting up rebuilt every row, card and closure; now the rows that show progress are kept
+-- here and only their texts are written again (UpdateProgress)
+local progRows, progN = {}, 0 -- [1..progN] = { row = , e = , kind = "quest" | "obj" | "clock", i = objective }
+local function KeepProgress(row, e, kind, i)
+  progN = progN + 1
+  local r = progRows[progN]
+  if not r then r = {} progRows[progN] = r end
+  r.row, r.e, r.kind, r.i = row, e, kind, i
+end
+local function RowFor(e, focusID)
+  local row = Style.Row(panel):SetGapBefore(QUEST_GAP)
+  row:SetText(QuestRowText(e))
+  KeepProgress(row, e, "quest")
   if e.questID == focusID then row:SetActive(true) end
   row:SetOnClick(function(_, button)
     if button == "RightButton" then ShowQuestMenu(e) return end
@@ -828,9 +824,16 @@ end
 -- distances every second
 local AVAIL_SECS = 10
 local availMap, availAt, availList, availGen, availSeen = nil, nil, nil, 0, -1
-for _, e in ipairs({ "QUEST_LOG_UPDATE", "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA" }) do
+for _, e in ipairs({ "QUEST_TURNED_IN", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA" }) do
   ns.On(e, function() availGen = availGen + 1 end)
 end
+-- (23.10., /qd mem) a quest log event only when the log's state changed (a quest more or less, one complete): each
+-- kill and loot worked the map's available quests out again
+local availH, availN
+ns.On("QUEST_LOG_UPDATE", function()
+  local h, n = ns.QuestLogState()
+  if h ~= availH or n ~= availN then availH, availN, availGen = h, n, availGen + 1 end
+end)
 local function AvailableHere(mapID)
   local now = ns.Num(ns.Value(GetTime)) or 0
   if availMap ~= mapID or availSeen ~= availGen or not availAt or now - availAt > AVAIL_SECS or now < availAt then
@@ -897,6 +900,23 @@ local function SigChanged()
   end
   if same then return false end
   sigCur, sigOld, sigOldN = sigOld, sigCur, sigN
+  return true
+end
+-- (23.10.) a second signature for what changes while questing without changing the rows: objective counts, the
+-- time left of a timed quest, your XP. Only these changed: UpdateProgress writes the texts, no rebuild
+local progCur, progOld, progSigN, progOldN = {}, {}, 0, -1
+local function PutP(v)
+  progSigN = progSigN + 1
+  if v == nil then v = NIL end
+  progCur[progSigN] = v
+end
+local function ProgChanged()
+  local same = progSigN == progOldN
+  if same then
+    for i = 1, progSigN do if progCur[i] ~= progOld[i] then same = false break end end
+  end
+  if same then return false end
+  progCur, progOld, progOldN = progOld, progCur, progSigN
   return true
 end
 local function ExtrasSig()
@@ -972,6 +992,7 @@ local function Extras()
   end
 end
 
+local footerBar, cardH -- (23.10.) the footer's XP bar and the card's height of the last build (UpdateProgress)
 local function Footer()
   -- (1.3.7, Daniel 13.10.: "only with Questdon's XP bar off") the bar shows the same
   if ns.db.xpBar then return end
@@ -981,7 +1002,7 @@ local function Footer()
   local row = Style.Row(panel):SetText(level and L["Level %d"]:format(level) or "", B.textHint or "textHint"):SetGapBefore(6)
   if gain and gain > 0 then row:SetValue(L["+%s XP on turn-in"]:format(Style.Number(gain)), "good") end
   if xp and max and max > 0 then
-    Style.Bar(row, { height = 4, segments = {
+    footerBar = Style.Bar(row, { height = 4, segments = {
       { key = "xp", color = { 0.58, 0.40, 0.92 }, value = xp / max },
       { key = "gain", color = "good", alpha = 0.6, value = math.min(1, (gain or 0) / max) } } })
   end
@@ -1048,6 +1069,30 @@ local function Tabs()
 end
 ns.TrackerTabs = function() return tabs end -- (tests)
 
+-- (23.10.) only progress changed (signature above): the kept rows get their texts again, the card is filled again
+-- (a different height: false, the caller rebuilds), the footer's bar moves. No new rows, cards or closures.
+local function UpdateProgress(focus)
+  if not ns.GuideActive() and cardH then
+    if FillCard(focus, (panel._width or 300) - 16) ~= cardH then return false end
+  end
+  for i = 1, progN do
+    local r = progRows[i]
+    local e = r.e
+    if r.kind == "quest" then r.row:SetText(QuestRowText(e))
+    elseif r.kind == "clock" then r.row:SetText(Clock(e) or "")
+    else
+      local o = e.objs[r.i]
+      if not o then return false end
+      r.row:SetText(o.text, o.done and "good" or (B.textSecondary or "textSecondary"))
+    end
+  end
+  if footerBar then
+    local xp, max = ns.Num(ns.Value(UnitXP, "player")), ns.Num(ns.Value(UnitXPMax, "player"))
+    if xp and max and max > 0 then footerBar:SetValue(xp / max, 1) end
+  end
+  return true
+end
+
 local function Build()
   if not panel then return end
   local list = ns.MemPart("tracker log", Entries)
@@ -1068,15 +1113,17 @@ local function Build()
   local focus
   for _, e in ipairs(list) do if e.questID == focusID then focus = e end end
   -- rebuild only when something we show changed (distances in steps of 10 yards)
-  sigN = 0
+  sigN, progSigN = 0, 0
   Put(Mode()) Put(ns.db.trackerSortLevel) Put(focusID) Put(ns.GuideActive()) Put(ns.db.trackerLines) Put(scrollSkip) Put(panel._width)
   Put(ns.db.trackerGreyOpen) Put(ns.db.trackerHideGrey) Put(ns.db.trackerHiddenOpen) Put(ns.db.xpBar)
   ExtrasSig()
   local hid = Hidden()
   for _, e in ipairs(list) do
     Put(e.questID) Put(e.title) Put(e.level) Put(e.zone) Put(e.complete) Put(e.failed) Put(e.grey) Put(hid[e.questID] and true or false)
-    Put(e.dist ~= nil) Put(not e.failed and ns.QuestTimeLeft(e.questID) or nil)
-    for _, o in ipairs(e.objs) do Put(o.have) Put(o.done) end
+    local left = not e.failed and ns.QuestTimeLeft(e.questID) or nil
+    Put(e.dist ~= nil) Put(left ~= nil) Put(#e.objs)
+    PutP(left)
+    for _, o in ipairs(e.objs) do PutP(o.have) PutP(o.done) end
   end
   -- (17.10.) the distances count only through the order of the quests (their yards: UpdateYards)
   if Mode() == "near" then
@@ -1087,7 +1134,8 @@ local function Build()
   end
   local n, best = ns.MemPart("tracker nearby", NewNearby)
   Put(n) -- (17.10.) its yards without a rebuild (below)
-  Put(ns.Num(ns.Value(UnitXP, "player")))
+  Put(ns.PlayerLevel()) -- (23.10.) the footer's level and bar size; the XP itself only moves the bar (UpdateProgress)
+  PutP(ns.Num(ns.Value(UnitXP, "player")))
   -- (17.10.) a new order alone rebuilds at most every ORDER_SECS (walking past quests: every second before)
   local orderNew = false
   if Mode() == "near" then
@@ -1097,8 +1145,9 @@ local function Build()
   end
   local now = ns.Num(ns.Value(GetTime)) or 0
   local changed = ns.MemPart("tracker signature", SigChanged)
+  local progNew = ProgChanged()
   if orderNew and not changed and lastSig and orderAt and now - orderAt < ORDER_SECS and now >= orderAt then orderNew = false end
-  if not changed and not orderNew and lastSig then
+  if not changed and not orderNew and lastSig and (not progNew or ns.MemPart("tracker progress", UpdateProgress, focus)) then
     ns.MemPart("tracker yards", UpdateYards)
     local b = best and math.floor(best / 10)
     if nearbyRow and b ~= nearbyB then nearbyB = b nearbyRow:SetValue(Yards(best), B.goldLight or "accent") end
@@ -1106,6 +1155,7 @@ local function Build()
   end
   lastSig = true
   ns.MemCount("tracker rebuild") -- (18.10.) how often the rows are made anew
+  progN, footerBar, cardH = 0, nil, nil
   nearbyRow, nearbyB = nil, nil
   orderAt = now
   for i = 1, #orderBuf do orderLast[i] = orderBuf[i].questID end
@@ -1130,6 +1180,7 @@ local function Build()
   -- (1.3.6) with a guide's compass (Leveldon) the guide shows the way: no card of our own, all quests listed
   if not ns.GuideActive() then
     local h = FillCard(focus, width)
+    cardH = h
     card:Show()
     local holder = Style.Content(panel, card, h)
     if holder and holder.SetKeepWhenCollapsed then holder:SetKeepWhenCollapsed(true) end
@@ -1287,9 +1338,9 @@ local function Build()
         local who = TurnInName(e.questID)
         Style.Row(panel):SetText(who and L["Turn in: %s"]:format(who) or L["Ready to turn in"], "good"):SetIndent(12)
       else
-        if clock then Style.Row(panel):SetText(clock):SetIndent(12) end
-        for _, o in ipairs(e.objs) do
-          Style.Row(panel):SetText(o.text, o.done and "good" or (B.textSecondary or "textSecondary")):SetIndent(12)
+        if clock then KeepProgress(Style.Row(panel):SetText(clock):SetIndent(12), e, "clock") end
+        for i, o in ipairs(e.objs) do
+          KeepProgress(Style.Row(panel):SetText(o.text, o.done and "good" or (B.textSecondary or "textSecondary")):SetIndent(12), e, "obj", i)
         end
       end
      end
