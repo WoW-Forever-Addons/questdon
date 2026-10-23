@@ -1,0 +1,299 @@
+local _, ns = ...
+local L = ns.L
+
+---------------------------------------------------------------------------
+-- Unit tooltips: which of your quests a mob counts for, and which quests an
+-- NPC has for you. Uses the bundled database plus learned data, so it also
+-- works where Questie has no data (new Forever quests).
+---------------------------------------------------------------------------
+local OBJ = ns.ATT_OBJECTIVES or {}
+local Q = ns.ATT_QUESTS or {}
+local GIVERS = 7
+
+-- (1.23) objective entries are one number each, questID * SLOTS + index
+-- (was a small table per entry: about a quarter less memory after login)
+local SLOTS = 64
+local byCreature -- [creatureID] = { questID * SLOTS + index, ... }
+local byGiver    -- [creatureID] = { questID, ... }
+local function Index()
+  if byCreature then return end
+  ns.MemCount("creature index build") -- (18.10.) /qd mem
+  byCreature, byGiver = {}, {}
+  for questID, objs in pairs(OBJ) do
+    for index, o in pairs(objs) do
+      if type(index) == "number" and index >= 1 and index < SLOTS then
+        for _, cr in ipairs(o[1] or {}) do
+          local list = byCreature[cr]
+          if not list then list = {} byCreature[cr] = list end
+          list[#list + 1] = questID * SLOTS + index
+        end
+      end
+    end
+  end
+  -- (1.2) mobs Questdon saw give credit (the data names none for many new
+  -- Forever quests): the same entries
+  for questID, objs in pairs(type(ns.db.learnedCredit) == "table" and ns.db.learnedCredit or {}) do
+    if type(questID) == "number" and type(objs) == "table" then
+      for index in pairs(objs) do
+        if type(index) == "number" and index >= 1 and index < SLOTS then
+          local o = OBJ[questID] and OBJ[questID][index]
+          local known = {}
+          for _, cr in ipairs(o and o[1] or {}) do known[cr] = true end
+          for _, cr in ipairs(ns.LearnedObjectiveCreatures and ns.LearnedObjectiveCreatures(questID, index, o and #(o[1] or {}) > 0) or {}) do
+            if not known[cr] then
+              local list = byCreature[cr]
+              if not list then list = {} byCreature[cr] = list end
+              list[#list + 1] = questID * SLOTS + index
+            end
+          end
+        end
+      end
+    end
+  end
+  for questID, q in pairs(Q) do
+    for _, npc in ipairs(q[GIVERS] or {}) do
+      byGiver[npc] = byGiver[npc] or {}
+      table.insert(byGiver[npc], questID)
+    end
+  end
+end
+
+-- (18.10., Daniel's /qd mem walking among mobs: the sightings 32 KB a second) a mob newly known to count for one
+-- objective goes into the kept index; the whole index (every objective of the data) was built anew after each such
+-- kill credit. Same rule as Index(): learned creatures the data does not name already.
+function ns.AddToCreatureIndex(questID, index)
+  if not byCreature then return end -- built in full when next needed
+  if type(index) ~= "number" or index < 1 or index >= SLOTS then return end
+  local o = OBJ[questID] and OBJ[questID][index]
+  local known = {}
+  for _, cr in ipairs(o and o[1] or {}) do known[cr] = true end
+  local entry = questID * SLOTS + index
+  for _, cr in ipairs(ns.LearnedObjectiveCreatures and ns.LearnedObjectiveCreatures(questID, index, o and #(o[1] or {}) > 0) or {}) do
+    if not known[cr] then
+      local list = byCreature[cr]
+      if not list then list = {} byCreature[cr] = list end
+      local have = false
+      for _, v in ipairs(list) do if v == entry then have = true break end end
+      if not have then list[#list + 1] = entry end
+    end
+  end
+  if ns.RefreshNameplates then ns.QueueRefresh("nameplates") end
+end
+
+-- (1.2) Learned credit changed: build the index again when next needed.
+function ns.ResetCreatureIndex()
+  byCreature, byGiver = nil, nil
+  if ns.RefreshNameplates then ns.QueueRefresh("nameplates") end
+end
+
+-- (1.22) Index entries of one creature (nameplate icons): objectives
+-- (encoded, see ns.ObjectiveEntry) and quests it gives { questID, ... }, or nil.
+function ns.CreatureQuestIndex(creatureID)
+  Index()
+  return byCreature[creatureID], byGiver[creatureID]
+end
+-- (1.23) questID, objective index of an encoded objective entry
+function ns.ObjectiveEntry(v)
+  local index = v % SLOTS
+  return (v - index) / SLOTS, index
+end
+
+-- (17.10., /qd mem: the sightings look at every nameplate each 2 s) the answer kept per GUID (split once)
+local idByGUID, idCount = {}, 0
+function ns.CreatureIDFromGUID(guid)
+  if guid == nil or not ns.Usable(guid) or type(guid) ~= "string" then return nil end
+  local known = idByGUID[guid]
+  if known ~= nil then return known or nil end
+  local kind, _, _, _, _, id = strsplit("-", guid)
+  local v = (kind == "Creature" or kind == "Vehicle") and tonumber(id) or false
+  if idCount >= 2000 then idByGUID, idCount = {}, 0 end
+  idByGUID[guid], idCount = v, idCount + 1
+  return v or nil
+end
+
+local function QuestieShowsTooltip(questID)
+  if not (ns.db.questieFirst and ns.QuestieOn()) then return false end -- (review 2) Questie switched off draws nothing
+  local p = type(Questie) == "table" and type(Questie.db) == "table" and Questie.db.profile
+  if type(p) ~= "table" or p.enableTooltips == false then return false end
+  return ns.QuestieKnows(questID) == true
+end
+
+-- Lines for one creature: objectives first, then quests it gives.
+function ns.TooltipLinesForCreature(creatureID)
+  Index()
+  local lines = {}
+  for _, entry in ipairs(byCreature[creatureID] or {}) do
+    local questID, index = ns.ObjectiveEntry(entry)
+    local own = false
+    -- (Questdon review 4) not for a failed quest (the timer ran out): its mobs no longer count
+    if ns.InQuestLog(questID) and not ns.IsQuestComplete(questID) and not ns.IsQuestFailed(questID) and not QuestieShowsTooltip(questID) then
+      local o = ns.ClientObjectives(questID)[index]
+      if not (type(o) == "table" and ns.True(o.finished)) then
+        local text = type(o) == "table" and type(o.text) == "string" and ns.Usable(o.text) and o.text or ""
+        lines[#lines + 1] = { ns.QuestTitle(questID), text, kind = "objective" }
+        own = true
+      end
+    end
+    -- (1.18) group members (Questdon) who still need this mob
+    local party = ns.PartyObjectiveLines and ns.PartyObjectiveLines(questID, index) or {}
+    if #party > 0 and not own then lines[#lines + 1] = { ns.QuestTitle(questID), "", kind = "partyQuest" } end
+    for _, p in ipairs(party) do
+      lines[#lines + 1] = { "  " .. p[1], p[2], party = true, kind = "party" }
+    end
+  end
+  -- (1.3.6, Daniel: "the tooltip should say which quests I can turn in there") quests in your log that this NPC
+  -- takes: where you turned them in before (learned), else the turn-in NPC of the data; finished first
+  local turnins = {}
+  for _, info in ipairs(ns.QuestLogEntries and ns.QuestLogEntries() or {}) do
+    local q = ns.Num(info.questID)
+    local e = q and ns.db.learned and ns.db.learned[q]
+    local ender = (e and e.finish and e.finish.npcID) or (q and ns.QUEST_ENDS and ns.QUEST_ENDS[q] and ns.QUEST_ENDS[q][4])
+    if q and ender == creatureID and not QuestieShowsTooltip(q) then
+      turnins[#turnins + 1] = { q, ns.IsQuestComplete(q) and true or false }
+    end
+  end
+  table.sort(turnins, function(a, b) if a[2] ~= b[2] then return a[2] end return a[1] < b[1] end)
+  for _, t in ipairs(turnins) do
+    lines[#lines + 1] = { "? " .. ns.QuestTitle(t[1]), t[2] and L["ready (quest to turn in)"] or L["not finished yet"], kind = t[2] and "turnin" or "turninOpen" }
+  end
+  for _, questID in ipairs(byGiver[creatureID] or {}) do
+    -- (1.24) the client's list or the data and the quest givers; an unknown
+    -- level only once confirmed (or with "showNoLevel")
+    local listed = ns.ClientAvailability(questID) == true and not ns.IsQuestDone(questID) and not ns.InQuestLog(questID)
+    if (listed or ns.CanTakeQuest(questID)) and (listed or not ns.NoLevelHidden(questID))
+        and not QuestieShowsTooltip(questID) then
+      local dungeon = ns.QuestDungeon and ns.QuestDungeon(questID)
+      local tag = ns.QuestLevelTag(questID) -- (1.22) "[?]" when the level is unknown
+      lines[#lines + 1] = { "! " .. tag .. ns.QuestTitle(questID)
+        .. (dungeon and (" (" .. ns.DungeonName(dungeon) .. ")") or ""), "", kind = "giver" }
+    else
+      -- (1.24) this NPC did not offer it at your level: say so (grey)
+      local at = ns.NotOfferedLevel(questID)
+      if at and not ns.IsQuestDone(questID) and not ns.InQuestLog(questID) then
+        lines[#lines + 1] = { ns.QuestTitle(questID), L["Not offered by the quest giver (level %d)"]:format(at), kind = "notOffered" }
+      end
+    end
+  end
+  return lines
+end
+
+local function OnUnitTooltip(tooltip, data)
+  if not ns.db.unitTooltips or tooltip ~= GameTooltip then return end
+  local guid = type(data) == "table" and data.guid or nil
+  if guid == nil and tooltip.GetUnit then
+    local ok, _, unit = pcall(tooltip.GetUnit, tooltip)
+    if ok and type(unit) == "string" and ns.Usable(unit) then guid = ns.Value(UnitGUID, unit) end
+  end
+  local id = ns.CreatureIDFromGUID(guid)
+  if not id then return end
+  local lines = ns.TooltipLinesForCreature(id)
+  if #lines == 0 then return end
+  -- (1.2) quests the game's tooltip already names with their progress (the
+  -- modern client does that for your quests): no second line from us
+  local shown = {}
+  if type(data) == "table" and type(data.lines) == "table" then
+    for _, l in ipairs(data.lines) do
+      local t = type(l) == "table" and l.leftText
+      if type(t) == "string" and ns.Usable(t) then shown[t] = true end
+    end
+  end
+  if next(shown) == nil and tooltip.NumLines then
+    local n = ns.Num(ns.Value(tooltip.NumLines, tooltip)) or 0
+    for i = 1, math.min(n, 30) do
+      local fs = _G["GameTooltipTextLeft" .. i]
+      local t = fs and fs.GetText and ns.Value(fs.GetText, fs)
+      if type(t) == "string" and ns.Usable(t) then shown[t] = true end
+    end
+  end
+  if next(shown) ~= nil then
+    local keep = {}
+    for _, l in ipairs(lines) do
+      if not (l.kind == "objective" and shown[l[1]]) then keep[#keep + 1] = l end
+    end
+    lines = keep
+    if #lines == 0 then return end
+  end
+  -- (1.19) family structure inside Blizzard's unit tooltip: a spacer, then
+  -- key/value lines (quest in the secondary colour, progress in the primary
+  -- colour); quests to pick up with the yellow "!" and Blizzard's level colour.
+  local C = ns.Style.COLORS
+  local P, K, W = C.textPrimary, C.textSecondary, C.warning
+  tooltip:AddLine(" ")
+  for i = 1, math.min(#lines, 8) do
+    local l = lines[i]
+    if l.kind == "giver" then
+      tooltip:AddLine("|c" .. W.hex .. "!|r" .. l[1]:sub(2), P[1], P[2], P[3])
+    elseif l.kind == "turnin" or l.kind == "turninOpen" then
+      -- (1.3.6) a yellow ? for a finished quest, a grey one for an open one
+      local H = C.textHint or K
+      local q = l.kind == "turnin" and ("|c" .. W.hex .. "?|r") or ("|cff8a8f99?|r")
+      -- (Daniel 11.10.) "ready" in the game's quest green
+      local G = GREEN_FONT_COLOR and { GREEN_FONT_COLOR.r, GREEN_FONT_COLOR.g, GREEN_FONT_COLOR.b } or { 0.1, 1, 0.1 }
+      local R = l.kind == "turnin" and G or H
+      tooltip:AddDoubleLine(q .. l[1]:sub(2), l[2], P[1], P[2], P[3], R[1], R[2], R[3])
+    elseif l.kind == "notOffered" then
+      local H = C.textHint or K
+      tooltip:AddDoubleLine(l[1], l[2], K[1], K[2], K[3], H[1], H[2], H[3])
+    elseif l[2] ~= "" then
+      tooltip:AddDoubleLine(l[1], l[2], K[1], K[2], K[3], P[1], P[2], P[3])
+    else
+      tooltip:AddLine(l[1], K[1], K[2], K[3])
+    end
+  end
+end
+
+ns.OnInit(function()
+  if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then
+    ns.tooltipHooked = pcall(TooltipDataProcessor.AddTooltipPostCall, Enum.TooltipDataType.Unit,
+      ns.Guard("tooltip", OnUnitTooltip))
+  end
+end)
+
+---------------------------------------------------------------------------
+-- Rewards of a quest in the log (XP, money, items, choices)
+---------------------------------------------------------------------------
+-- (1.3.8, F11) With Geardon: rewards that are an upgrade for you get a green mark (only Geardon's sure answer; its
+-- yellow "check it" arrow does not count). nil without Geardon or while the item is not known yet.
+function ns.GeardonUpgrade(item)
+  local api = rawget(_G, "GeardonAPI")
+  if type(api) ~= "table" or type(api.IsUpgrade) ~= "function" or item == nil then return nil end
+  local ok, up, uncertain = pcall(api.IsUpgrade, item)
+  if not ok or up == nil then return nil end
+  return up == true and not uncertain
+end
+local function Marked(name, itemID)
+  if itemID and ns.GeardonUpgrade(itemID) then return name .. " |cff1eff00(" .. L["upgrade"] .. ")|r" end
+  return name
+end
+
+function ns.QuestRewardLines(questID)
+  local lines = {}
+  if not ns.InQuestLog(questID) then return lines end
+  local xp = ns.Num(ns.Value(GetQuestLogRewardXP, questID))
+  if xp and xp > 0 then
+    lines[#lines + 1] = L["%s XP"]:format(BreakUpLargeNumbers and BreakUpLargeNumbers(xp) or xp)
+  end
+  local money = ns.Num(ns.Value(GetQuestLogRewardMoney, questID))
+  if money and money > 0 then lines[#lines + 1] = ns.Money(money) end
+  local items = {}
+  if GetQuestLogRewardInfo then
+    for i = 1, math.min(ns.Num(ns.Value(GetNumQuestLogRewards, questID)) or 0, 10) do
+      local ok, name, _, count, _, _, itemID = pcall(GetQuestLogRewardInfo, i, questID)
+      if ok and type(name) == "string" and ns.Usable(name) then
+        count = ns.Num(count)
+        name = Marked(name, ns.Num(itemID))
+        items[#items + 1] = (count and count > 1) and ("%dx %s"):format(count, name) or name
+      end
+    end
+  end
+  if #items > 0 then lines[#lines + 1] = table.concat(items, ", ") end
+  local choices = {}
+  if GetQuestLogChoiceInfo then
+    for i = 1, math.min(ns.Num(ns.Value(GetNumQuestLogChoices, questID, true)) or 0, 10) do
+      local ok, name, _, _, _, _, itemID = pcall(GetQuestLogChoiceInfo, i, questID)
+      if ok and type(name) == "string" and ns.Usable(name) then choices[#choices + 1] = Marked(name, ns.Num(itemID)) end
+    end
+  end
+  if #choices > 0 then lines[#lines + 1] = L["Choice: %s"]:format(table.concat(choices, " / ")) end
+  return lines
+end

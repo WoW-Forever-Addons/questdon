@@ -1,0 +1,64 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<!-- Mixins are defined in MapPins.lua. -->
+	<Frame name="QuestdonQuestPinTemplate" inherits="BaseHighlightableMapPoiPinTemplate" enableMouseClicks="true" mixin="QuestdonQuestPinMixin" virtual="true">
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
+	<!-- No OnEnter/OnLeave scripts here: the map canvas asserts on them and calls the
+	     mixin's OnMouseEnter/OnMouseLeave itself. -->
+	<Frame name="QuestdonObjectivePinTemplate" mixin="QuestdonObjectivePinMixin" enableMouse="true" virtual="true">
+		<Size x="12" y="12"/>
+		<Layers>
+			<Layer level="OVERLAY">
+				<Texture parentKey="Dot" file="Interface\COMMON\Indicator-Yellow" setAllPoints="true"/>
+			</Layer>
+		</Layers>
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
+	<!-- (17.10.) the area of a group of objective spots: strips in the quest's colour, no mouse -->
+	<Frame name="QuestdonAreaPinTemplate" mixin="QuestdonAreaPinMixin" virtual="true">
+		<Size x="1" y="1"/>
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
+	<!-- (1.3.6) the dots of the arrow's way (PathDots.lua): no mouse, clicks go through to the map -->
+	<Frame name="QuestdonPathDotPinTemplate" mixin="QuestdonPathDotPinMixin" virtual="true">
+		<Size x="9" y="9"/>
+		<Layers>
+			<Layer level="ARTWORK">
+				<Texture parentKey="Ring" file="Interface\CHARACTERFRAME\TempPortraitAlphaMask" setAllPoints="true"/>
+			</Layer>
+			<Layer level="OVERLAY">
+				<Texture parentKey="Dot" file="Interface\CHARACTERFRAME\TempPortraitAlphaMask">
+					<Size x="6" y="6"/>
+					<Anchors><Anchor point="CENTER"/></Anchors>
+				</Texture>
+			</Layer>
+		</Layers>
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
+	<!-- (17.10.) the dots of an NPC's route (Walks.lua): no mouse, clicks go through to the map -->
+	<Frame name="QuestdonWalkDotPinTemplate" mixin="QuestdonWalkDotPinMixin" virtual="true">
+		<Size x="7" y="7"/>
+		<Layers>
+			<Layer level="ARTWORK">
+				<Texture parentKey="Ring" file="Interface\CHARACTERFRAME\TempPortraitAlphaMask" setAllPoints="true"/>
+			</Layer>
+			<Layer level="OVERLAY">
+				<Texture parentKey="Dot" file="Interface\CHARACTERFRAME\TempPortraitAlphaMask">
+					<Size x="4" y="4"/>
+					<Anchors><Anchor point="CENTER"/></Anchors>
+				</Texture>
+			</Layer>
+		</Layers>
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
+</Ui>
