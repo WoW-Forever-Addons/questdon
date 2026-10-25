@@ -1,6 +1,22 @@
 local addonName, ns = ...
 local L = ns.L
 
+-- (25.10.2026, Classic Era) the game's API tables behind a proxy: on Era (Classic.lua) a missing function comes
+-- from ns.EraShims, otherwise the game's own table, looked up at each access. Files take `local C_QuestLog = ns.QL
+-- or C_QuestLog`. On Forever there are no shims and every field is the game's.
+local function ApiProxy(name)
+  local shims = ns.EraShims and ns.EraShims[name]
+  return setmetatable({}, { __index = function(_, k)
+    local s = shims and shims[k]
+    if s ~= nil then return s end
+    local t = _G[name]
+    if type(t) == "table" then return t[k] end
+    return nil
+  end })
+end
+ns.QL, ns.ST, ns.TT = ApiProxy("C_QuestLog"), ApiProxy("C_SuperTrack"), ApiProxy("C_TooltipInfo")
+local C_QuestLog = ns.QL
+
 ns.defaults = {
   autoAccept = true,
   autoTurnIn = true,
@@ -23,6 +39,10 @@ ns.defaults = {
   buttonPos = nil, -- { point, relPoint, x, y }
   -- 1.1
   notifySound = true,
+  journalShots = true, -- (1.3.11, Daniel 23.10.) every screenshot an entry in the journal
+  journalMoments = true, -- (1.3.11) deaths, dungeons, new zones, loot, home, professions, reputation
+  journalStory = true, -- (1.3.12) the turn-in text (db.questTexts[id].c), shortened, in the card of a completed quest's entry
+  journalLevelShot = false, -- (1.3.11) a screenshot at each level-up
   notifyText = true,
   learnQuests = true,
   learnPins = true,
@@ -107,6 +127,7 @@ ns.defaults = {
   panelCombatFade = false,
   arrowLocked = false,
   arrowAlpha = 0.82,
+  arrowPlain = true, -- (25.10.) no plate and frame behind the arrow's text; (25.10., Daniel) the default, like the list
   arrowCombatFade = false,
   xpBarAlpha = 0.82,
   xpBarCombatFade = false,
@@ -238,6 +259,7 @@ function ns.InScope() return scopeDepth > 0 end
 -- read it every second, each in its own scope). Outside a scope (tests, other addons) it is read directly as before.
 local logGen = 0
 function ns.LogGen() return logGen end
+function ns.InScope() return scopeDepth > 0 end -- (24.10.) inside a protected call (event, timer, UI part)
 function ns.ForgetQuestLog() logGen = logGen + 1 end
 local logValues, logValueGen = {}, {}
 -- (tests) QD_TEST_FRESH_LOG: the test harness changes its quest log without the game's events
@@ -500,7 +522,8 @@ function ns.On(event, fn)
     listeners[event] = {}
     -- Unknown events throw in the modern client, so register defensively.
     local ok = pcall(frame.RegisterEvent, frame, event)
-    if not ok then listeners[event] = nil return false end
+    -- (25.10.2026) events Questdon fires itself on Era (ns.SYNTH_EVENTS, Classic.lua) keep their listeners
+    if not ok and not (ns.SYNTH_EVENTS and ns.SYNTH_EVENTS[event]) then listeners[event] = nil return false end
   end
   table.insert(listeners[event], fn)
   listenerWhere[fn] = listenerWhere[fn] or Where(3) -- (16.10.) for /qd mem: which module's listener
@@ -508,6 +531,13 @@ function ns.On(event, fn)
 end
 
 function ns.OnInit(fn) table.insert(initCallbacks, fn) end
+
+-- (25.10.2026) call the listeners of an event the client does not send (Era: SUPER_TRACKING_CHANGED)
+function ns.Fire(event, ...)
+  local list = listeners[event]
+  if not list then return end
+  for i = 1, #list do ns.SafeCall(event, list[i], event, ...) end
+end
 
 -- (16.10.) the quest log read anew after each of its events (the first listener of each, before any reader)
 for _, e in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN", "UNIT_QUEST_LOG_CHANGED",
@@ -553,6 +583,11 @@ frame:SetScript("OnEvent", function(_, event, ...)
       -- (Questdon review 5) not when the list was closed: then the arrow is the only way shown
       if QuestdonDB.tracker ~= false and QuestdonDB.trackerCompass ~= false and QuestdonDB.trackerShown ~= false then QuestdonDB.arrow = false end
       QuestdonDB.arrowV137 = true
+    end
+    -- (1.3.11, Daniel 25.10.: "no background and no frame shall be the default for Questdon and Leveldon, also with the
+    -- arrow") once for everybody: the quest list and the arrow see-through; who wants the frame switches it on again
+    if not QuestdonDB.plainV1311 then
+      QuestdonDB.trackerPlain, QuestdonDB.arrowPlain, QuestdonDB.plainV1311 = true, true, true
     end
     -- (1.24) per character: what quest givers offered (Offers.lua)
     if type(QuestdonCharDB) ~= "table" then QuestdonCharDB = {} end
@@ -891,6 +926,8 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
   elseif msg == "panel" then
     -- (1.3.8) the old window is gone: its lines are at the bottom of the quest list
     if ns.ToggleTracker then ns.ToggleTracker() end
+  elseif msg == "collect" or msg == "sammeln" then
+    if ns.SetDataOnly then ns.SetDataOnly() end -- (25.10.) only learning and sharing on, again: settings back
   elseif msg == "xpbar" then
     if ns.ToggleXPBar then ns.ToggleXPBar() end
   elseif msg == "next" then

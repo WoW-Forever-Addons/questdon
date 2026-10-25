@@ -1,4 +1,5 @@
 local _, ns = ...
+local C_SuperTrack = ns.ST or C_SuperTrack -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 ---------------------------------------------------------------------------

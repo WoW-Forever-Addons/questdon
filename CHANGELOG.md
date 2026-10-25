@@ -1,5 +1,23 @@
 # Changes
 
+## 1.3.11
+
+- **Update note:** new files, so restart the game after updating (a /reload is not enough).
+- **Now also for WoW Classic Era (and Hardcore):** the same download works in Classic Era with its own quest data from CMaNGOS classic-db on Era's maps. Sharing on Era uses its own channel, so Era and Forever data never mix.
+- **Moments in the journal:** besides quests the journal now keeps the moments of your adventure: a screenshot (with place, quest and group; a click shows a card with a map dot and a note field), a death, a dungeon visit with its bosses, a new zone, rare loot or better, a new home inn and a new reputation rank. The filter "Moments" shows only them; options under Comfort > More settings.
+- **Chapters and recap:** the filter "Chapters" sums up your time in each zone as a card (quests, levels, play time, deaths, who you played with); a click opens it. "Review" shows your numbers and records, the last week, your characters and a bar of play time per level. "Copy as text" at the bottom right gives the journal as text to paste, for example into Discord.
+- **Only collect and share:** one switch turns off everything Questdon shows and does by itself (map markers, quest list, arrow, XP bar, tooltips, automation) and keeps learning and sharing on, so you help the quest data without seeing Questdon. A second click brings your settings back exactly as they were. In the start window, the minimap menu, Options > Sharing and data, or /qd collect.
+- **Arrow and compass:** while Leveldon shows the compass in its window, Questdon's arrow and the list's compass stay aside. The rows "Show window" (direction arrow) and "Compass in the quest list" now say "Leveldon" instead of "on" then, and the explanation on the right tells how to see them again.
+- **Arrow without plate:** Options > Quest list and arrow > "No background and frame" under Direction arrow hides the plate and frame behind the arrow's text, as for the quest list. This is now the default, and with this update the quest list and the arrow both go see-through once for everybody (switch the frame back on in the same place). The tab now has headers "Quest list" and "Direction arrow", so you can tell at a glance which option belongs to which.
+- **For Leveldon:** the API has ArrowMode/SetArrowMode (arrow on, list compass off, the values before are kept) and ArrowPlain/SetArrowPlain, used by Leveldon's new option "Arrow instead of the compass".
+- **Quest list on a key:** Key Bindings > AddOns > Questdon > "Show or hide the quest list".
+- **Postcards for screenshots:** a screenshot in the journal now shows a picture made by the game itself, no helper needed: the map around the spot with a gold dot, your character in the gear you wore, the creature you had targeted, and a tint for the time of day.
+- **The story:** the card of a quest you turned in shows what the quest giver told you at the turn-in (shortened; option "Story in the journal", on).
+- **Quest levels and turn-ins:** levels the game showed in our players' quest logs are now part of the data, so colours and the grey folding follow them for quests outside your log too; more levels and turn-in places for quests that are new or changed in Forever.
+- **Lighter:** the quest list and the minimap no longer rebuild on every quest log event when nothing they show changed, and zooming the world map back to a zoom step you saw before reuses its symbols.
+- **Small fixes:** the line under Leveldon's target is no longer cut off in the objective area, the compass is never empty (the next objective also when it is further than 400 yards), a breadcrumb hint names the quest it leads to, and a pin's tooltip says "Chain: step 2 of 3".
+- **Walking NPCs:** routes that players saw an NPC walk are marked as confirmed; an NPC seen far away from its route loses the doubtful route.
+
 ## 1.3.10
 
 - **Symbols over the right mobs and items:** when the game lists a quest's goals in another order than Questdon's data (Slimy Menace and An Enticing Offer after a Forever update), Questdon now matches them by the names of the mobs and items, so what you still need gets its symbol and finished goals lose theirs. What Questdon had learned for these two quests in the wrong order is dropped once. Questdon also remembers the order it saw, and while a quest's order is unclear it learns nothing for it rather than something wrong.

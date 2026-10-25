@@ -79,15 +79,25 @@ local SWITCHES = {
       if ns.UpdateTracker then ns.UpdateTracker(true) end
       if ns.ApplyArrowLook then ns.ApplyArrowLook() end
     end },
+  -- (25.10.) everything off but learning and sharing; again: the settings back (Setup.lua)
+  { label = "Only collect and share data", keys = { "dataOnly" },
+    isOn = function() return ns.DataOnly and ns.DataOnly() end,
+    toggle = function() if ns.SetDataOnly then ns.SetDataOnly() end end },
 }
 ns.MINIMAP_SWITCHES = SWITCHES -- (tests)
 
 local function IsOn(sw)
+  if sw.isOn then return sw.isOn() and true or false end
   for _, k in ipairs(sw.keys) do if not ns.db[k] then return false end end
   return true
 end
 
 local function Toggle(sw)
+  if sw.toggle then
+    ns.SafeCall("minimap menu", sw.toggle)
+    if ns.RefreshSettingsUI then ns.SafeCall("minimap menu", ns.RefreshSettingsUI) end
+    return
+  end
   local on = not IsOn(sw)
   for _, k in ipairs(sw.keys) do ns.db[k] = on end
   if sw.apply then ns.SafeCall("minimap menu", sw.apply) end

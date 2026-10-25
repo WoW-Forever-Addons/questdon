@@ -1,4 +1,5 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
 
 ---------------------------------------------------------------------------
 -- Learning: where quests are accepted and turned in (account wide)

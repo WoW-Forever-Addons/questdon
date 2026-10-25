@@ -1,4 +1,5 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 -- (1.3.5, Daniel 10.10.) Repeatable quests (hand in more cloth, again and again) are never

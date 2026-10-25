@@ -1,4 +1,6 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
+local C_SuperTrack = ns.ST or C_SuperTrack -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 ---------------------------------------------------------------------------
@@ -224,6 +226,14 @@ local function CrumbsOf(questID)
 end
 function ns.ForgetBreadcrumbIndex() crumbsOf = nil end -- (tests)
 
+-- (24.10., reviewer c) the quests a breadcrumb leads to, as a new list (Leveldon words its hint by where they start)
+function ns.BreadcrumbTargets(questID)
+  local out, seen = {}, {}
+  for _, t in ipairs(FollowUps()[questID] or {}) do if not seen[t] then seen[t] = true out[#out + 1] = t end end
+  for _, t in ipairs(CrumbFor(questID) or {}) do if not seen[t] then seen[t] = true out[#out + 1] = t end end
+  return out
+end
+
 -- A breadcrumb is pointless (and refused by the server) once the quest it
 -- leads to is in the log or done.
 local function BreadcrumbObsolete(questID)
@@ -259,6 +269,7 @@ local SKILL_SPELLS = {
   [356] = { 7620, 7731, 7732, 18248 },          -- Fishing
   [393] = { 8613, 8617, 8618, 10768 },          -- Skinning
 }
+ns.SKILL_SPELLS = SKILL_SPELLS -- (23.10.) Services.lua: which profession a trainer teaches
 local function SpellKnown(id)
   if ns.True(ns.Value(IsPlayerSpell, id)) or ns.True(ns.Value(IsSpellKnown, id)) then return true end
   local sb = C_SpellBook
@@ -288,6 +299,28 @@ local function ReadKnownSkills()
   return known
 end
 local function KnownSkills() return ns.ScopeValue("knownSkills", ReadKnownSkills) end
+
+-- (1.3.11) the journal's profession steps: a profession's first spell by the name of its
+-- skill line (the spell carries the same name); nil for weapon skills and the like
+local profByName
+-- (25.10., review round 8) Herbalism's first spell is "Herb Gathering", not the skill line's name: the skill line by its
+-- name in the client languages (as the game names it)
+local HERBALISM = { ["Herbalism"] = 2366, ["Kr\195\164uterkunde"] = 2366, ["Herboristerie"] = 2366, ["Herborister\195\173a"] = 2366,
+  ["Herborismo"] = 2366, ["\208\162\209\128\208\176\208\178\208\189\208\184\209\135\208\181\209\129\209\130\208\178\208\190"] = 2366,
+  ["\236\149\189\236\180\136\236\177\132\236\167\145"] = 2366, ["\232\141\137\232\151\165\229\173\184"] = 2366 }
+function ns.ProfessionSpell(name)
+  if type(name) ~= "string" then return nil end
+  if not profByName then
+    local t = {}
+    for _, spells in pairs(SKILL_SPELLS) do
+      local n = SpellName(spells[1])
+      if n then t[n] = spells[1] end
+    end
+    if next(t) == nil then return HERBALISM[name] end
+    profByName = t
+  end
+  return profByName[name] or HERBALISM[name]
+end
 -- Does the character know the profession (ATT skill line ID)? Unknown IDs count as known.
 function ns.KnowsSkill(skill)
   skill = ns.Num(skill)
@@ -553,7 +586,10 @@ function ns.GameQuestLevel(questID)
     if lv and lv > 0 then return lv end
   end
   local kept = ns.db and type(ns.db.questLevels) == "table" and ns.Num(ns.db.questLevels[questID])
-  return kept and kept > 0 and kept or nil
+  if kept and kept > 0 then return kept end
+  -- (23.10.) the level the game showed in our players' quest logs (Extra_Quests.lua ns.GAME_LEVELS)
+  local shipped = ns.GAME_LEVELS and ns.Num(ns.GAME_LEVELS[questID])
+  return shipped and shipped > 0 and shipped or nil
 end
 
 -- (1.22) "[12] " in difficulty colour, "[?] " for an unknown level. (1.3.6) the game's level first.
@@ -849,9 +885,46 @@ end
 -- with notOffered = level), then the data. Unconfirmed quests without a level
 -- only with the option "showNoLevel".
 local AvailableOnMap
+-- (24.10., Daniel's list: the quest list and the minimap on quest log events; bench "quest, map closed": the panel's
+-- available quests 27 KB/s) kept across scopes while the log's state (ns.QuestLogState), the level, the options and the
+-- map stay and for at most AVAIL_SECS; data loads, quest lines, accept, abandon, turn-in, level, zone, talking to an NPC
+-- and every pin refresh (options, /qd, hiding a quest) build it anew. Kills and loot only fire quest log updates.
+local AVAIL_SECS = 60
+local availKeep, availGen = {}, 0
+-- (25.10., review round 8: a hidden quest stayed up to 60 s on the list, map and minimap) hiding a quest, /qd nothere and
+-- the offer verdicts call it too (NotHere.lua, Offers.lua), and the minimap's kept base pins go with it
+function ns.ForgetAvailable()
+  availGen = availGen + 1
+  if ns.ForgetMinimapBase then ns.ForgetMinimapBase() end
+end
+for _, e in ipairs({ "QUEST_DATA_LOAD_RESULT", "QUESTLINE_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN",
+    "PLAYER_LEVEL_UP", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "GOSSIP_SHOW", "QUEST_DETAIL", "QUEST_GREETING" }) do
+  ns.On(e, ns.ForgetAvailable)
+end
+local function AvailOptions()
+  local d = ns.db
+  return table.concat({ tostring(d.showLowLevel), tostring(d.confirmedOnly), tostring(d.hideEventQuests), tostring(d.showNoLevel),
+    tostring(d.upcomingLevels), tostring(d.lowLevelRange), tostring(d.hideRepeatable), tostring(d.clientRepeatable),
+    tostring(d.nextConfirmedOnly), tostring(d.questieFirst) }, ",")
+end
+local function KeptAvailable(mapID, upcoming)
+  if QD_TEST_FRESH_LOG or not (ns.InScope and ns.InScope()) or not ns.QuestLogState then return AvailableOnMap(mapID, upcoming) end
+  local h, n = ns.QuestLogState()
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  local level, opt = Player().level, AvailOptions()
+  local key = upcoming and -mapID or mapID
+  local k = availKeep[key]
+  if k and k.gen == availGen and k.h == h and k.n == n and k.level == level and k.opt == opt
+      and now >= k.at and now - k.at <= AVAIL_SECS then
+    return k.list
+  end
+  local list = AvailableOnMap(mapID, upcoming)
+  availKeep[key] = { list = list, gen = availGen, h = h, n = n, level = level, opt = opt, at = now }
+  return list
+end
 function ns.AvailableQuestsOnMap(mapID, upcoming)
   -- (1.23) once per map and scope (panel, map, minimap share it); callers only read it
-  return ns.Memo(upcoming and "availableUp" or "available", mapID, AvailableOnMap, upcoming)
+  return ns.Memo(upcoming and "availableUp" or "available", mapID, KeptAvailable, upcoming)
 end
 function AvailableOnMap(mapID, upcoming)
   local list, seen = {}, {}
@@ -2258,6 +2331,38 @@ end
 ---------------------------------------------------------------------------
 function ns.FollowUpQuests(questID)
   return FollowUps()[questID] or {}
+end
+
+-- (24.10., Daniel's list) the place of a quest in a plain chain: step and total ("2/2"). Only a chain without forks:
+-- every quest before has one follow-up, every quest from here on has one previous quest and one follow-up. nil for a
+-- quest in no chain or in one that forks or joins (the number would be a guess).
+function ns.ChainPosition(questID)
+  if not Q[questID] then return nil end
+  local seen, back, id = { [questID] = true }, 0, questID
+  while true do
+    local pre = ns.QuestPrereqs(id)
+    if #pre == 0 then break end
+    if #pre > 1 then return nil end
+    id = pre[1]
+    if seen[id] or not Q[id] or #(FollowUps()[id] or {}) ~= 1 then return nil end
+    seen[id] = true
+    back = back + 1
+    if back > 40 then return nil end
+  end
+  local ahead = 0
+  id = questID
+  while true do
+    local nxt = FollowUps()[id] or {}
+    if #nxt == 0 then break end
+    if #nxt > 1 then return nil end
+    id = nxt[1]
+    if seen[id] or #ns.QuestPrereqs(id) ~= 1 then return nil end
+    seen[id] = true
+    ahead = ahead + 1
+    if ahead > 40 then return nil end
+  end
+  if back + ahead == 0 then return nil end
+  return back + 1, back + 1 + ahead
 end
 
 -- Next quest in a chain after turning one in

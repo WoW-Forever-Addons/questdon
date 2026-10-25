@@ -1,4 +1,5 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 -- (1.18) Quests a group member shared with you: the quest dialog came from a

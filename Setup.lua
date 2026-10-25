@@ -44,6 +44,8 @@ local SWITCHES = {
   { key = "autoAccept", also = "autoTurnIn", name = "Auto accept and turn in" },
   -- (18.10., Daniel: "a switch for the quest window see-through or not, see-through by default")
   { key = "trackerPlain", name = "Quest list see-through (no background and frame)" },
+  -- (25.10.) everything off but learning and sharing (SetDataOnly)
+  { key = "dataOnly", dataOnly = true, name = "Only collect and share data" },
 }
 
 -- which style the current settings are (nil: neither, the player mixed them)
@@ -65,6 +67,7 @@ local function Refresh()
   end
   for _, r in ipairs(switchRows) do
     local on = ns.db[r.item.key] and true or false
+    if r.item.dataOnly then on = ns.DataOnly() end
     r:SetValue(on and L["on"] or L["off"], on and "good" or "textHint")
   end
 end
@@ -80,7 +83,73 @@ function ns.ApplySetupStyle(key)
   if frame then Refresh() end
 end
 
+---------------------------------------------------------------------------
+-- (25.10., Daniel: "can players only collect and share data?") One switch: everything Questdon shows or does by
+-- itself goes off, learning and sharing stay on. The values before are kept (db.dataOnlyPrev) and come back with
+-- the second click, so nobody has to find thirty options again. The minimap button stays as the way back.
+---------------------------------------------------------------------------
+local DATA_ONLY = {
+  -- learning and sharing on
+  learnQuests = true, shareLearned = true, shareChannel = true, shareTimes = true, minimapButton = true,
+  -- map, minimap, nameplates, tooltips
+  availablePins = false, objectivePins = false, walkLines = false, minimapPins = false, nameplateIcons = false,
+  dungeonPins = false, dungeonPinsMinimap = false, learnPins = false, hideGamePOIs = false, unitTooltips = false,
+  -- windows: quest list, arrow, XP bar, quest item and target buttons
+  tracker = false, arrow = false, arrowNext = false, pathDots = false, arrowCorpse = false, xpBar = false,
+  ownRepBar = false, questItemButton = false, targetButton = false, exportBlizzardWaypoint = false, exportTomTom = false,
+  -- automation, hints and sounds
+  autoAccept = false, autoTurnIn = false, autoPickBest = false, highlightBest = false, suggestReward = false,
+  chainHint = false, shareQuests = false, dungeonHint = false, notifySound = false, notifyText = false,
+  sellJunk = false, autoRepair = false, fastLoot = false, journalShots = false, journalLevelShot = false,
+}
+ns.DATA_ONLY = DATA_ONLY -- (tests)
+
+function ns.DataOnly() return ns.db and type(ns.db.dataOnlyPrev) == "table" or false end
+
+-- on: true collect only, false settings back, nil the other way round
+function ns.SetDataOnly(on)
+  local db = ns.db
+  if not db then return end
+  if on == nil then on = not ns.DataOnly() end
+  if on == ns.DataOnly() then return end
+  local changed, restore = {}, nil
+  if on then
+    local prev = {}
+    for k, v in pairs(DATA_ONLY) do
+      prev[k] = db[k] == nil and "nil" or db[k]
+      if db[k] ~= v then db[k] = v changed[#changed + 1] = k end
+    end
+    db.dataOnlyPrev = prev
+    db.arrowAuto = nil
+  else
+    restore = db.dataOnlyPrev
+    for k, v in pairs(db.dataOnlyPrev) do
+      if v == "nil" then v = nil end
+      if DATA_ONLY[k] ~= nil and db[k] ~= v then db[k] = v changed[#changed + 1] = k end
+    end
+    db.dataOnlyPrev = nil
+    if db.tracker ~= false then db.trackerShown = true end
+  end
+  table.sort(changed)
+  if ns.OptionChanged then for _, k in ipairs(changed) do ns.OptionChanged(k) end end
+  -- the list's switch moves the arrow by itself (SyncArrowWithList): the player's own arrow value wins, and with
+  -- collecting only the arrow stays off although the list is gone
+  if on then db.arrow, db.arrowAuto = false, nil end
+  if restore and restore.arrow ~= nil then
+    if restore.arrow == "nil" then db.arrow = nil else db.arrow = restore.arrow end
+  end
+  if ns.RefreshMinimapButton then ns.SafeCall("data only", ns.RefreshMinimapButton) end
+  if ns.UpdateXPBar then ns.SafeCall("data only", ns.UpdateXPBar) end
+  if ns.ApplyArrow then ns.SafeCall("data only", ns.ApplyArrow) end
+  if ns.UpdateTracker then ns.SafeCall("data only", ns.UpdateTracker, true) end
+  if ns.RefreshPins then ns.SafeCall("data only", ns.RefreshPins) end
+  ns.Print(on and L["Questdon only collects and shares data now. /qd collect brings your settings back."]
+    or L["Your Questdon settings are back."])
+  if frame then Refresh() end
+end
+
 local function ToggleSwitch(item)
+  if item.dataOnly then ns.SetDataOnly() Refresh() return end
   local v = not ns.db[item.key]
   ns.db[item.key] = v
   if item.also then ns.db[item.also] = v end

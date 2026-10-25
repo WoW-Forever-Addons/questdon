@@ -1,9 +1,12 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
+local C_SuperTrack = ns.ST or C_SuperTrack -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 BINDING_HEADER_QUESTDON = "Questdon"
 _G["BINDING_NAME_CLICK QuestdonItemButton:LeftButton"] = L["Use quest item"]
 _G["BINDING_NAME_CLICK QuestdonTargetButton:LeftButton"] = L["Target a quest mob"]
+BINDING_NAME_QUESTDON_TOGGLELIST = L["Show or hide the quest list"] -- (25.10.) Tracker.lua QuestdonToggleList
 
 local LAST_BAG = NUM_BAG_SLOTS or 4
 local button

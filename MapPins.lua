@@ -414,6 +414,10 @@ function ns.QuestPinDescription(pin)
     local follow = #(ns.FollowUpQuests and ns.FollowUpQuests(pin.questID) or {})
     if follow == 1 then Add(L["Starts a chain: 1 follow-up quest known"])
     elseif follow > 1 then Add(L["Starts a chain: %d follow-up quests known"]:format(follow)) end
+    -- (24.10.) where in a plain chain this quest stands ("step 2 of 3"), when there is a quest before it
+    local step, total
+    if ns.ChainPosition then step, total = ns.ChainPosition(pin.questID) end
+    if step and step > 1 then Add(L["Chain: step %d of %d"]:format(step, total)) end
   end
   if ns.QuestFlags(pin.questID):find("b", 1, true) then Add(L["Breadcrumb quest"]) end
   -- (1.18) dungeon quest: name of the dungeon (Forever pays these quests extra XP)
@@ -525,6 +529,9 @@ function ns.QuestPinTooltip(pin)
   if pin.kind ~= "turnin" then
     local follow = #(ns.FollowUpQuests and ns.FollowUpQuests(pin.questID) or {})
     if follow > 0 then KV(L["Chain"], L["%d follow-up quests known"]:format(follow)) end
+    local step, total
+    if ns.ChainPosition then step, total = ns.ChainPosition(pin.questID) end
+    if step and step > 1 then lines[#lines + 1] = L["Chain: step %d of %d"]:format(step, total) end
   end
   if ns.QuestFlags(pin.questID):find("b", 1, true) then lines[#lines + 1] = L["Breadcrumb quest"] end
   local dungeon = ns.QuestDungeon and ns.QuestDungeon(pin.questID)
@@ -860,11 +867,14 @@ function ns.SymbolWorldObjectives(pins, bucket)
       for ox = -1, 1 do
         for oy = -1, 1 do
           local list = cells[(cx + ox) * 4096 + cy + oy]
-          for _, j in ipairs(list or {}) do
-            local q = g[j]
-            if (p.x - q.x) ^ 2 + ((p.y - q.y) / CANVAS_ASPECT) ^ 2 <= d2 then
-              local a, b = Find(i), Find(j)
-              if a ~= b then parent[a] = b end
+          -- (25.10., bench "map zoom": `list or {}` made an empty table per neighbour cell, 9 per spot and zoom step)
+          if list then
+            for _, j in ipairs(list) do
+              local q = g[j]
+              if (p.x - q.x) ^ 2 + ((p.y - q.y) / CANVAS_ASPECT) ^ 2 <= d2 then
+                local a, b = Find(i), Find(j)
+                if a ~= b then parent[a] = b end
+              end
             end
           end
         end
@@ -933,6 +943,16 @@ function ns.SymbolsOn() return ns.db.objectiveIcons ~= false end
 -- (1.17) Signature of a pin set: refreshes from events skip the rebuild when
 -- nothing visible changed (same map, same pins, same texts).
 local lastSig, precomputed
+-- (25.10., OFFEN "Karte zoomen (39 KB/s)": Daniel's /qd mem with the map open and zoomed, "map inner" 35 KB/s, about 110 KB per
+-- zoom step) the display list of each zoom step, kept while the pins stay the same (same map, same signature, same options):
+-- zooming back to a step seen before draws it from here instead of grouping all spots again. At most ZOOM_KEEP steps.
+local zoomCache, zoomCacheSig, zoomCacheN = {}, nil, 0
+local ZOOM_KEEP = 4
+local function ZoomKey(clusterB, objB)
+  return ("%s|%s|%s|%s|%s|%s|%s|%s"):format(clusterB, objB, ns.SymbolsOn() and 1 or 0, tostring(ns.db.thinObjectives),
+    tostring(ns.db.objectivePinSize), tostring(ns.db.objectiveAreas), tostring(ns.db.clusterPins), tostring(ns.db.skipGameGivers))
+end
+function ns.MapZoomCacheSize() return zoomCacheN end
 local clusterBucket = 1 -- (1.28) zoom step the pins were last built for
 local objBucket, objThinned = 1, false -- (1.3.5) zoom step of the objective thinning; true: another zoom can change the dots
 local stats = { builds = 0, skipped = 0 }
@@ -1420,7 +1440,14 @@ function Setup()
     -- (1.3.5) dense objective dots: fewer markers (quest givers and turn-ins are never thinned)
     objBucket = ns.ClusterBucket(canvas)
     local display, areas
-    if ns.SymbolsOn() then
+    sig = sig or ns.PinsSignature(mapID, pins)
+    local zkey = ZoomKey(clusterBucket, objBucket)
+    if zoomCacheSig ~= mapID .. "#" .. tostring(sig) then zoomCache, zoomCacheSig, zoomCacheN = {}, mapID .. "#" .. tostring(sig), 0 end
+    local cached = zoomCache[zkey]
+    if cached then
+      display, areas, objThinned = cached[1], cached[2], cached[3]
+      stats.zoomCached = (stats.zoomCached or 0) + 1
+    elseif ns.SymbolsOn() then
       -- (17.10.) symbols: each objective's groups of spots as one symbol with its area (zoom changes the groups)
       display, areas = ns.SymbolWorldObjectives(ns.DisplayQuestPins(pins, ns.ClusterDistance(scale)), objBucket)
       objThinned = true
@@ -1428,6 +1455,11 @@ function Setup()
       display = ns.ThinWorldObjectives(ns.DisplayQuestPins(pins, ns.ClusterDistance(scale)), objBucket, ns.db.objectivePinSize or 12)
       local ts = ns.WorldThinStats()
       objThinned = ts.before > ts.after or ts.before > ns.WORLD_OBJECTIVE_BUDGET
+    end
+    if not cached then
+      if zoomCacheN >= ZOOM_KEEP then zoomCache, zoomCacheN = {}, 0 end
+      zoomCache[zkey] = { display, areas, objThinned }
+      zoomCacheN = zoomCacheN + 1
     end
     local count = 0
     for _, area in ipairs(areas or {}) do self:GetMap():AcquirePin(AREA_TEMPLATE, area) count = count + 1 end
@@ -1441,7 +1473,7 @@ function Setup()
     end
     stats.builds = stats.builds + 1
     builtMap, builtCount = mapID, count
-    lastSig = sig or ns.PinsSignature(mapID, pins)
+    lastSig = sig
   end)
   -- (23.10.) the map opened: drawn now if a call while it was closed was skipped (the map normally asks itself)
   p.OnShow = ns.Guard("map", function(self)
@@ -1655,6 +1687,7 @@ function ns.EnsureArrow()
 end
 
 function ns.RefreshPins()
+  if ns.ForgetAvailable then ns.ForgetAvailable() end -- (24.10.) options, /qd, hiding a quest
   if not provider then Setup() end -- world map loaded later than expected
   if provider and provider:GetMap() and WorldMapFrame:IsShown() then
     provider:RefreshAllData()

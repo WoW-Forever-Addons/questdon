@@ -24,6 +24,9 @@ local function XPBarLook() if ns.ApplyXPBarLook then ns.ApplyXPBarLook() end end
 local function UpdateXPBar() if ns.UpdateXPBar then ns.UpdateXPBar() end end
 -- (1.2) switching the bar also changes the window (its experience lines)
 local function UpdateXPBarAndPanel() UpdateXPBar() if ns.UpdatePanel then ns.UpdatePanel() end if ns.UpdateTracker then ns.UpdateTracker(true) end end
+-- (25.10., Daniel: "Show window changes nothing") while a guide (Leveldon) shows the compass in its window, Questdon's
+-- arrow and the list's compass stay aside whatever these switches say: the row says so (OptionsWindow.lua item.status)
+local function GuideStatus() return ns.GuideActive and ns.GuideActive() and "Leveldon" or nil end
 local SMIN, SMAX = ns.Style.SCALE_MIN, ns.Style.SCALE_MAX
 
 local PAGES = {
@@ -96,7 +99,7 @@ local PAGES = {
         if ns.UpdateTracker then ns.UpdateTracker(true) end if ns.ApplyArrowLook then ns.ApplyArrowLook() end end },
     -- (1.3.7, Daniel 13.10.: "by default the compass in the list and the arrow off; switch it off and the old arrow
     -- comes back; both at once must be possible")
-    { key = "trackerCompass", name = "Compass in the quest list", tip = "A compass on the card of the picked quest. Off: the separate direction arrow comes back. Both at once: also switch on 'Show window' under Direction arrow.", parent = "tracker", onChange = function()
+    { key = "trackerCompass", name = "Compass in the quest list", status = GuideStatus, tip = "A compass on the card of the picked quest. Off: the separate direction arrow comes back. Both at once: also switch on 'Show window' under Direction arrow.", parent = "tracker", onChange = function()
         -- (Questdon review 5) off: the arrow window leads; on: the list's compass leads when the list is there (the
         -- window goes, as before), else the window stays and goes with the list's return
         local db = ns.db
@@ -119,7 +122,8 @@ local PAGES = {
     { key = "trackerPlain", name = "No background and frame", tip = "Hides the window's background, its frame and the quest card's gold box: only the text, the compass and the buttons up top stay.", parent = "tracker", onChange = function() if ns.ApplyTrackerChrome then ns.ApplyTrackerChrome() end end },
     { key = "trackerCombatFade", name = "Dim in combat", tip = "Dims the window to 40 % while you are in combat.", parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then ns.Style.CombatFade(f, ns.db.trackerCombatFade) end end },
     { header = "Direction arrow" },
-    { key = "arrow", name = "Show window", tip = "Arrow with distance to the quest you track in the quest log or tracker (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = function(...) ns.db.arrowAuto = nil ArrowLook(...) end }, -- (review 4) your choice
+    { key = "arrow", name = "Show window", status = GuideStatus, tip = "Arrow with distance to the quest you track in the quest log or tracker (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = function(...) ns.db.arrowAuto = nil ArrowLook(...) end }, -- (review 4) your choice
+    { key = "arrowPlain", name = "No background and frame", tip = "Hides the plate behind the arrow's text and its frame: only the arrow and the writing stay. The background opacity below then does nothing.", parent = "arrow", onChange = ArrowLook },
     { key = "arrowLocked", name = "Lock window", tip = "The arrow can no longer be dragged.", parent = "arrow" },
     { key = "arrowNext", name = "Move on to the next quest by itself", tip = "When no quest is tracked (after a turn-in, or after you arrived at a clicked target), the arrow points to the nearest turn-in of a finished quest, or to an open objective close by when that is nearer. Click the arrow to put it aside until your quest log changes.", parent = "arrow", onChange = function() ns.UpdateArrowTarget() end },
     { key = "pathDots", name = "Show the way as dots", tip = "Where the arrow leads around a mountain or first to the way into a cave, dots on the world map and minimap show the way.", parent = "arrow" },
@@ -150,6 +154,11 @@ local PAGES = {
     { key = "notifyText", name = "Message when done", tip = "Shows a message in the middle of the screen when an objective or quest is done." },
   } },
   { title = "Comfort", tip = "Merchant, loot, quest item button, targeting and waypoints.", items = {
+    { header = "Journal" },
+    { key = "journalShots", name = "Screenshots in the journal", tip = "Every screenshot you take becomes an entry in the journal: place, level, target, the quest you follow and your group." },
+    { key = "journalLevelShot", name = "Screenshot at level-up", tip = "Takes a screenshot a second after each level-up. The journal marks it." },
+    { key = "journalMoments", name = "Moments in the journal", tip = "Also writes deaths, dungeon visits with bosses and time, the first visit of a zone, loot of rare quality or better, a new home, profession steps (75, 150, 225, 300) and new reputation standings into the journal." },
+    { key = "journalStory", name = "Story in the journal", tip = "Shows the text the quest giver told you when you turned a quest in, shortened, in the entry's card." },
     { header = "Merchant" },
     { key = "sellJunk", name = "Sell junk", tip = "Sells all grey items when you open a merchant." },
     { key = "autoRepair", name = "Auto repair", tip = "Repairs all items at merchants that can repair." },
@@ -220,6 +229,10 @@ local TOOLS = {
         ns.Print(L["All quests hidden as not offered are shown again."])
       end
     end, "Questdon hides a quest when its quest giver did not offer it at 3 different levels, or when you reported it (Alt-click on the !, or /qd nothere with the NPC targeted). This shows them all again. /qd nothere list shows them, /qd nothere undo takes back the last report." },
+  -- (25.10., Daniel: "can players only collect and share data?") Setup.lua ns.SetDataOnly
+  { "Only collect and share data", "On / off", function()
+      if ns.SetDataOnly then ns.SetDataOnly() end
+    end, "Switches off everything Questdon shows and does by itself (map markers, quest list, arrow, XP bar, tooltips, automation and merchant helpers) and keeps only learning and sharing on. Click again and your settings are back as they were. Also /qd collect." },
   { "Export learned data", "Export", function()
       if ns.OpenExport then ns.OpenExport(false) end
     end, "Shows what Questdon learned and the bundled data does not have yet, as text to copy into a GitHub issue. Helps to improve the quest data for everyone. Numbers, plus the names of NPCs as your game shows them; no names of characters, guilds or players. /qd export (or /qd export all for everything)." },

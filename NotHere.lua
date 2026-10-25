@@ -45,7 +45,7 @@ local function Store()
 end
 
 local function Refresh()
-  if ns.QueuePinRefresh then ns.QueuePinRefresh() end
+  if ns.QueuePinRefresh and ns.ForgetAvailable then ns.ForgetAvailable() ns.QueuePinRefresh() end
   if ns.QueueRefresh then ns.QueueRefresh("panel") end
 end
 

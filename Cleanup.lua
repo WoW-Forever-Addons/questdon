@@ -1,4 +1,6 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
+local C_TooltipInfo = ns.TT or C_TooltipInfo -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 local LAST_BAG = NUM_BAG_SLOTS or 4

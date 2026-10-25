@@ -1,4 +1,5 @@
 local _, ns = ...
+local C_TooltipInfo = ns.TT or C_TooltipInfo -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 local marker   -- our own frame with a gold coin, placed over the best reward button

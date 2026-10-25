@@ -1,0 +1,102 @@
+## Interface: 11509
+## Title: |cff3fa9f5Quest|rdon
+## Notes: Quest helper for WoW Classic Era: available quests and objective spawns on the world map, minimap and nameplates (own database from All The Things), auto accept/turn-in, best reward, XP planner, dungeon quests, group quest progress, completion signals, quest cleanup, group sharing and comfort features.
+## Notes-deDE: Questhelfer für WoW Classic Era: verfügbare Quests und Questgegner auf Weltkarte, Minimap und Namensplaketten (eigene Datenbank aus All The Things), Auto-Annahme/-Abgabe, beste Belohnung, EP-Planer, Dungeonquests, Questfortschritt der Gruppe, Fertig-Signal, Aufräumen, Teilen in der Gruppe und Komfortfunktionen.
+## Notes-frFR: Assistant de quêtes pour WoW Classic Era : quêtes disponibles et emplacements des objectifs sur la carte du monde, la minicarte et les barres d’info (base de données propre issue d’All The Things), acceptation et remise automatiques, meilleure récompense, planificateur de PX, quêtes de donjon, progression des quêtes du groupe, alertes de fin, nettoyage des quêtes, partage en groupe et fonctions de confort.
+## Notes-esES: Asistente de misiones para WoW Classic Era: misiones disponibles y enemigos de misión en el mapa del mundo, el minimapa y las placas de nombre (base de datos propia a partir de All The Things), aceptar y entregar automáticamente, mejor recompensa, planificador de PE, misiones de mazmorra, progreso de misiones del grupo, avisos al completar, limpieza de misiones, compartir con el grupo y funciones de comodidad.
+## Notes-esMX: Asistente de misiones para WoW Classic Era: misiones disponibles y ubicaciones de objetivos en el mapa del mundo, el minimapa y las placas de nombre (base de datos propia de All The Things), aceptación y entrega automáticas, mejor recompensa, planificador de PE, misiones de calabozo, progreso de misiones del grupo, avisos al completar, limpieza de misiones, compartir con el grupo y funciones de comodidad.
+## Notes-ptBR: Assistente de missões para o WoW Classic Era: missões disponíveis e locais dos objetivos no mapa-múndi, no minimapa e nas placas de identificação (banco de dados próprio, a partir do All The Things), aceitar e entregar automaticamente, melhor recompensa, planejador de EXP, missões de masmorra, progresso de missões do grupo, avisos de conclusão, limpeza de missões, compartilhamento em grupo e recursos de conveniência.
+## Notes-ruRU: Помощник по заданиям для WoW Classic Era: доступные задания и места целей на карте мира, мини-карте и индикаторах здоровья (своя база данных на основе All The Things), автоматическое принятие и сдача, лучшая награда, планировщик опыта, задания подземелий, прогресс заданий группы, оповещения о выполнении, очистка журнала, обмен данными с группой и удобные функции.
+## Notes-koKR: WoW Classic Era용 퀘스트 도우미: 세계 지도, 미니맵, 이름표에 수락 가능한 퀘스트와 목표 위치 표시(All The Things 기반 자체 데이터베이스), 자동 수락/완료, 가장 비싼 보상, 경험치 계획, 던전 퀘스트, 파티 퀘스트 진행도, 달성 알림, 퀘스트 정리, 파티 공유와 편의 기능.
+## Notes-zhTW: WoW Classic Era 任務助手：在世界地圖、小地圖與名條上顯示可接任務與任務目標的位置(以 All The Things 為基礎的自有資料庫)、自動接受/回報、最佳獎勵、經驗值規劃、地城任務、隊伍任務進度、完成提示、任務整理、隊伍分享與便利功能。
+## Author: DonCoohd
+## Version: 1.3.11
+## X-Curse-Project-ID: 1723659
+## Category: Quests
+## Category-frFR: Quêtes
+## Category-esES: Misiones
+## Category-esMX: Misiones
+## Category-ptBR: Missões
+## Category-ruRU: Задания
+## Category-koKR: 퀘스트
+## Category-zhTW: 任務
+## IconTexture: Interface\Icons\INV_Misc_Map_01
+## OptionalDeps: Questie
+## SavedVariables: QuestdonDB, QuestKompassDB
+## SavedVariablesPerCharacter: QuestdonCharDB
+## AddonCompartmentFunc: Questdon_OnAddonCompartmentClick
+## X-License: Code by DonCoohd. DataEra: CMaNGOS classic-db data (positions on Classic Era's maps via All The Things, MIT), GPL v3 (see DataEra/Walks-LICENSE-GPLv3.txt).
+
+Locales\enUS.lua
+Locales\deDE.lua
+Locales\frFR.lua
+Locales\esES.lua
+Locales\esMX.lua
+Locales\ptBR.lua
+Locales\ruRU.lua
+Locales\koKR.lua
+Locales\zhTW.lua
+Classic.lua
+Core.lua
+Style.lua
+Look.lua
+Compat.lua
+Exists.lua
+DataEra\Era_Quests.lua
+DataEra\Quest_Texts.lua
+DataEra\Spawns.lua
+DataEra\Walks.lua
+DataEra\Dungeon_Levels.lua
+DataEra\Dungeon_Entrances.lua
+DataEra\Paths.lua
+Learn.lua
+Offers.lua
+NotHere.lua
+QuestData.lua
+Dungeons.lua
+Entrances.lua
+POI.lua
+PinCard.lua
+MapPins.lua
+Pins.xml
+Minimap.lua
+Paths.lua
+Arrow.lua
+Compass.lua
+PathDots.lua
+Walks.lua
+Services.lua
+Tooltip.lua
+NamePlates.lua
+Quests.lua
+Rewards.lua
+Comfort.lua
+ItemButton.lua
+Target.lua
+Waypoint.lua
+Planner.lua
+Notify.lua
+Cleanup.lua
+Share.lua
+Party.lua
+Net.lua
+Exchange.lua
+Export.lua
+Diag.lua
+XPCheck.lua
+Panel.lua
+Tracker.lua
+XPBar.lua
+ZoneQuests.lua
+Journal.lua
+Album.lua
+Chronicle.lua
+Postcard.lua
+Timing.lua
+QuestBook.lua
+SettingsUI.lua
+Options.lua
+Setup.lua
+OptionsWindow.lua
+MinimapButton.lua
+API.lua

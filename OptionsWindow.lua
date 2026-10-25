@@ -34,10 +34,12 @@ local TABS = {
       "nameplateIcons", "minimapButton" } },
   { key = "list", title = "Quest list and arrow", pic = "opt_list",
     text = "Your quests in Questdon's list with a compass, and the arrow that leads you to the next objective.",
-    main = { "tracker", "trackerCompass", "trackerPlain", "arrow", "arrowNext", "pathDots", "arrowCorpse" },
-    more = { "trackerDock", "trackerHideGrey", "trackerHideBlizz", "trackerScale", "trackerAlpha", "trackerCombatFade",
-      "arrowLocked", "arrowScale", "arrowAlpha", "arrowCombatFade", "button:arrow", "nextConfirmedOnly", "targetButton",
-      "exportBlizzardWaypoint", "exportTomTom" } },
+    -- (25.10., Daniel: "you cannot tell at first sight which option is for the list and which for the arrow") headers
+    main = { "header:Quest list", "tracker", "trackerCompass", "trackerPlain",
+      "header:Direction arrow", "arrow", "arrowPlain", "arrowNext", "pathDots", "arrowCorpse" },
+    more = { "header:Quest list", "trackerDock", "trackerHideGrey", "trackerHideBlizz", "trackerScale", "trackerAlpha", "trackerCombatFade",
+      "header:Direction arrow", "arrowLocked", "arrowScale", "arrowAlpha", "arrowCombatFade", "button:arrow", "nextConfirmedOnly",
+      "header:Targeting and waypoints", "targetButton", "exportBlizzardWaypoint", "exportTomTom" } },
   { key = "accept", title = "Accept and turn in", pic = "opt_accept",
     text = "Quests taken and turned in for you, the reward that suits you marked, hints for chains and groups.",
     main = { "autoAccept", "autoTurnIn", "suggestReward", "highlightBest" },
@@ -50,9 +52,10 @@ local TABS = {
   { key = "comfort", title = "Comfort", pic = "opt_comfort",
     text = "Small helpers: sell junk and repair at a merchant, fast loot, a button for quest items.",
     main = { "sellJunk", "autoRepair", "fastLoot", "questItemButton", "starterNotice" },
-    more = { "useGuildRepair", "itemButtonScale" } },
+    more = { "useGuildRepair", "itemButtonScale", "journalShots", "journalLevelShot", "journalMoments", "journalStory" } },
   { key = "share", title = "Sharing and data", pic = "opt_share",
     text = "What Questdon learns while you play and shares with other Questdon players (only quest and map numbers, never names).",
+    top = { "Only collect and share data" }, -- (25.10.) Setup.lua ns.SetDataOnly
     main = { "learnQuests", "shareLearned", "shareChannel", "shareTimes" },
     more = { "learnPins", "pinsOnlyUnknown", "questieFirst" },
     tools = { "Export learned data", "Quests hidden as not offered", "Delete learned quest data" } },
@@ -240,7 +243,9 @@ local function OptionRow(key, indent)
     room = room - 130
   else
     local on = DB()[key] and true or false
-    room = room - K.SetPill(r, on and L["on"] or L["off"], on and "good" or "textHint", 80)
+    -- (25.10.) item.status: a short word instead of "on" while something else does the job (Leveldon's compass)
+    local why = on and item.status and item.status()
+    room = room - K.SetPill(r, why or (on and L["on"] or L["off"]), why and "warning" or (on and "good" or "textHint"), 80)
     if not off then
       r.onClick = function()
         DB()[key] = not DB()[key]
@@ -273,6 +278,12 @@ local function ToolRow(name)
 end
 
 -- an option and the ones that hang on it (parent) right under it, indented
+-- a tab's list may hold "header:<text>" entries between the keys: they are not settings
+local function CountKeys(list)
+  local n = 0
+  for _, k in ipairs(list) do if k:sub(1, 7) ~= "header:" then n = n + 1 end end
+  return n
+end
 local function Options(keys)
   local inList, done, kids = {}, {}, {}
   for _, k in ipairs(keys) do inList[k] = true end
@@ -285,7 +296,10 @@ local function Options(keys)
   end
   for _, k in ipairs(keys) do
     local it = items[k]
-    if not done[k] and not (it and it.parent and inList[it.parent]) then
+    if k:sub(1, 7) == "header:" then
+      -- (25.10., Daniel: "you cannot tell at first sight which option is for the list and which for the arrow")
+      HeaderRow(T(k:sub(8)))
+    elseif not done[k] and not (it and it.parent and inList[it.parent]) then
       done[k] = true
       OptionRow(k)
       for _, c in ipairs(kids[k] or {}) do if not done[c] then done[c] = true OptionRow(c, true) end end
@@ -334,7 +348,7 @@ Render = function()
     for _, name in ipairs(tab.top or {}) do ToolRow(name) end
     if tab.main then Options(tab.main) end
     if tab.more and #tab.more > 0 then
-      local r = HeaderRow((showMore[tab.key] and "- " or "+ ") .. L["More settings"] .. (" (%d)"):format(#tab.more), "accent")
+      local r = HeaderRow((showMore[tab.key] and "- " or "+ ") .. L["More settings"] .. (" (%d)"):format(CountKeys(tab.more)), "accent")
       r.onClick = function() showMore[tab.key] = not showMore[tab.key] Render() end
       if showMore[tab.key] then Options(tab.more) end
     end
@@ -382,6 +396,8 @@ Preview = function()
   local text = it and it.tip and T(it.tip) or T(tab.text)
   if it and it.blockedBy and it.blockedBy() then
     text = L["%s already does this, so it is off here."]:format(it.blockedBy()) .. "\n\n" .. text
+  elseif it and it.status and DB()[it.key] and it.status() then
+    text = L["%s shows the compass now, so the arrow and the list's compass stay aside. Close its window or switch off its compass to see them."]:format(it.status()) .. "\n\n" .. text
   elseif it and ParentOff(it) then
     local p = items[it.parent]
     text = L["Needs: %s"]:format(p and T(p.name) or it.parent) .. "\n\n" .. text

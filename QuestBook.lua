@@ -51,7 +51,27 @@ local ICON = {
   f = "Interface\\RAIDFRAME\\ReadyCheck-NotReady",
   a = "Interface\\GossipFrame\\AvailableQuestIcon",
   l = "Interface\\TARGETINGFRAME\\UI-RaidTargetingIcon_1",
+  -- (1.3.11) moments; loot and professions show the item's and the profession's own icon
+  s = MEDIA .. "JournalCamera",
+  d = "Interface\\TARGETINGFRAME\\UI-RaidTargetingIcon_8",
+  i = MEDIA .. "JournalGate",
+  z = MEDIA .. "qd_explore",
+  r = MEDIA .. "qd_loot",
+  h = "Interface\\Icons\\INV_Misc_Rune_01",
+  p = MEDIA .. "qd_object",
+  u = MEDIA .. "JournalBanner",
 }
+local QUALITY_HEX = { [3] = "ff0070dd", [4] = "ffa335ee", [5] = "ffff8000", [6] = "ffe6cc80" }
+local FULL_ICON = { r = true, p = true, h = true } -- square game icons: cut the edge, a little larger
+local function EntryIcon(e)
+  local tex
+  if e.k == "r" and e.it then
+    tex = ns.Value(C_Item and C_Item.GetItemIconByID, e.it) or ns.Value(GetItemIcon, e.it)
+  elseif e.k == "p" and e.sp then
+    tex = ns.Value(C_Spell and C_Spell.GetSpellTexture, e.sp) or ns.Value(GetSpellTexture, e.sp)
+  end
+  return tex or ICON[e.k] or ICON.o
+end
 local TAB_ICON = {
   journal = "Interface\\Icons\\INV_Misc_Book_09",
   zone = "Interface\\Icons\\INV_Misc_Map_01",
@@ -118,6 +138,9 @@ local lists = {}        -- page key -> virtual list
 local P = {}            -- frames of the pages
 
 local Fmt = ns.JournalFmt
+local MOMENT = Fmt.MOMENT or {} -- (1.3.11) the journal's moments (screenshots, deaths, dungeons ...)
+local Pic = {} -- (1.3.11) pictures of the album: photo buttons, tiles, the big view (below)
+local J3 = {} -- (1.3.11 Stufe 3) chapters, the review, the journal as text (below)
 
 ---------------------------------------------------------------------------
 -- Small helpers
@@ -616,10 +639,76 @@ local function SetPill(f, text, color, room)
   return 0
 end
 
+-- (1.3.11) A picture of the album (Questdon-Album) in a thin gold frame; a
+-- click opens the big view, which pages through this character's pictures.
+function Pic.Button(parent, alpha)
+  local b = CreateFrame("Button", nil, parent)
+  b.pic = b:CreateTexture(nil, "ARTWORK")
+  b.pic:SetAllPoints(b)
+  b.alpha = alpha or 0.55
+  b.edge = Edges(b, b.pic, "gold", b.alpha, "OVERLAY")
+  b:SetScript("OnEnter", function(self)
+    self.edge:SetColor("goldLight", 0.95)
+    Style.Tooltip(self, L["Picture"], { { L["Click: open the picture."] } }, nil, "ANCHOR_RIGHT")
+  end)
+  b:SetScript("OnLeave", function(self) self.edge:SetColor("gold", self.alpha) Style.HideTooltip(self) end)
+  b:SetScript("OnClick", function(self)
+    if self.shot then ns.SafeCall("quest book", Pic.Open, ns.AlbumMine(), self.shot) end
+  end)
+  b:Hide()
+  return b
+end
+function Pic.Set(b, shot, w, h)
+  b.shot = shot
+  if not shot then b:Hide() return end
+  b:SetSize(w, h)
+  b.pic:SetTexture(ns.AlbumTexture(shot, w <= 256))
+  b.pic:SetTexCoord(ns.AlbumCover(shot, w, h))
+  b:Show()
+end
+
 -- Journal line (1.3.4: a card): a status mark in a round disc, "[6] Title",
 -- what happened, zone, time and how long the quest took; XP and money or a
 -- status pill on the right. Level-ups as a golden card.
 local PILL_KIND = { a = { "accepted", "warning" }, x = { "abandoned", "textHint" }, f = { "failed", "critical" } }
+
+-- (1.3.11) a moment's line: what, where, when; a dungeon visit's time and bosses on the right
+local function NoteTail(e) return e.note and Colorize("  ·  " .. e.note, "goldLight") or "" end
+local function MomentRow(e)
+  local title = Fmt.EntryTitle(e)
+  if e.k == "r" and QUALITY_HEX[e.iq] then title = "|c" .. QUALITY_HEX[e.iq] .. title .. "|r"
+  elseif e.k == "s" and e.note then title = Colorize(e.note, "goldLight") end
+  local what = Colorize(L[Fmt.KIND_TEXT[e.k] or "?"], Fmt.KIND_COLOR[e.k] or "textHint")
+  local parts = {}
+  local zone = e.m and MapName(e.m)
+  local place = (e.z and zone and (e.z .. ", " .. zone)) or e.z or zone
+  if e.k ~= "z" and place then parts[#parts + 1] = place end
+  if e.t then parts[#parts + 1] = Fmt.Clock(e.t) end
+  if e.k == "d" and e.tg then parts[#parts + 1] = L["against %s"]:format(e.tg) end
+  if e.k == "s" and e.auto == "l" then parts[#parts + 1] = L["at the level-up"] end
+  local sub = what .. (#parts > 0 and Colorize("  ·  " .. table.concat(parts, "  ·  "), "textHint") or "")
+  if e.k ~= "s" then sub = sub .. NoteTail(e) end
+  local r1, r2
+  if e.k == "i" then
+    local open = ns.JournalRunOpen and ns.JournalRunOpen(e)
+    local now = Fmt.Now()
+    local d = (open and e.t and now and (now - e.t)) or e.d
+    r1 = open and L["still inside"] or (d and Fmt.Span(d)) or nil
+    if type(e.b) == "table" and #e.b > 0 then r2 = L["%d bosses"]:format(#e.b) end
+  end
+  return title, sub, r1, r2
+end
+
+-- (1.3.11) a moment on the map: the arrow to its spot, the world map there if asked
+local function EntryToMap(e, openMap)
+  if type(e) ~= "table" then return end
+  if not MOMENT[e.k] and e.q then ns.FocusQuest(e.q, openMap) return end
+  local m = e.pm or e.m
+  if m and e.px and e.py and ns.SetArrowTarget then ns.SetArrowTarget(m, e.px, e.py, Fmt.EntryTitle(e)) end
+  if openMap and m and OpenWorldMap and not ns.True(ns.Value(InCombatLockdown)) then pcall(OpenWorldMap, m) end
+end
+ns.QuestBookEntryToMap = EntryToMap -- (tests)
+
 local EntryKind = {
   create = function(list)
     local f = CreateFrame("Button", nil, list)
@@ -642,17 +731,21 @@ local EntryKind = {
     f.r2 = Text(f, 11, "textSecondary", "RIGHT")
     f.r2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -18, 9)
     NewPill(f)
+    f.photo = Pic.Button(f) -- (1.3.11) a screenshot's picture on the right
     return f
   end,
   render = function(f, it)
     local e = it.e
     local level = e.k == "l"
     local small = e.k == "o"
-    f.icon:SetTexture(ICON[e.k] or ICON.o)
+    local full = FULL_ICON[e.k]
+    f.icon:SetTexture(EntryIcon(e))
+    if full then f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) else f.icon:SetTexCoord(0, 1, 0, 1) end
     if f.icon.SetDesaturated then f.icon:SetDesaturated(e.k == "o" or e.k == "x") end
     f.icon:SetAlpha((e.k == "o" or e.k == "x") and 0.6 or 1)
     local disc = small and 18 or 24
-    f.disc:SetSize(disc, disc) f.ring:SetSize(disc + 6, disc + 6) f.icon:SetSize(small and 11 or 15, small and 11 or 15)
+    local isz = small and 11 or (full and 19 or 15)
+    f.disc:SetSize(disc, disc) f.ring:SetSize(disc + 6, disc + 6) f.icon:SetSize(isz, isz)
     if level then
       f:SetCardLook("goldDark", "cardLow", 0.92, "gold", 0.75)
     elseif small then
@@ -666,7 +759,9 @@ local EntryKind = {
       local parts = { e.t and Fmt.Clock(e.t) or nil }
       if e.since then parts[#parts + 1] = L["after %s"]:format(Fmt.Span(e.since) or "?") end
       if it.quests and it.quests > 0 then parts[#parts + 1] = L["%d quests on the way"]:format(it.quests) end
-      sub = table.concat(parts, "  ·  ")
+      sub = table.concat(parts, "  ·  ") .. NoteTail(e)
+    elseif MOMENT[e.k] then
+      title, sub, r1, r2 = MomentRow(e)
     else
       local quiet = e.k == "x" or e.k == "o"
       local tag = ns.QuestLevelTag(e.q)
@@ -682,6 +777,7 @@ local EntryKind = {
       if it.took and it.took > 0 then parts[#parts + 1] = L["took %s"]:format(Fmt.Span(it.took) or "?") end
       sub = parts[1] .. Colorize("  ·  " .. table.concat(parts, "  ·  ", 2), "textHint")
       if #parts == 1 then sub = what end
+      sub = sub .. NoteTail(e)
       if e.x then r1 = "+" .. Style.Number(e.x) .. " " .. L["XP"] end
       r2 = Coins(e.g)
       if not r1 and not r2 and PILL_KIND[e.k] then pill, pillColor = L[PILL_KIND[e.k][1]], PILL_KIND[e.k][2] end
@@ -699,7 +795,20 @@ local EntryKind = {
     f.r1:SetText(r1 or "")
     f.r2:SetText(r2 or "")
     Fit(f.r1, 120, f) Fit(f.r2, 120, f)
-    local rightW = math.max(SetPill(f, pill, pillColor), (r1 or r2) and 130 or 0)
+    -- (1.3.11) the screenshot's picture, when the album has it
+    local shot = e.k == "s" and ns.AlbumShotFor and ns.AlbumShotFor(e) or nil
+    local photoW = 0
+    if shot then
+      local ph = math.max(20, (ns.Num(f:GetHeight()) or it.h or ROW_H) - 14)
+      local pw = math.floor(ph * 16 / 9 + 0.5)
+      Pic.Set(f.photo, shot, pw, ph)
+      f.photo:ClearAllPoints()
+      f.photo:SetPoint("RIGHT", f, "RIGHT", -16, 0)
+      photoW = pw + 26
+    else
+      Pic.Set(f.photo, nil)
+    end
+    local rightW = math.max(SetPill(f, pill, pillColor), (r1 or r2) and 130 or 0, photoW)
     f.title:ClearAllPoints()
     f.sub:ClearAllPoints()
     local left = small and 48 or 54
@@ -716,9 +825,28 @@ local EntryKind = {
       f.title:SetPoint("RIGHT", f, "RIGHT", -rightW, 0)
     end
     local focus = ns.zoneFocus and ns.zoneFocus.questID
-    if e.q and (focus == e.q or ns.QuestBookDetailID() == e.q) then f.active:Show() else f.active:Hide() end
+    local src = type(e.src) == "table" and e.src or e
+    local shown = ns.QuestBookDetailEntry and ns.QuestBookDetailEntry()
+    if (shown ~= nil and shown == src) or (e.q and not MOMENT[e.k] and not shown and (focus == e.q or ns.QuestBookDetailID() == e.q)) then
+      f.active:Show() else f.active:Hide() end
     -- (1.3.5) click: the detail card; Shift-click: also arrow and world map
-    f.onClick = e.q and function() ns.QuestBookShowQuest(e.q, Shift() and "map" or nil) end or nil
+    -- (1.3.11) moments: their own card with the note, Shift-click arrow and world map;
+    -- right-click on a quest or a level-up: the card with your note
+    if MOMENT[e.k] then
+      f.onClick = function()
+        if Shift() then EntryToMap(src, true) end
+        ns.QuestBookShowEntry(src)
+      end
+    elseif e.q then
+      f.onClick = function(_, button)
+        if button == "RightButton" and e.k ~= "o" then ns.QuestBookShowEntry(src) return end
+        ns.QuestBookShowQuest(e.q, Shift() and "map" or nil)
+      end
+    elseif level then
+      f.onClick = function() ns.QuestBookShowEntry(src) end
+    else
+      f.onClick = nil
+    end
     f.tooltip = Fmt.EntryTooltip(e)
     f.questTip = e.q ~= nil
   end,
@@ -1082,8 +1210,79 @@ local DunPickKind = {
   end,
 }
 
+-- (1.3.11) A row of the album: pictures as tiles, the time and zone on the
+-- picture, the tooltip of its journal entry; a click opens the big view (it
+-- pages through the same pictures as the section).
+Pic.GAP = 8
+function Pic.Tip(shot)
+  local e = ns.AlbumEntryFor(shot)
+  if e then
+    local title, lines = Fmt.EntryTooltip(e)()
+    return title, lines, L["Click: open the picture."]
+  end
+  return L["Picture"], { { L["Date"], Fmt.DayTitle(shot.t) .. "  " .. Fmt.Clock(shot.t) },
+    { L["Not in this journal"], nil, "textHint" } }, L["Click: open the picture."]
+end
+function Pic.NewTile(row)
+  local t = CreateFrame("Button", nil, row)
+  t.pic = t:CreateTexture(nil, "BORDER")
+  t.pic:SetAllPoints(t)
+  t.cardFill = t.pic
+  t.shade = Tex(t, "ARTWORK", "cardLow", 0.8)
+  t.shade:SetPoint("BOTTOMLEFT", t, "BOTTOMLEFT", 0, 0)
+  t.shade:SetPoint("BOTTOMRIGHT", t, "BOTTOMRIGHT", 0, 0)
+  t.shade:SetHeight(24)
+  Gradient(t.shade, "VERTICAL", "cardLow", 0.9, "cardLow", 0)
+  t.caption = Text(t, 10, "textPrimary", "LEFT")
+  t.caption:SetPoint("BOTTOMLEFT", t, "BOTTOMLEFT", 6, 5)
+  t.edge = Edges(t, t.pic, "gold", 0.45, "OVERLAY")
+  Clickable(t)
+  function t:SetCardHover(on)
+    if on then self.edge:SetColor("goldLight", 0.95) else self.edge:SetColor(self.mine and "gold" or "cardEdge", self.mine and 0.5 or 0.35) end
+  end
+  return t
+end
+Pic.Kind = {
+  create = function(list)
+    local f = CreateFrame("Frame", nil, list)
+    f.tiles = {}
+    return f
+  end,
+  render = function(f, it)
+    local n = it.cols or 4
+    local tw = math.floor((RowW(f) - 10 - (n - 1) * Pic.GAP) / n)
+    local th = math.max(20, (ns.Num(f:GetHeight()) or it.h or 100) - Pic.GAP)
+    for i = 1, math.max(n, #f.tiles) do
+      local shot = it.shots[i]
+      local t = f.tiles[i]
+      if shot and not t then t = Pic.NewTile(f) f.tiles[i] = t end
+      if t and shot then
+        t:ClearAllPoints()
+        t:SetPoint("TOPLEFT", f, "TOPLEFT", 10 + (i - 1) * (tw + Pic.GAP), 0)
+        t:SetSize(tw, th)
+        t.pic:SetTexture(ns.AlbumTexture(shot, tw <= 256))
+        t.pic:SetTexCoord(ns.AlbumCover(shot, tw, th))
+        local e = ns.AlbumEntryFor(shot)
+        t.mine = e ~= nil
+        t.pic:SetAlpha(t.mine and 1 or 0.8)
+        local parts = { Fmt.Clock(shot.t) }
+        local zone = e and e.m and MapName(e.m)
+        if e and e.note then parts[#parts + 1] = Colorize(e.note, "goldLight") elseif zone then parts[#parts + 1] = zone end
+        t.caption:SetText(table.concat(parts, "  ·  "))
+        Fit(t.caption, tw - 12, t)
+        t:SetCardHover(false)
+        t.onClick = function() Pic.Open(it.set, shot) end
+        t.tooltip = function() return Pic.Tip(shot) end
+        t:Show()
+      elseif t then
+        t:Hide()
+      end
+    end
+  end,
+}
+
 local KINDS = { head = HeadKind, empty = EmptyKind, entry = EntryKind, quest = QuestKind, zone = ZoneKind,
-  dsum = DunSumKind, dpath = DunPathKind, dpick = DunPickKind }
+  dsum = DunSumKind, dpath = DunPathKind, dpick = DunPickKind, shots = Pic.Kind }
 
 ---------------------------------------------------------------------------
 -- Zones
@@ -1135,13 +1334,15 @@ local function Norm(s) return ns.FoldCase(s) end -- (review 5) "ärger" finds "�
 local Refresh
 
 -- Journal: filtered entries with day headings; quests per level-up.
-local FILTERS = { "all", "c", "a", "x", "l", "zone" }
-local FILTER_TITLE = { all = "All", c = "Completed", a = "Accepted", x = "Abandoned", l = "Levels", zone = "This zone" }
+local FILTERS = { "all", "chap", "c", "a", "x", "l", "m", "p", "zone", "recap" }
+local FILTER_TITLE = { all = "All", c = "Completed", a = "Accepted", x = "Abandoned", l = "Levels", m = "Moments", p = "Pictures", zone = "This zone",
+  chap = "Chapters", recap = "Review" } -- (Stufe 3)
 
 local function Keep(e, filter, here)
   if filter == "all" then return true end
   if filter == "x" then return e.k == "x" or e.k == "f" end
   if filter == "zone" then return e.m ~= nil and ZoneOf(e.m) == here end
+  if filter == "m" then return MOMENT[e.k] == true end
   return e.k == filter
 end
 
@@ -1165,19 +1366,213 @@ local function OldDoneList()
   return out
 end
 
-local function JournalItems()
+-- (1.3.11) The album (filter "Pictures"): this character's pictures by day,
+-- then the other pictures of the folder (other characters, before the journal).
+function Pic.Items()
   local items = {}
-  local entries = ns.JournalEntries()
-  -- quests completed before each level-up (entries are newest first)
+  local l = lists.journal
+  local rw = (l and ns.Num(l:GetWidth()) or 0) - 18
+  if rw < 200 then rw = W - 38 end
+  local cols = rw >= 860 and 5 or (rw >= 560 and 4 or 3)
+  local tw = (rw - (cols - 1) * Pic.GAP) / cols
+  local h = math.floor(tw * 9 / 16 + 0.5) + Pic.GAP
+  local mine, other = {}, {}
+  local all = ns.AlbumShots()
+  for _, s in ipairs(all) do
+    if ns.AlbumEntryFor(s) then mine[#mine + 1] = s else other[#other + 1] = s end
+  end
+  local function Add(set)
+    local perDay = {}
+    for _, s in ipairs(set) do
+      local key = Fmt.DayKey(s.t)
+      local d = perDay[key] or { n = 0 }
+      perDay[key] = d
+      d.n = d.n + 1
+      local e = ns.AlbumEntryFor(s)
+      local lv = e and ns.Num(e.l)
+      if lv then d.lo = math.min(d.lo or lv, lv) d.hi = math.max(d.hi or lv, lv) end
+    end
+    local day, row
+    for _, s in ipairs(set) do
+      local key = Fmt.DayKey(s.t)
+      if key ~= day then
+        day = key
+        local d = perDay[key]
+        local right = d.lo and (d.lo == d.hi and L["Level %d"]:format(d.lo) or L["Level %d to %d"]:format(d.lo, d.hi)) or nil
+        items[#items + 1] = { kind = "head", h = HEAD_H, text = Fmt.DayTitle(s.t), color = "textPrimary", count = d.n, right = right }
+        row = nil
+      end
+      if not row or #row.shots >= cols then
+        row = { kind = "shots", h = h, shots = {}, cols = cols, set = set }
+        items[#items + 1] = row
+      end
+      row.shots[#row.shots + 1] = s
+    end
+  end
+  Add(mine)
+  if #other > 0 then
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Not in this journal"], count = #other, color = "accent",
+      tooltip = function() return L["Not in this journal"], { { L["Pictures of other characters or from before the journal. Open one to add it to this journal."] } } end }
+    Add(other)
+  end
+  if #items == 0 then
+    items[1] = { kind = "empty", h = 60, text = L["No pictures yet. Run the Questdon-Album helper, then type /reload."] }
+  end
+  items.pictures = #all
+  items.old = 0
+  return items
+end
+
+---------------------------------------------------------------------------
+-- (1.3.11) The big picture view: one picture of the album as large as it
+-- fits, arrows and the mouse wheel page through the same set, a line with
+-- date, place, level and target, the quest you followed below, the note as
+-- its title. A picture without a journal entry can be added to this
+-- character's journal; one with an entry opens its card. Escape closes it.
+---------------------------------------------------------------------------
+Pic.W, Pic.H = 980, 640
+function Pic.Create()
+  local v = CreateFrame("Frame", "QuestdonAlbumView", UIParent)
+  v:SetSize(Pic.W, Pic.H)
+  v:SetPoint("CENTER", UIParent, "CENTER", 0, 20)
+  if v.SetFrameStrata then v:SetFrameStrata("DIALOG") end
+  if v.SetToplevel then v:SetToplevel(true) end
+  if v.SetClampedToScreen then v:SetClampedToScreen(true) end
+  Card(v, 0, 0)
+  v:SetCardLook("card", "cardLow", 0.98, "gold", 0.6)
+  v:EnableMouse(true)
+  v:SetMovable(true)
+  v:RegisterForDrag("LeftButton")
+  v:SetScript("OnDragStart", function(self) self:StartMoving() end)
+  v:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+  v:EnableMouseWheel(true)
+  v:SetScript("OnMouseWheel", function(self, delta)
+    local i = self.i - (ns.Num(delta) or 0)
+    if self.set[i] then self.i = i Pic.Show() end
+  end)
+  v.title = Text(v, 15, "goldLight", "LEFT")
+  v.title:SetPoint("TOPLEFT", v, "TOPLEFT", 20, -16)
+  v.count = Text(v, 11, "textHint", "RIGHT")
+  v.count:SetPoint("TOPRIGHT", v, "TOPRIGHT", -46, -19)
+  v.close = Style.IconButton(v, "close")
+  v.close:SetPoint("TOPRIGHT", v, "TOPRIGHT", -12, -12)
+  v.close:SetTooltip(L["Close"])
+  v.close:SetOnClick(function() v:Hide() end)
+  v.stage = Tex(v, "BORDER", "cardLow", 1)
+  v.stage:SetPoint("TOPLEFT", v, "TOPLEFT", 16, -44)
+  v.stage:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -16, 76)
+  v.pic = v:CreateTexture(nil, "ARTWORK")
+  v.pic:SetPoint("CENTER", v.stage, "CENTER", 0, 0)
+  v.prev = Style.IconButton(v, "back")
+  v.prev:SetPoint("LEFT", v.stage, "LEFT", 10, 0)
+  v.prev:SetTooltip(L["Newer picture"])
+  v.prev:SetOnClick(function() if v.set[v.i - 1] then v.i = v.i - 1 Pic.Show() end end)
+  v.next = Style.IconButton(v, "forward")
+  v.next:SetPoint("RIGHT", v.stage, "RIGHT", -10, 0)
+  v.next:SetTooltip(L["Older picture"])
+  v.next:SetOnClick(function() if v.set[v.i + 1] then v.i = v.i + 1 Pic.Show() end end)
+  v.info = Text(v, 12, "textPrimary", "LEFT")
+  v.info:SetPoint("BOTTOMLEFT", v, "BOTTOMLEFT", 20, 50)
+  v.quest = Text(v, 12, "textSecondary", "LEFT")
+  v.quest:SetPoint("BOTTOMLEFT", v, "BOTTOMLEFT", 20, 30)
+  v.entry = Chip(v, function()
+    local e = v.shot and ns.AlbumEntryFor(v.shot)
+    if not e then return end
+    if ns.OpenQuestBook then ns.OpenQuestBook("journal") end
+    ns.QuestBookShowEntry(e)
+  end)
+  v.entry:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -16, 14)
+  v.map = Chip(v, function()
+    local e = v.shot and ns.AlbumEntryFor(v.shot)
+    if e then EntryToMap(e, true) end
+  end)
+  v.map:SetPoint("RIGHT", v.entry, "LEFT", -8, 0)
+  v.adopt = Chip(v, function()
+    if not v.shot then return end
+    ns.AlbumAdopt(v.shot)
+    if Refresh then Refresh(true) end
+    Pic.Show()
+  end)
+  v.adopt:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -16, 14)
+  if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "QuestdonAlbumView") end
+  v:Hide()
+  return v
+end
+
+function Pic.Show()
+  local v = Pic.viewer
+  local shot = v.set[v.i]
+  v.shot = shot
+  if not shot then v:Hide() return end
+  local boxW = Pic.W - 32
+  local boxH = Pic.H - 44 - 76
+  local w, h = ns.AlbumFit(shot, boxW, boxH)
+  v.pic:SetSize(w, h)
+  v.pic:SetTexture(ns.AlbumTexture(shot, false))
+  v.pic:SetTexCoord(0, 1, 0, 1)
+  local e = ns.AlbumEntryFor(shot)
+  v.title:SetText(e and e.note or L["Picture"])
+  Fit(v.title, Pic.W - 160, v)
+  v.count:SetText(("%d / %d"):format(v.i, #v.set))
+  local parts = { Fmt.DayTitle(shot.t) .. "  " .. Fmt.Clock(shot.t) }
+  if e then
+    local zone = e.m and MapName(e.m)
+    local place = (e.z and zone and (e.z .. ", " .. zone)) or e.z or zone
+    if place then parts[#parts + 1] = place end
+    if e.l then parts[#parts + 1] = L["Level %d"]:format(e.l) end
+    if e.tg then parts[#parts + 1] = L["Target"] .. ": " .. e.tg end
+    if e.pt then parts[#parts + 1] = L["Group"] .. ": " .. e.pt end
+  else
+    parts[#parts + 1] = Colorize(L["Not in this journal"], "textHint")
+  end
+  v.info:SetText(table.concat(parts, "  ·  "))
+  Fit(v.info, Pic.W - 40, v)
+  local rq = e and e.rq
+  v.quest:SetText(rq and (L["Quest"] .. ": " .. (ns.QuestTitle(rq) or ("#" .. tostring(rq)))) or "")
+  Fit(v.quest, Pic.W - 360, v)
+  if v.set[v.i - 1] then v.prev:Show() else v.prev:Hide() end
+  if v.set[v.i + 1] then v.next:Show() else v.next:Hide() end
+  if e then
+    v.adopt:Hide()
+    v.entry:Set(L["Show in the journal"], false) v.entry:Show()
+    if (e.pm or e.m) and e.px and e.py then v.map:Set(L["World map"], false) v.map:Show() else v.map:Hide() end
+  else
+    v.entry:Hide() v.map:Hide()
+    v.adopt:Set(L["Add to this journal"], false) v.adopt:Show()
+  end
+end
+
+-- Open the big view on a picture of a set (newest first).
+function Pic.Open(set, shot)
+  if type(set) ~= "table" or #set == 0 then return end
+  Pic.viewer = Pic.viewer or Pic.Create()
+  Pic.viewer.set = set
+  Pic.viewer.i = 1
+  for i, s in ipairs(set) do if s == shot then Pic.viewer.i = i break end end
+  Pic.viewer:Show()
+  Pic.Show()
+end
+ns.QuestBookOpenPicture = Pic.Open -- (tests)
+function ns.QuestBookViewer() return Pic.viewer end -- (tests)
+
+---------------------------------------------------------------------------
+-- (1.3.11 Stufe 3, Daniel 23.10.) Chapters, the review and the journal as
+-- text (the numbers come from Chronicle.lua). New line kinds: "card" (a
+-- chapter, a record, a character), "bar" (played time of a level) and
+-- "nums" (numbers in a row).
+---------------------------------------------------------------------------
+J3.open = {} -- chapter key -> true/false (nil: only the newest chapter is open)
+J3.CHAPTER_H, J3.FACT_H, J3.BAR_H, J3.NUMS_H = 56, 46, 24, 58
+J3.MAX_TEXT = 600 -- lines of the text to copy
+J3.PLUS, J3.MINUS = "Interface\\Buttons\\UI-PlusButton-Up", "Interface\\Buttons\\UI-MinusButton-Up"
+
+-- one line per quest: "accepted" lines hidden behind the turn-in, how long each quest took, quests per level-up
+function J3.Merge(entries, merge)
   local count, perLevel = 0, {}
   for i = #entries, 1, -1 do
     local e = entries[i]
     if e.k == "c" then count = count + 1 elseif e.k == "l" then perLevel[e] = count count = 0 end
   end
-  local here = HereZone()
-  -- (1.3.4) one line per quest: a quest turned in later hides its "accepted"
-  -- line, the turned-in line says how long it took (filters "all" and "zone")
-  local merge = jfilter == "all" or jfilter == "zone"
   local doneAt, took, hidden = {}, {}, {}
   if merge then
     for _, e in ipairs(entries) do -- newest first
@@ -1188,6 +1583,456 @@ local function JournalItems()
       end
     end
   end
+  return hidden, took, perLevel
+end
+
+function J3.ShortDate(t)
+  local d = t and ns.Value(date, "*t", t)
+  if type(d) ~= "table" then return "?" end
+  return (L["{mon} {d}"]:gsub("{mon}", L[({ "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December" })[d.month] or "?"]):gsub("{d}", tostring(d.day)))
+end
+
+function J3.Levels(lo, hi)
+  if not lo then return nil end
+  if not hi or lo == hi then return L["Level %d"]:format(lo) end
+  return L["Level %d to %d"]:format(lo, hi)
+end
+
+function J3.Played(s, exact)
+  local t = Fmt.Span(s) or "?"
+  return exact and t or ("~" .. t)
+end
+
+-- A card line: icon, title, a line below, two values on the right; chapters with a gold band.
+J3.CardKind = {
+  create = function(list)
+    local f = CreateFrame("Button", nil, list)
+    Card(f, 4, 3)
+    Clickable(f)
+    f.band = Tex(f, "ARTWORK", "gold", 0.85)
+    f.band:SetWidth(3)
+    f.band:SetPoint("TOPLEFT", f.cardFill, "TOPLEFT", 1, -1)
+    f.band:SetPoint("BOTTOMLEFT", f.cardFill, "BOTTOMLEFT", 1, 1)
+    f.icon = Icon(f, 20, nil, "OVERLAY")
+    f.icon:SetPoint("CENTER", f, "LEFT", 28, 0)
+    f.title = Text(f, 14, "textPrimary", "LEFT")
+    f.sub = Text(f, 11, "textHint", "LEFT")
+    f.r1 = Text(f, 13, "goldLight", "RIGHT")
+    f.r2 = Text(f, 11, "textSecondary", "RIGHT")
+    return f
+  end,
+  render = function(f, it)
+    if it.chap then f:SetCardLook("card", "cardLow", 0.95, "gold", 0.6) f.band:Show() else f:SetCardLook() f.band:Hide() end
+    local left = 18
+    if it.icon then
+      f.icon:SetTexture(it.icon)
+      local c = it.coords or { 0, 1, 0, 1 }
+      f.icon:SetTexCoord(c[1], c[2], c[3], c[4])
+      f.icon:SetSize(it.iconSize or 20, it.iconSize or 20)
+      f.icon:Show()
+      left = 50
+    else
+      f.icon:Hide()
+    end
+    f.title:SetText(it.title or "")
+    f.sub:SetText(it.sub or "")
+    f.r1:SetText(it.r1 or "")
+    f.r2:SetText(it.r2 or "")
+    f.r1:ClearAllPoints() f.r2:ClearAllPoints()
+    local two = it.r2 and it.r2 ~= ""
+    if two then
+      f.r1:SetPoint("TOPRIGHT", f, "TOPRIGHT", -18, -10)
+      f.r2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -18, 10)
+    else
+      f.r1:SetPoint("RIGHT", f, "RIGHT", -18, 0)
+    end
+    local rw = RowW(f)
+    Fit(f.r1, rw * 0.34, f) Fit(f.r2, rw * 0.34, f)
+    local rightW = 18
+    if (it.r1 and it.r1 ~= "") or two then rightW = math.max(TextWidth(f.r1), two and TextWidth(f.r2) or 0) + 30 end
+    Fit(f.title, rw - left - rightW - 6, f) Fit(f.sub, rw - left - rightW - 6, f)
+    f.title:ClearAllPoints() f.sub:ClearAllPoints()
+    local h = ns.Num(f:GetHeight()) or it.h or J3.FACT_H
+    if it.sub and it.sub ~= "" then
+      local top = math.floor((h - 32) / 2)
+      f.title:SetPoint("TOPLEFT", f, "TOPLEFT", left, -top - 1)
+      f.sub:SetPoint("TOPLEFT", f, "TOPLEFT", left, -top - 18)
+    else
+      f.title:SetPoint("LEFT", f, "LEFT", left, 0)
+    end
+    f.onClick, f.tooltip, f.questTip = it.onClick, it.tooltip, nil
+  end,
+}
+
+-- Played time of a level as a bar: "Level 12", the bar, "1:12 h".
+J3.BarKind = {
+  create = function(list)
+    local f = CreateFrame("Button", nil, list)
+    Clickable(f)
+    f.label = Text(f, 11, "textSecondary", "LEFT")
+    f.label:SetPoint("LEFT", f, "LEFT", 22, 0)
+    f.track = Tex(f, "ARTWORK", "barBackground")
+    f.track:SetHeight(8)
+    f.fill = Tex(f, "OVERLAY", "gold")
+    f.fill:SetHeight(8)
+    f.value = Text(f, 11, "textPrimary", "RIGHT")
+    f.value:SetPoint("RIGHT", f, "RIGHT", -18, 0)
+    return f
+  end,
+  render = function(f, it)
+    f.label:SetText(it.label or "")
+    f.value:SetText(it.value or "")
+    SetColor(f.label, it.now and "accent" or "textSecondary")
+    local rw = RowW(f)
+    local left, right = 22 + 120, 18 + 80
+    Fit(f.label, 116, f) Fit(f.value, 76, f)
+    f.track:ClearAllPoints()
+    f.track:SetPoint("LEFT", f, "LEFT", left, 0)
+    f.track:SetPoint("RIGHT", f, "RIGHT", -right, 0)
+    local tw = math.max(10, rw - left - right)
+    local frac = math.max(0, math.min(1, ns.Num(it.frac) or 0))
+    f.fill:ClearAllPoints()
+    f.fill:SetPoint("LEFT", f.track, "LEFT", 0, 0)
+    if frac > 0 then f.fill:SetWidth(math.max(1, tw * frac)) f.fill:Show() else f.fill:Hide() end
+    if it.now then Gradient(f.fill, "HORIZONTAL", "violet", 1, "cyan", 1) else Gradient(f.fill, "HORIZONTAL", "goldDark", 1, it.exact and "gold" or "goldDark", 1) end
+    f.onClick, f.tooltip, f.questTip = it.onClick, it.tooltip, nil
+  end,
+}
+
+-- Numbers in a row: big value, small label below.
+J3.NumsKind = {
+  create = function(list)
+    local f = CreateFrame("Frame", nil, list)
+    Card(f, 4, 3)
+    f:SetCardLook("card", "cardLow", 0.92, "gold", 0.45)
+    f.cells = {}
+    for i = 1, 6 do f.cells[i] = { value = Text(f, 18, "textPrimary", "CENTER"), label = Text(f, 11, "textHint", "CENTER") } end
+    CutTip(f)
+    return f
+  end,
+  render = function(f, it)
+    local n = math.max(1, #it.cells)
+    local each = (RowW(f) - 16) / n
+    for i, c in ipairs(f.cells) do
+      local d = it.cells[i]
+      if d then
+        c.value:ClearAllPoints()
+        c.value:SetPoint("TOP", f, "TOPLEFT", 8 + each * (i - 0.5), -11)
+        c.label:ClearAllPoints()
+        c.label:SetPoint("TOP", c.value, "BOTTOM", 0, -4)
+        c.value:SetText(tostring(d[1] or ""))
+        c.label:SetText(d[2] or "")
+        SetColor(c.value, d[3] or "textPrimary")
+        Fit(c.value, each - 10, f) Fit(c.label, each - 10, f)
+        c.value:Show() c.label:Show()
+      else
+        c.value:Hide() c.label:Hide()
+      end
+    end
+  end,
+}
+
+-- Chapters (filter "Chapters"): a card per chapter, newest first; the open ones list their lines.
+function J3.ChapterTip(ch)
+  return function()
+    local lines = {}
+    local lv = J3.Levels(ch.l1, ch.l2)
+    if lv then lines[#lines + 1] = { L["Your level"], lv } end
+    lines[#lines + 1] = { L["From"], Fmt.DayTitle(ch.t1) .. "  " .. Fmt.Clock(ch.t1) }
+    lines[#lines + 1] = { L["To"], Fmt.DayTitle(ch.t2) .. "  " .. Fmt.Clock(ch.t2) }
+    lines[#lines + 1] = { L["Played time"], J3.Played(ch.time, ch.exact) }
+    lines[#lines + 1] = { L["Completed"], tostring(ch.q), "good" }
+    if ch.a > 0 then lines[#lines + 1] = { L["Accepted"], tostring(ch.a) } end
+    if ch.xp > 0 then lines[#lines + 1] = { L["Experience"], "+" .. Style.Number(ch.xp), "warning" } end
+    if ch.g > 0 then lines[#lines + 1] = { L["Money"], Fmt.Money(ch.g) or "" } end
+    if ch.i > 0 then lines[#lines + 1] = { L["Dungeon visits"], tostring(ch.i) } end
+    if ch.d > 0 then lines[#lines + 1] = { L["Deaths"], tostring(ch.d), "critical" } end
+    if ch.s > 0 then lines[#lines + 1] = { L["Pictures"], tostring(ch.s) } end
+    if #ch.mates > 0 then lines[#lines + 1] = { L["Quested with"], J3.Mates(ch.mates, 3), "goldLight" } end
+    if not ch.exact then lines[#lines + 1] = { L["Without the played clock (older entries): pauses count as at most 20 minutes."], nil, "textHint" } end
+    return ns.JournalChapterTitle(ch), lines, L["Click: open or close the chapter."]
+  end
+end
+
+function J3.Mates(list, max)
+  local out = {}
+  for i = 1, math.min(#list, max or #list) do out[#out + 1] = list[i].n end
+  return table.concat(out, ", ")
+end
+
+function J3.ChapterItems()
+  local items = {}
+  local chapters = ns.JournalChapters()
+  if #chapters == 0 then
+    items[1] = { kind = "empty", h = 60, text = L["No chapters yet. A chapter begins with three quests in a zone."] }
+    return items
+  end
+  local entries = ns.JournalEntries()
+  local hidden, took, perLevel = J3.Merge(entries, true)
+  local where, lines = {}, {}
+  for i, ch in ipairs(chapters) do for _, e in ipairs(ch.e) do where[e] = i end end
+  for _, e in ipairs(entries) do -- newest first
+    local i = where[e.src]
+    if i and not hidden[e] then lines[i] = lines[i] or {} table.insert(lines[i], e) end
+  end
+  for i, ch in ipairs(chapters) do
+    local open = J3.open[ch.key]
+    if open == nil then open = i == 1 end
+    local sub = {}
+    sub[#sub + 1] = J3.Levels(ch.l1, ch.l2)
+    local d1, d2 = J3.ShortDate(ch.t1), J3.ShortDate(ch.t2)
+    sub[#sub + 1] = d1 == d2 and d1 or L["%s to %s"]:format(d1, d2)
+    if #ch.mates > 0 then sub[#sub + 1] = L["with %s"]:format(J3.Mates(ch.mates, 2)) end
+    local r2 = { J3.Played(ch.time, ch.exact) }
+    if ch.s > 0 then r2[#r2 + 1] = L["%d pictures"]:format(ch.s) end
+    if ch.d > 0 then r2[#r2 + 1] = L["%d deaths"]:format(ch.d) end
+    local key = ch.key
+    items[#items + 1] = { kind = "card", h = J3.CHAPTER_H, chap = ch, open = open,
+      icon = open and J3.MINUS or J3.PLUS, iconSize = 16,
+      title = Colorize(ns.JournalChapterTitle(ch), "goldLight"), sub = table.concat(sub, "  ·  "),
+      r1 = L["%d quests"]:format(ch.q), r2 = table.concat(r2, "  ·  "),
+      onClick = function() J3.open[key] = not open Refresh() end, tooltip = J3.ChapterTip(ch) }
+    if open then
+      for _, e in ipairs(lines[i] or {}) do
+        items[#items + 1] = { kind = "entry", h = ROW_H, e = e, quests = perLevel[e], took = took[e] }
+      end
+    end
+  end
+  return items
+end
+
+-- The review (filter "Review").
+function J3.QuestFact(rec, what)
+  local e = rec.e
+  local zone = e.m and MapName(e.m)
+  local sub = { what }
+  if zone then sub[#sub + 1] = zone end
+  sub[#sub + 1] = J3.ShortDate(e.t)
+  return { kind = "card", h = J3.FACT_H, icon = ICON.c, title = ns.QuestLevelTag(e.q) .. (Fmt.EntryTitle(e) or "?"),
+    sub = table.concat(sub, "  ·  "), r1 = Fmt.Span(rec.s) or "?", r2 = rec.played and L["played"] or L["on the clock"],
+    onClick = function() ns.QuestBookShowQuest(e.q, Shift() and "map" or nil) end, tooltip = Fmt.EntryTooltip(e) }
+end
+
+function J3.CharCard(c)
+  local cc = type(RAID_CLASS_COLORS) == "table" and c.c and RAID_CLASS_COLORS[c.c]
+  local name = c.n
+  if type(cc) == "table" and type(cc.colorStr) == "string" then name = "|c" .. cc.colorStr .. name .. "|r" end
+  local coords = type(CLASS_ICON_TCOORDS) == "table" and c.c and CLASS_ICON_TCOORDS[c.c]
+  local sub = {}
+  local who = table.concat({ c.ra or "", c.cn or "" }, " "):gsub("^ ", ""):gsub(" $", "")
+  if who ~= "" then sub[#sub + 1] = who end
+  local zone = c.m and MapName(c.m)
+  if zone then sub[#sub + 1] = zone end
+  if c.r and not c.me then sub[#sub + 1] = c.r end
+  local now = Fmt.Now()
+  local when = c.me and Colorize(L["playing now"], "good") or (c.t and now and L["%s ago"]:format(Fmt.Span(math.max(60, now - c.t)) or "?")) or ""
+  local key, me = c.key, c.me
+  return { kind = "card", h = J3.FACT_H, icon = coords and "Interface\\TargetingFrame\\UI-Classes-Circles" or nil,
+    coords = type(coords) == "table" and coords or nil, iconSize = 22,
+    title = name, sub = table.concat(sub, "  ·  "),
+    r1 = c.l and L["Level %d"]:format(c.l) or "", r2 = L["%d quests"]:format(c.q or 0) .. "  ·  " .. when,
+    onClick = function(_, button)
+      if button == "RightButton" and not me and ns.JournalForgetCharacter(key) then Refresh() end
+    end,
+    tooltip = function()
+      local lines = {}
+      if c.r then lines[#lines + 1] = { L["Realm"], c.r } end
+      if c.l then lines[#lines + 1] = { L["Your level"], tostring(c.l) } end
+      if who ~= "" then lines[#lines + 1] = { L["Character"], who } end
+      if zone then lines[#lines + 1] = { L["Zone"], zone } end
+      lines[#lines + 1] = { L["Quests done"], tostring(c.q or 0) }
+      if c.g then lines[#lines + 1] = { L["Money"], Fmt.Money(c.g) or "0" } end
+      if c.t then lines[#lines + 1] = { L["Last played"], Fmt.DayTitle(c.t) .. "  " .. Fmt.Clock(c.t) } end
+      return c.n, lines, (not me) and L["Right-click: off the list (a character that no longer exists)."] or nil
+    end }
+end
+
+function J3.RecapItems()
+  local items = {}
+  local r = ns.JournalRecap()
+  local tot = r.totals
+  local played = ns.JournalPlayed and ns.JournalPlayed() or 0
+  items[#items + 1] = { kind = "head", h = HEAD_H, text = L["In numbers"], right = played > 0 and L["%s played"]:format(Fmt.Span(played) or "?") or nil,
+    tooltip = function() return L["In numbers"], { { L["Everything in this journal. Questdon counts played time since version 1.3.11."] } } end }
+  items[#items + 1] = { kind = "nums", h = J3.NUMS_H, cells = {
+    { tot.q, L["quests"], "good" }, { "+" .. Style.Number(tot.xp), L["experience"], "goldLight" },
+    { Coins(tot.g, 14) or "0", L["money"] }, { tot.days, L["days"] } } }
+  items[#items + 1] = { kind = "nums", h = J3.NUMS_H, cells = {
+    { tot.zones, L["zones"] }, { tot.i, L["dungeon visits"] }, { tot.d, L["deaths"], tot.d > 0 and "critical" or nil },
+    { tot.s, L["pictures"] }, { tot.r, L["rare loot"] } } }
+  if r.longest or r.best then
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Records"] }
+    if r.longest then items[#items + 1] = J3.QuestFact(r.longest, L["Longest quest"]) end
+    if r.fastest and r.fastest ~= r.longest then items[#items + 1] = J3.QuestFact(r.fastest, L["Fastest quest"]) end
+    if r.best then
+      items[#items + 1] = { kind = "card", h = J3.FACT_H, icon = ICON.l, title = Fmt.DayTitle(r.best.t), sub = L["Best day"],
+        r1 = "+" .. Style.Number(r.best.xp) .. " " .. L["XP"], r2 = L["%d quests"]:format(r.best.q) }
+    end
+  end
+  if r.week then
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["A week ago"], right = Fmt.DayTitle(r.week.t) }
+    local zones, seen = {}, {}
+    for _, e in ipairs(r.weekEntries) do
+      local z = e.m and ZoneOf(e.m)
+      local name = z and MapName(z)
+      if name and not seen[name] and #zones < 3 then seen[name] = true zones[#zones + 1] = name end
+    end
+    items[#items + 1] = { kind = "card", h = J3.FACT_H, icon = TAB_ICON.journal, iconSize = 22, coords = { 0.08, 0.92, 0.08, 0.92 },
+      title = table.concat(zones, ", "), sub = L["%d quests"]:format(r.week.q) .. (r.week.xp > 0 and ("  ·  +" .. Style.Number(r.week.xp) .. " " .. L["XP"]) or "") }
+    local shown = 0
+    for i = #r.weekEntries, 1, -1 do
+      local e = r.weekEntries[i]
+      if e.k ~= "a" and shown < 8 then shown = shown + 1 items[#items + 1] = { kind = "entry", h = ROW_H, e = e } end
+    end
+  end
+  if #r.mates > 0 then
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Quested with"], count = #r.mates }
+    for _, m in ipairs(r.mates) do
+      items[#items + 1] = { kind = "card", h = J3.FACT_H - 8, title = m.n, sub = L["Quests turned in together"], r1 = tostring(m.c) }
+    end
+  end
+  local chars = ns.JournalCharacters()
+  if #chars > 0 then
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Your characters"], count = #chars }
+    for _, c in ipairs(chars) do items[#items + 1] = J3.CharCard(c) end
+  end
+  -- played time per level, the level you are on first
+  local levels = {}
+  for _, v in ipairs(r.levels) do levels[#levels + 1] = v end
+  local nowS, nowExact = ns.JournalLevelPlayed()
+  local level = ns.PlayerLevel()
+  if nowS and level then levels[#levels + 1] = { l = level, s = nowS, exact = nowExact, now = true } end
+  if #levels > 0 then
+    local max = 60
+    for _, v in ipairs(levels) do max = math.max(max, v.s) end
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Played time per level"],
+      tooltip = function() return L["Played time per level"], { { L["Without the played clock (older entries): pauses count as at most 20 minutes."] } } end }
+    for i = #levels, 1, -1 do
+      local v = levels[i]
+      local label = L["Level %d"]:format(v.l)
+      if v.now then label = label .. "  " .. L["(now)"] end
+      items[#items + 1] = { kind = "bar", h = J3.BAR_H, label = label, value = J3.Played(v.s, v.exact), frac = v.s / max, now = v.now, exact = v.exact,
+        tooltip = function()
+          local lines = { { L["Played time"], J3.Played(v.s, v.exact) } }
+          if v.t then lines[#lines + 1] = { L["Reached the next level"], Fmt.DayTitle(v.t) .. "  " .. Fmt.Clock(v.t) } end
+          if not v.exact then lines[#lines + 1] = { L["Without the played clock (older entries): pauses count as at most 20 minutes."], nil, "textHint" } end
+          return L["Level %d"]:format(v.l), lines
+        end }
+    end
+  end
+  if #items <= 3 and tot.q == 0 then
+    items[#items + 1] = { kind = "empty", h = 60, text = L["Nothing to look back on yet. Turn in a few quests."] }
+  end
+  return items
+end
+
+-- The journal as text to copy: what the list shows now, for Discord or a forum.
+function J3.Plain(s)
+  s = tostring(s or "")
+  s = s:gsub("|T[^|]*GoldIcon[^|]*|t", "g"):gsub("|T[^|]*SilverIcon[^|]*|t", "s"):gsub("|T[^|]*CopperIcon[^|]*|t", "c")
+  s = s:gsub("|T.-|t", ""):gsub("|H.-|h(.-)|h", "%1"):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+  s = s:gsub("%s%s+", "  "):gsub("^%s+", ""):gsub("%s+$", "")
+  return s
+end
+
+function J3.EntryText(it)
+  local e = it.e
+  local P = J3.Plain
+  if e.k == "o" then return "- " .. P(Fmt.EntryTitle(e) or ("#" .. tostring(e.q))) .. " (" .. L["done earlier"] .. ")" end
+  local title = Fmt.EntryTitle(e) or "?"
+  if e.q and not MOMENT[e.k] then title = ns.QuestLevelTag(e.q) .. title end
+  local parts = {}
+  if e.k ~= "l" then parts[#parts + 1] = L[Fmt.KIND_TEXT[e.k] or "?"] end
+  local zone = e.m and MapName(e.m)
+  local place = (e.z and zone and (e.z .. ", " .. zone)) or e.z or zone
+  if place and e.k ~= "z" and e.k ~= "l" then parts[#parts + 1] = place end
+  if it.took and it.took > 0 then parts[#parts + 1] = L["took %s"]:format(Fmt.Span(it.took) or "?") end
+  if e.k == "l" then
+    if e.since then parts[#parts + 1] = L["after %s"]:format(Fmt.Span(e.since) or "?") end
+    if it.quests and it.quests > 0 then parts[#parts + 1] = L["%d quests on the way"]:format(it.quests) end
+  end
+  if e.x then parts[#parts + 1] = "+" .. Style.Number(e.x) .. " " .. L["XP"] end
+  local money = Coins(e.g)
+  if money then parts[#parts + 1] = money end
+  if e.k == "d" and e.tg then parts[#parts + 1] = L["against %s"]:format(e.tg) end
+  if e.k == "i" and e.d then parts[#parts + 1] = Fmt.Span(e.d) end
+  if e.k == "i" and type(e.b) == "table" and #e.b > 0 then parts[#parts + 1] = table.concat(e.b, ", ") end
+  if e.pt then parts[#parts + 1] = L["with %s"]:format(e.pt) end
+  local shot = e.k == "s" and ns.AlbumShotFor and ns.AlbumShotFor(e) or nil
+  if shot then parts[#parts + 1] = L["picture %s"]:format(shot.f) end
+  if e.note then parts[#parts + 1] = '"' .. e.note .. '"' end
+  local line = "- " .. (e.t and (Fmt.Clock(e.t) .. " ") or "") .. title
+  if #parts > 0 then line = line .. " · " .. table.concat(parts, " · ") end
+  return P(line)
+end
+
+function J3.Text(items)
+  items = items or (lists.journal and lists.journal.items) or {}
+  local P = J3.Plain
+  local cls
+  if type(UnitClass) == "function" then
+    local ok, c = pcall(UnitClass, "player")
+    if ok and type(c) == "string" and ns.Usable(c) then cls = c end
+  end
+  local name = ns.Value(UnitName, "player") or "?"
+  local out = { "**" .. L["Questdon journal of %s, level %d"]:format(name, ns.PlayerLevel() or 0) .. (cls and (" " .. cls) or "") .. "**",
+    L[FILTER_TITLE[jfilter] or "All"] .. ", " .. Fmt.DayTitle(Fmt.Now()) }
+  for i, it in ipairs(items) do
+    if #out >= J3.MAX_TEXT then
+      out[#out + 1] = L["(%d more lines left out)"]:format(#items - i + 1)
+      break
+    end
+    local k = it.kind
+    if k == "head" then
+      local line = "**" .. P(it.text) .. "**"
+      if it.count then line = line .. " (" .. it.count .. ")" end
+      if it.right and it.right ~= "" then line = line .. "  " .. P(it.right) end
+      out[#out + 1] = ""
+      out[#out + 1] = line
+    elseif k == "entry" then
+      out[#out + 1] = J3.EntryText(it)
+    elseif k == "card" then
+      local parts = { P(it.title) }
+      for _, v in ipairs({ it.sub, it.r1, it.r2 }) do if v and P(v) ~= "" then parts[#parts + 1] = P(v) end end
+      if it.chap then
+        out[#out + 1] = ""
+        out[#out + 1] = "**" .. table.concat(parts, " · ") .. "**"
+      else
+        out[#out + 1] = "- " .. table.concat(parts, " · ")
+      end
+    elseif k == "bar" then
+      out[#out + 1] = "- " .. P(it.label) .. ": " .. P(it.value)
+    elseif k == "nums" then
+      local parts = {}
+      for _, c in ipairs(it.cells) do parts[#parts + 1] = P(c[1]) .. " " .. P(c[2]) end
+      out[#out + 1] = table.concat(parts, " · ")
+    elseif k == "shots" then
+      for _, s in ipairs(it.shots or {}) do out[#out + 1] = "- " .. Fmt.Clock(s.t) .. " " .. L["picture %s"]:format(s.f) end
+    elseif k == "empty" then
+      out[#out + 1] = P(it.text)
+    end
+  end
+  return table.concat(out, "\n")
+end
+
+function J3.Export()
+  return ns.ShowText(L["Journal as text"], L["Ctrl+C copies it. The text follows the list as it is now (filter, open chapters)."], J3.Text())
+end
+ns.QuestBookJournalText = function() return J3.Text() end -- (tests)
+KINDS.card, KINDS.bar, KINDS.nums = J3.CardKind, J3.BarKind, J3.NumsKind
+
+local function JournalItems()
+  if jfilter == "p" then return Pic.Items() end
+  if jfilter == "chap" then return J3.ChapterItems() end
+  if jfilter == "recap" then return J3.RecapItems() end
+  local items = {}
+  local entries = ns.JournalEntries()
+  local here = HereZone()
+  -- quests completed before each level-up; (1.3.4) one line per quest: a quest
+  -- turned in later hides its "accepted" line, the turned-in line says how long
+  -- it took (filters "all" and "zone")
+  local hidden, took, perLevel = J3.Merge(entries, jfilter == "all" or jfilter == "zone")
   -- day totals for the headings: quests, XP, XP per hour (first to last entry of the day)
   local days = {}
   for _, e in ipairs(entries) do
@@ -2124,6 +2969,7 @@ local function CreateJournalPage(page)
   end
   local ringF = CreateFrame("Frame", nil, jm)
   ringF:SetAllPoints(jm)
+  jm.ringF = ringF
   local rl = ns.Num(jm.GetFrameLevel and jm:GetFrameLevel())
   if rl and ringF.SetFrameLevel then ringF:SetFrameLevel(rl + 3) end
   jm.ring = ringF:CreateTexture(nil, "OVERLAY")
@@ -2169,8 +3015,19 @@ local function CreateJournalPage(page)
   CutTip(P.footer)
   P.footLeft = Text(P.footer, 11, "textHint", "LEFT")
   P.footLeft:SetPoint("LEFT", P.footer, "LEFT", 14, 0)
+  -- (Stufe 3) the journal as text, right in the footer
+  P.footText = CreateFrame("Button", nil, P.footer)
+  P.footText:SetPoint("RIGHT", P.footer, "RIGHT", -10, 0)
+  P.footText:SetHeight(22)
+  P.footText.text = Text(P.footText, 11, "accent", "RIGHT")
+  P.footText.text:SetPoint("RIGHT", P.footText, "RIGHT", -4, 0)
+  P.footText:SetScript("OnEnter", function(self)
+    Style.Tooltip(self, L["Journal as text"], { { L["What the list shows, as text to copy (Discord, forums)."] } }, nil, "ANCHOR_TOP")
+  end)
+  P.footText:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
+  P.footText:SetScript("OnClick", function() ns.SafeCall("quest book", J3.Export) end)
   P.footOld = CreateFrame("Button", nil, P.footer)
-  P.footOld:SetPoint("RIGHT", P.footer, "RIGHT", -10, 0)
+  P.footOld:SetPoint("RIGHT", P.footText, "LEFT", -14, 0)
   P.footOld:SetHeight(22)
   P.footOld.text = Text(P.footOld, 11, "accent", "RIGHT")
   P.footOld.text:SetPoint("RIGHT", P.footOld, "RIGHT", -4, 0)
@@ -2249,7 +3106,9 @@ local function UpdateTiles()
     t[4].track:Hide() t[4].fill:Hide()
   end
   local nowT = Fmt.Now()
-  local since = lastLevel and nowT and Fmt.Span(nowT - lastLevel)
+  -- (Stufe 3) played time on this level when Questdon's clock knows it, else the time since the level-up
+  local playedS, playedExact = ns.JournalLevelPlayed()
+  local since = (playedS and J3.Played(playedS, playedExact)) or (lastLevel and nowT and Fmt.Span(nowT - lastLevel))
   t[4].small:SetText(since and L["%s on this level"]:format(since) or "")
   local each = P.tileW or 300
   for i, tile in ipairs(t) do
@@ -2362,12 +3221,20 @@ local function ArtFromFiles(m)
   return textures, 256, 256, 1002, 668
 end
 
+-- (1.3.12) the map art of a zone for the postcard (Postcard.lua): client tiles, else the classic files
+ns.MapArt = function(m)
+  local a, b, c, d, e = ArtFromClient(m)
+  if a then return a, b, c, d, e end
+  return ArtFromFiles(m)
+end
+
 -- (1.3.4) Draws the map of a zone into a frame: the banner of the zone tab
 -- (full width, middle stripe) and the round map of the journal (covers the
 -- square, a circle mask on every piece).
 local function DrawMapArt(hero, m, width, HEIGHT, mask)
   for _, t in ipairs(hero.tiles) do t:Hide() end
   hero.artMap = m
+  hero.geo = nil
   local textures, tw, th, lw, lh = ArtFromClient(m)
   hero.artSource = textures and "client" or nil
   if not textures then
@@ -2380,6 +3247,7 @@ local function DrawMapArt(hero, m, width, HEIGHT, mask)
   local scale = math.max(width / lw, HEIGHT / lh)
   local shift = ((lh * scale) - HEIGHT) / 2 -- map pixels above the picture
   local shiftX = ((lw * scale) - width) / 2
+  hero.geo = { lw = lw, lh = lh, scale = scale, sx = shiftX, sy = shift, w = width, h = HEIGHT } -- (1.3.11) spots on it
   local drawn = 0
   -- x, y, w, h in map pixels (y down), u, v: used part of the texture file
   local function Piece(file, x, y, w, h, u, v, sub)
@@ -2454,11 +3322,13 @@ local function UpdateHeroArt(m)
   return DrawMapArt(P.hero, m, width, HERO_H)
 end
 
--- The journal's round map: the zone you are in.
+-- The journal's round map: the zone you are in. (1.3.11) A clicked moment
+-- (P.jpick) shows its zone with a gold dot on the spot instead.
 local function UpdateJournalMap()
   local jm = P.jmap
   if not jm then return end
-  local m = HereZone()
+  local pick = P.jpick
+  local m = pick and pick.m or HereZone()
   jm.m = m
   jm.name:SetText(m and MapName(m) or "")
   Fit(jm.name, JHERO_H - 60, jm)
@@ -2466,6 +3336,31 @@ local function UpdateJournalMap()
     local d = JHERO_H - 20
     if not DrawMapArt(jm, m, d, d, jm.mask) then jm.artMap = m end
   end
+  if not jm.pinOut and jm.ringF then
+    jm.pinOut = Icon(jm.ringF, 13, CIRCLE, "OVERLAY")
+    jm.pinOut:SetVertexColor(0.05, 0.04, 0.08, 0.95)
+    jm.pinIn = Icon(jm.ringF, 8, CIRCLE, "OVERLAY")
+    local g = THEME.goldLight or THEME.gold
+    jm.pinIn:SetVertexColor(g[1], g[2], g[3], 1)
+    if jm.pinIn.SetDrawLayer then jm.pinIn:SetDrawLayer("OVERLAY", 2) end
+  end
+  local g = jm.geo
+  local shown = false
+  if pick and g and jm.pinOut and m == jm.artMap then
+    local X = pick.x * g.lw * g.scale - g.sx
+    local Y = pick.y * g.lh * g.scale - g.sy
+    local r = g.w / 2
+    if (X - r) ^ 2 + (Y - r) ^ 2 <= (r - 6) ^ 2 then
+      for _, t in ipairs({ jm.pinOut, jm.pinIn }) do
+        t:ClearAllPoints()
+        t:SetPoint("CENTER", jm, "TOPLEFT", X, -Y)
+        t:Show()
+      end
+      shown = true
+    end
+  end
+  if jm.pinOut and not shown then jm.pinOut:Hide() jm.pinIn:Hide() end
+  jm.pinShown = shown -- (tests)
 end
 
 local function CreateSearchPage(page)
@@ -2644,6 +3539,8 @@ end
 -- (1.3.4) Detail card: everything about the clicked quest at one glance.
 ---------------------------------------------------------------------------
 local detailID
+local detailEntry -- (1.3.11) a journal entry in the card instead of a quest (moments, notes)
+local DrawSections, RenderEntryDetail
 local PlaceDetail
 local function ObjectiveTexts(id)
   local out = {}
@@ -2829,10 +3726,15 @@ local function CreateDetail()
   NewPill(pane.pillHost)
   pane.pillHost.pillText:ClearAllPoints()
   pane.pillHost.pillText:SetPoint("LEFT", pane.pillHost, "LEFT", 9, 0)
+  pane.photo = Pic.Button(pane, 0.6) -- (1.3.11) a screenshot's picture under the title
   pane.texts = {}
-  pane.arrow = Chip(pane, function() if detailID then ns.FocusQuest(detailID, false) end end)
+  pane.arrow = Chip(pane, function()
+    if detailEntry then EntryToMap(detailEntry, false) elseif detailID then ns.FocusQuest(detailID, false) end
+  end)
   pane.arrow:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 14, 12)
-  pane.map = Chip(pane, function() if detailID then ns.FocusQuest(detailID, true) end end)
+  pane.map = Chip(pane, function()
+    if detailEntry then EntryToMap(detailEntry, true) elseif detailID then ns.FocusQuest(detailID, true) end
+  end)
   pane.map:SetPoint("LEFT", pane.arrow, "RIGHT", 8, 0)
   -- (1.3.6, Daniel 11.10.) with Leveldon: report this quest (quest giver not there, route, a remark)
   pane.report = Chip(pane, function()
@@ -2843,6 +3745,25 @@ local function CreateDetail()
   end)
   pane.report:SetPoint("LEFT", pane.map, "RIGHT", 8, 0)
   pane.report:Hide()
+  -- (1.3.11) a journal entry: its icon in the badge, the player's note above the chips
+  pane.icon = Icon(pane, 20, nil, "OVERLAY")
+  pane.icon:SetPoint("CENTER", pane.badge, "CENTER", 0, 0)
+  pane.icon:Hide()
+  pane.noteLabel = Text(pane, 11, "gold", "LEFT")
+  pane.noteLabel:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 16, 86)
+  pane.noteBox = EditBox(pane, L["Write a note for this entry"], function(text)
+    if pane.noteFor then
+      ns.JournalSetNote(pane.noteFor, text)
+      if Refresh then Refresh(false) end
+    end
+  end, DETAIL_W - 70)
+  pane.noteBox:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 14, 46)
+  pane.noteBox:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", -14, 46)
+  pane.noteBox:SetHeight(30)
+  pane.noteBox.icon:SetTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Up")
+  pane.noteBox.icon:SetSize(14, 14)
+  if pane.noteBox.edit.SetMaxLetters then pane.noteBox.edit:SetMaxLetters(ns.JOURNAL_NOTE_LETTERS or 200) end
+  pane.noteLabel:Hide() pane.noteBox:Hide()
   P.detail = pane
 end
 
@@ -2864,7 +3785,8 @@ end
 local function RenderDetail()
   local pane = P.detail
   if not pane then return end
-  if not detailID then pane:Hide() return end
+  if detailEntry then RenderEntryDetail() return end
+  if not detailID then if ns.PostcardHide then ns.PostcardHide(pane) end pane:Hide() return end
   local d = ns.QuestBookDetail(detailID)
   local lv = d.level and d.level > 0 and d.level or nil
   pane.level:SetText(lv and tostring(lv) or "?")
@@ -2885,10 +3807,28 @@ local function RenderDetail()
   pane.pillHost:SetPoint("TOPLEFT", pane, "TOPLEFT", 50, -16 - th)
   SetPill(pane.pillHost, d.pill, d.pillColor, DETAIL_W - 90)
   for _, fs in ipairs(pane.texts) do fs:Hide() end
-  local y = 16 + th + 34
-  local bottom = (ns.Num(pane:GetHeight()) or 400) - 46
+  pane.icon:Hide() pane.noteLabel:Hide() pane.noteBox:Hide()
+  Pic.Set(pane.photo, nil)
+  if ns.PostcardHide then ns.PostcardHide(pane) end
+  pane.noteFor = nil
+  pane.arrow:Show() pane.map:Show()
+  DrawSections(d.sections, 16 + th + 34, (ns.Num(pane:GetHeight()) or 400) - 46)
+  pane.arrow:Set(L["Arrow"], false)
+  pane.map:Set(L["World map"], false)
+  local api = rawget(_G, "LeveldonAPI")
+  if type(api) == "table" and type(api.Report) == "function" then
+    pane.report:Set(L["Report"], false)
+    pane.report:Show()
+  else
+    pane.report:Hide()
+  end
+  pane:Show()
+end
+
+DrawSections = function(sections, y, bottom)
+  local pane = P.detail
   local n = 0
-  for _, sec in ipairs(d.sections) do
+  for _, sec in ipairs(sections) do
     if y > bottom - 30 then break end
     n = n + 1
     local head = DetailText(n, 11)
@@ -2912,15 +3852,84 @@ local function RenderDetail()
     end
     y = y + 8
   end
-  pane.arrow:Set(L["Arrow"], false)
-  pane.map:Set(L["World map"], false)
-  local api = rawget(_G, "LeveldonAPI")
-  if type(api) == "table" and type(api.Report) == "function" then
-    pane.report:Set(L["Report"], false)
-    pane.report:Show()
-  else
-    pane.report:Hide()
+  return y
+end
+
+-- (1.3.11) A journal entry in the card: what, when and where, what the moment
+-- knows, and the player's note (saved while typing).
+RenderEntryDetail = function()
+  local pane = P.detail
+  local e = detailEntry
+  for _, fs in ipairs(pane.texts) do fs:Hide() end
+  pane.level:SetText("")
+  pane.icon:SetTexture(EntryIcon(e))
+  if FULL_ICON[e.k] then pane.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) else pane.icon:SetTexCoord(0, 1, 0, 1) end
+  pane.icon:Show()
+  local titleW = DETAIL_W - 52 - 32
+  local title = Fmt.EntryTitle(e)
+  if e.k == "r" and QUALITY_HEX[e.iq] then title = "|c" .. QUALITY_HEX[e.iq] .. title .. "|r" end
+  pane.title:SetWordWrap(true)
+  pane.title:SetWidth(titleW)
+  pane.title:SetText(title)
+  local th = math.max(18, math.min(40, ns.Num(pane.title:GetStringHeight()) or 18))
+  pane.pillHost:ClearAllPoints()
+  pane.pillHost:SetPoint("TOPLEFT", pane, "TOPLEFT", 50, -16 - th)
+  local kind = e.k == "l" and "level-up" or (Fmt.KIND_TEXT[e.k] or "done earlier")
+  SetPill(pane.pillHost, L[kind], Fmt.KIND_COLOR[e.k] or "textHint", DETAIL_W - 90)
+  local function Line(label, text, color)
+    return { Colorize(label .. ":", "textHint") .. " " .. Colorize(text, color or "textPrimary") }
   end
+  local when = {}
+  if e.t then when[#when + 1] = Line(L["Date"], Fmt.DayTitle(e.t) .. "  " .. Fmt.Clock(e.t)) end
+  local zone = e.m and MapName(e.m)
+  if zone then when[#when + 1] = Line(L["Zone"], zone) end
+  if e.l and e.k ~= "l" then when[#when + 1] = Line(L["Your level"], tostring(e.l)) end
+  if e.k == "c" and e.x then when[#when + 1] = Line(L["Experience"], "+" .. Style.Number(e.x), "warning") end
+  local sections = { { title = L["When and where"], lines = when } }
+  local story = ns.JournalStory and ns.JournalStory(e) -- (1.3.12) what the quest giver told at the turn-in
+  if story then sections[#sections + 1] = { title = L["Story"], lines = { { story, "textSecondary" } } } end
+  if MOMENT[e.k] then
+    local more = {}
+    for _, l in ipairs(Fmt.MomentLines(e, {})) do more[#more + 1] = Line(l[1], l[2], l[3]) end
+    if #more > 0 then sections[#sections + 1] = { title = L["Moment"], lines = more } end
+  end
+  -- (1.3.11) the screenshot's picture, as wide as the card
+  local top = 16 + th + 34
+  local shot = e.k == "s" and ns.AlbumShotFor and ns.AlbumShotFor(e) or nil
+  if shot then
+    local pw = DETAIL_W - 32
+    local ph = math.floor(pw * 9 / 16 + 0.5)
+    Pic.Set(pane.photo, shot, pw, ph)
+    pane.photo:ClearAllPoints()
+    pane.photo:SetPoint("TOPLEFT", pane, "TOPLEFT", 16, -top)
+    top = top + ph + 12
+  elseif e.k == "s" and ns.PostcardFor then
+    -- (1.3.12) no picture of the album: the postcard (map, character, target, time of day)
+    Pic.Set(pane.photo, nil)
+    local pw = DETAIL_W - 32
+    local ph = math.floor(pw * 9 / 16 + 0.5)
+    local card = ns.PostcardFor(pane)
+    card:ClearAllPoints()
+    card:SetPoint("TOPLEFT", pane, "TOPLEFT", 16, -top)
+    ns.PostcardShow(card, e, pw, ph)
+    top = top + ph + 12
+  else
+    Pic.Set(pane.photo, nil)
+  end
+  if not (e.k == "s" and not shot) and ns.PostcardHide then ns.PostcardHide(pane) end
+  DrawSections(sections, top, (ns.Num(pane:GetHeight()) or 400) - 100)
+  pane.noteLabel:SetText(L["Your note"])
+  pane.noteLabel:Show()
+  pane.noteBox:Show()
+  if pane.noteFor ~= e then
+    pane.noteFor = e
+    pane.noteBox:SetText(e.note or "")
+  end
+  local where = (e.pm or e.m) and e.px and e.py
+  local quest = e.q and not MOMENT[e.k]
+  if where or quest then pane.arrow:Set(L["Arrow"], false) pane.arrow:Show() else pane.arrow:Hide() end
+  if where or quest or e.m then pane.map:Set(L["World map"], false) pane.map:Show() else pane.map:Hide() end
+  pane.report:Hide()
   pane:Show()
 end
 
@@ -2929,7 +3938,7 @@ PlaceDetail = function()
   if not P.detail then return end
   local l = lists[tab]
   P.detail:ClearAllPoints()
-  if l and detailID then
+  if l and (detailID or detailEntry) then
     P.detail:SetPoint("TOPLEFT", l, "TOPRIGHT", 10, 0)
     P.detail:SetPoint("BOTTOMRIGHT", book, "BOTTOMRIGHT", -16, 16)
   end
@@ -2940,14 +3949,30 @@ end
 -- "arrow" = also arrow and map mark, "map" = also open the world map there.
 function ns.QuestBookShowQuest(id, focus)
   if id and focus then ns.FocusQuest(id, focus == "map") end
-  local changed = detailID ~= id
+  local changed = detailID ~= id or detailEntry ~= nil
   detailID = id
+  detailEntry = nil
+  P.jpick = nil
   local open = id ~= nil
   if open ~= detailOpen then detailOpen = open ApplyDetailRoom() end
   PlaceDetail()
   if changed and not focus and Refresh then Refresh(false) end -- the clicked line stands out
 end
 function ns.QuestBookDetailID() return detailID end
+
+-- (1.3.11) Show a journal entry in the card (nil closes it); a moment with a
+-- spot in its zone also shows that spot on the journal's round map.
+function ns.QuestBookShowEntry(e)
+  if type(e) ~= "table" then return ns.QuestBookShowQuest(nil) end
+  e = type(e.src) == "table" and e.src or e
+  detailEntry, detailID = e, nil
+  P.jpick = MOMENT[e.k] and e.m and e.px and e.py and not e.pm and { m = ZoneOf(e.m) or e.m, x = e.px, y = e.py } or nil
+  if not detailOpen then detailOpen = true ApplyDetailRoom() end
+  PlaceDetail()
+  if Refresh then Refresh(false) end
+end
+function ns.QuestBookDetailEntry() return detailEntry end
+function ns.QuestBookMapPick() return P.jpick, P.jmap and P.jmap.pinShown end -- (tests)
 function ns.QuestBookDetailPane() return P.detail end -- (tests)
 
 local function TabButton(parent, key)
@@ -3120,22 +4145,26 @@ local function RenderJournal(reset)
   UpdateJournalMap()
   local items = JournalItems()
   local c = ns.JournalCounts()
-  local n = { all = nil, c = c.c, a = c.a, x = c.x + c.f, l = c.l }
+  local n = { all = nil, c = c.c, a = c.a, x = c.x + c.f, l = c.l, m = c.m, p = #ns.AlbumShots(), chap = #ns.JournalChapters() }
   for _, chip in ipairs(P.chips) do
     local label = L[FILTER_TITLE[chip.key]]
     if n[chip.key] and n[chip.key] > 0 then label = label .. "  " .. n[chip.key] end
     chip:Set(label, chip.key == jfilter)
+    -- (1.3.11) "Pictures" only with the album (the helper Questdon-Album)
+    if chip.key == "p" then if n.p > 0 or jfilter == "p" then chip:Show() else chip:Hide() end end
   end
   Layout(P.chips, 6, W - 2 - 28)
-  local dated = c.a + c.c + c.x + c.f + c.l
-  P.footLeft:SetText(L["%d entries"]:format(dated))
-  local oldW = 0
+  local dated = c.a + c.c + c.x + c.f + c.l + (c.m or 0)
+  P.footLeft:SetText(jfilter == "p" and L["%d pictures"]:format(n.p) or L["%d entries"]:format(dated))
+  P.footText.text:SetText(L["Copy as text"])
+  P.footText:SetWidth(TextWidth(P.footText.text) + 8)
+  local oldW = TextWidth(P.footText.text) + 22
   if items.old and items.old > 0 then
     P.footOld.text:SetText(L["Done earlier (%d)"]:format(items.old))
     Fit(P.footOld.text, (W - 40) / 2, P.footOld)
     P.footOld:SetWidth(TextWidth(P.footOld.text) + 8)
     P.footOld:Show()
-    oldW = TextWidth(P.footOld.text) + 8
+    oldW = oldW + TextWidth(P.footOld.text) + 8
   else
     P.footOld:Hide()
   end
@@ -3286,6 +4315,7 @@ function ns.QuestBookArt()
   return ("%s, map %s, %d tiles drawn, %d explored areas, width %s"):format(tostring(h.artSource), tostring(h.artMap), h.artDrawn or 0, h.artExplored or 0, tostring(ns.Num(h:GetWidth())))
 end
 function ns.QuestBookFilter(key) if key then jfilter = key Refresh(true) end return jfilter end
+function ns.QuestBookChips() return P.chips end -- (1.3.11, tests)
 function ns.QuestBookSegment(key) if key then zoneSeg = key Refresh(true) end return zoneSeg end
 function ns.QuestBookZoneFilter(key) if key then zFilter = key Refresh(true) end return zFilter end
 function ns.QuestBookNearest(on) if on ~= nil then zNear = on and true or false Refresh(true) end return zNear end
@@ -3310,6 +4340,8 @@ function ns.QuestBookLines(which)
   for _, r in ipairs(l.used) do out[#out + 1] = r end
   return out, l
 end
+-- (Stufe 3, tests) the text of the footer button "Copy as text"
+function ns.QuestBookFooterText() return P.footText and P.footText.text:GetText() end
 -- Built items of a list (all, not only the visible ones).
 function ns.QuestBookItems(which)
   local l = lists[which or tab]

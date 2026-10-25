@@ -61,9 +61,77 @@ end
 local function OnMerchant()
   ns.NoteNpcRole(Value(CanMerchantRepair) and "vr" or "v")
 end
+---------------------------------------------------------------------------
+-- (23.10.2026, Daniel: the Camping 101 hand-in differs per profession and zone, "can we read it while playing?")
+-- Which professions a profession trainer teaches, noted as "p:<Token>" next to "p". The trainer's service names
+-- are matched against the names of the professions' rank spells (QuestData.lua ns.SKILL_SPELLS), so it works in
+-- every client language. Tokens are English letters only (the export line allows letters and colons).
+---------------------------------------------------------------------------
+local PROFESSION_TOKEN = {
+  [129] = "FirstAid", [164] = "Blacksmithing", [165] = "Leatherworking", [171] = "Alchemy", [182] = "Herbalism",
+  [185] = "Cooking", [186] = "Mining", [197] = "Tailoring", [202] = "Engineering", [333] = "Enchanting",
+  [356] = "Fishing", [393] = "Skinning",
+}
+ns.PROFESSION_TOKEN = PROFESSION_TOKEN
+
+local function SpellName(id)
+  local n = C_Spell and Value(C_Spell.GetSpellName, id)
+  if type(n) ~= "string" then n = Value(GetSpellInfo, id) end
+  return type(n) == "string" and n ~= "" and n or nil
+end
+
+local tokenByName -- spell name -> token, built once (the names do not change in a session)
+local function TokenByName()
+  if tokenByName then return tokenByName end
+  local byName, count = {}, 0
+  for line, spells in pairs(ns.SKILL_SPELLS or {}) do
+    local token = PROFESSION_TOKEN[line]
+    if token then
+      for _, id in ipairs(spells) do
+        local name = SpellName(id)
+        if name and not byName[name] then byName[name] = token count = count + 1 end
+      end
+    end
+  end
+  if count > 0 then tokenByName = byName end -- names not loaded yet: try again next time
+  return byName
+end
+ns.TokenByNameReset = function() tokenByName = nil end -- (tests)
+
+-- The sorted tokens of the professions the open trainer window teaches (empty: none or not readable).
+function ns.TrainerProfessions()
+  local out = {}
+  local n = tonumber(Value(GetNumTrainerServices)) or 0
+  if n <= 0 then return out end
+  local byName = TokenByName()
+  local seen = {}
+  for i = 1, math.min(n, 200) do
+    local name = Value(GetTrainerServiceInfo, i)
+    local token = type(name) == "string" and byName[name]
+    if token and not seen[token] then
+      seen[token] = true
+      out[#out + 1] = token
+    end
+  end
+  table.sort(out)
+  return out
+end
+
+local noted = {} -- tokens noted since this trainer window opened (TRAINER_SHOW and TRAINER_UPDATE both read it)
+local function NoteProfessions()
+  for _, token in ipairs(ns.TrainerProfessions()) do
+    if not noted[token] then
+      noted[token] = true
+      ns.NoteNpcRole("p:" .. token)
+    end
+  end
+end
+
 local function OnTrainer()
+  noted = {}
   if Value(IsTradeskillTrainer) then
     ns.NoteNpcRole("p")
+    NoteProfessions()
   else
     local _, cls = Value(UnitClass, "player")
     if type(cls) == "string" and cls ~= "" then ns.NoteNpcRole("t:" .. cls) end
@@ -76,6 +144,11 @@ end
 
 ns.On("MERCHANT_SHOW", function() ns.SafeCall("npc role", OnMerchant) end)
 ns.On("TRAINER_SHOW", function() ns.SafeCall("npc role", OnTrainer) end)
+-- the service list may arrive after TRAINER_SHOW: read it again while the window is open
+ns.On("TRAINER_UPDATE", function()
+  if Value(IsTradeskillTrainer) then ns.SafeCall("npc role", NoteProfessions) end
+end)
+ns.On("TRAINER_CLOSED", function() noted = {} end)
 ns.On("TAXIMAP_OPENED", function() ns.SafeCall("npc role", ns.NoteNpcRole, "f") end)
 ns.On("CONFIRM_BINDER", function() ns.SafeCall("npc role", ns.NoteNpcRole, "i") end)
 ns.On("PLAYER_INTERACTION_MANAGER_FRAME_SHOW", function(_, kind) ns.SafeCall("npc role", OnInteraction, kind) end)

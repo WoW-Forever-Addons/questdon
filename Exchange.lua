@@ -42,7 +42,9 @@ local L = ns.L
 -- game; it ranks before the bundled data where it is used (turn-ins,
 -- objective spots).
 ---------------------------------------------------------------------------
-local PREFIX = "QdShare"
+-- (25.10.2026, CLASSIC_ERA_PLAN.md) Classic Era has its own prefix and channel: Era data never mixes with Forever data
+local PREFIX = ns.ERA and "QdShareEra" or "QdShare"
+ns.EXCHANGE_PREFIX = PREFIX
 local FLUSH_GAP = 60        -- seconds between two sends
 local MAX_PER_FLUSH = 5     -- messages per send
 local MAX_PER_HOUR = 30     -- messages per hour (a long backlog is spread out)
@@ -61,7 +63,9 @@ local SAMPLES_PER_HOUR = 60 -- (1.3.9) of those at most this many play time line
 -- Anybody can join a channel, so a fact needs CONFIRM_OPEN reporters when
 -- not CONFIRM of them came through guild or group. If the first name is
 -- taken (a password, a ban), the next one is tried.
-local CHANNEL_NAMES = { "QuestdonNet", "QuestdonNet2", "QuestdonNet3" }
+local CHANNEL_NAMES = ns.ERA and { "QuestdonEra", "QuestdonEra2", "QuestdonEra3" }
+  or { "QuestdonNet", "QuestdonNet2", "QuestdonNet3" }
+ns.EXCHANGE_CHANNELS = CHANNEL_NAMES
 local CONFIRM_OPEN = 3
 -- (1.3.5, Daniel 10.10.) Only the ways Questdon itself sends on count: guild and group are
 -- trusted, the channel is open; anything else (a whisper) is ignored. Before, every chat type

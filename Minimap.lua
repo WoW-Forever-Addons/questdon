@@ -434,16 +434,28 @@ end
 -- (log, level, learned data, options) rebuilds without "moved" and makes the base anew anyway
 local BASE_SECS = 60
 local baseMap, baseGen, baseLevel, baseAt, baseList
+-- (24.10., Daniel's list: the minimap rebuilt its pins on every quest log event; bench "quest, map closed": refresh
+-- minimap 88 KB/s, 10 of 16 builds ended with the same pins) a quest log event (kills, loot) that leaves the log's state
+-- (quests, complete, finished objectives: ns.QuestLogState) as it was keeps the base pins for BASE_SECS like a move;
+-- any other event that can change them (data loaded, quest lines, level, accept, turn-in, options) builds them anew
+local baseH, baseN
+local function ForgetBase() baseList = nil end
+-- (25.10., review round 8: hiding a quest stayed on the minimap up to a minute) ns.ForgetAvailable lets the base go too
+ns.ForgetMinimapBase = ForgetBase
 local function MinimapPins(mapID, moved)
   local now = ns.Num(ns.Value(GetTime)) or 0
   local gen, level = ns.LogGen and ns.LogGen(), ns.PlayerLevel and ns.PlayerLevel()
   local base
-  if moved and baseList and baseMap == mapID and baseGen == gen and baseLevel == level and baseAt
-      and now - baseAt <= BASE_SECS and now >= baseAt then
+  local h, n
+  if not moved and ns.QuestLogState then h, n = ns.QuestLogState() end
+  if baseList and baseMap == mapID and baseLevel == level and baseAt and now - baseAt <= BASE_SECS and now >= baseAt
+      and ((moved and baseGen == gen) or (not moved and h ~= nil and h == baseH and n == baseN)) then
     base = baseList
+    if not moved then stats.baseKept = (stats.baseKept or 0) + 1 end
   else
     base = ns.PinsForMapBase(mapID)
-    baseMap, baseGen, baseLevel, baseAt, baseList = mapID, gen, level, now, base
+    if not moved and h == nil and ns.QuestLogState then h, n = ns.QuestLogState() end
+    baseMap, baseGen, baseLevel, baseAt, baseList, baseH, baseN = mapID, gen, level, now, base, h, n
   end
   local was = nearAt
   nearAt = nil
@@ -584,6 +596,7 @@ local function Display(pins, base)
 end
 
 local function Rebuild(force, moved)
+  if force then ForgetBase() end
   if not Enabled() or not curMap then
     HideAll()
     entries, lastSig = {}, nil
@@ -762,8 +775,10 @@ end
 
 ns.OnInit(Setup)
 ns.On("QUEST_LOG_UPDATE", Queue)
-ns.On("QUEST_DATA_LOAD_RESULT", Queue)
-ns.On("QUESTLINE_UPDATE", Queue)
-ns.On("BAG_UPDATE_DELAYED", Queue)
-ns.On("PLAYER_LEVEL_UP", Queue)
+local function QueueFresh() ForgetBase() Queue() end
+ns.On("QUEST_DATA_LOAD_RESULT", QueueFresh)
+ns.On("QUESTLINE_UPDATE", QueueFresh)
+ns.On("BAG_UPDATE_DELAYED", Queue) -- the base pins (quests to take, turn-ins, entrances) do not read the bags
+ns.On("PLAYER_LEVEL_UP", QueueFresh)
+for _, e in ipairs({ "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN" }) do ns.On(e, ForgetBase) end
 ns.On("ZONE_CHANGED_NEW_AREA", function() curMap = nil dirty = true end)

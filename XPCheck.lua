@@ -1,4 +1,5 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 ---------------------------------------------------------------------------
@@ -78,6 +79,8 @@ local function ToPattern(fmt)
   out[#out + 1] = "$"
   return table.concat(out), args
 end
+
+ns.FormatPattern = ToPattern -- (1.3.11) the journal reads loot, skill and reputation lines with it
 
 local function ToNumber(s)
   if type(s) ~= "string" then return nil end

@@ -1,4 +1,6 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
+local C_SuperTrack = ns.ST or C_SuperTrack -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 local Style = ns.Style
 
@@ -1466,6 +1468,9 @@ function ns.ToggleTracker()
   ns.UpdateTracker(true)
   ns.Print(db.tracker and L["Quest list on."] or L["Quest list off: Blizzard's quest tracker is back."])
 end
+-- (25.10., Daniel: "can the quest list be switched off quickly?") a key for it (Bindings.xml); not in combat lockdown
+-- trouble: the list is no secure frame
+QuestdonToggleList = function() if ns.ToggleTracker then ns.SafeCall("list key", ns.ToggleTracker) end end
 function ns.TrackerFrame() return panel end
 function ns.TrackerCard() return card end -- (tests)
 

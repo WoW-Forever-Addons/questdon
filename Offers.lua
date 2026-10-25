@@ -1,4 +1,5 @@
 local _, ns = ...
+local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiProxy
 
 ---------------------------------------------------------------------------
 -- (1.24) Is a quest really available? The bundled data (All The Things) has
@@ -217,7 +218,7 @@ local function Judge(npcID, offered, complete, turnInOpen)
   local now = Clock()
   if turnInOpen or (t and now - t < GRACE and now >= t) then
     stats.deferred = stats.deferred + 1
-    if ns.QueuePinRefresh then ns.QueuePinRefresh() end
+    if ns.QueuePinRefresh and ns.ForgetAvailable then ns.ForgetAvailable() ns.QueuePinRefresh() end
     return
   end
   stats.judged = stats.judged + 1
@@ -240,7 +241,7 @@ local function Judge(npcID, offered, complete, turnInOpen)
     c.offered[id] = nil
   end
   for _, id in ipairs(GiverQuests(npcID)) do Check(id) end
-  if ns.QueuePinRefresh then ns.QueuePinRefresh() end
+  if ns.QueuePinRefresh and ns.ForgetAvailable then ns.ForgetAvailable() ns.QueuePinRefresh() end
   if ns.QueueRefresh then ns.QueueRefresh("panel") end
 end
 
@@ -378,7 +379,7 @@ ns.On("QUEST_TURNED_IN", function(_, questID)
       any = true
     end
   end
-  if any and ns.QueuePinRefresh then ns.QueuePinRefresh() end
+  if any and ns.QueuePinRefresh then ns.ForgetAvailable() ns.QueuePinRefresh() end
 end)
 
 -- Expired verdicts leave the map without waiting for another event.
@@ -388,7 +389,7 @@ ns.OnInit(function()
     for id in pairs(c.notOffered) do
       if not ns.NotOfferedLevel(id) then any = true end
     end
-    if any and ns.QueuePinRefresh then ns.QueuePinRefresh() end
+    if any and ns.QueuePinRefresh then ns.ForgetAvailable() ns.QueuePinRefresh() end
   end)
 end)
 

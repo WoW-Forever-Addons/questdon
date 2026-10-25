@@ -1,4 +1,5 @@
 local _, ns = ...
+local C_SuperTrack = ns.ST or C_SuperTrack -- (25.10.2026) Era shims, Core.lua ApiProxy
 local L = ns.L
 
 ---------------------------------------------------------------------------
@@ -542,6 +543,9 @@ local function NextAuto()
   nextSig, nextAt = sig, now
   nextCache = nil
   local best, bestD, bestID
+  -- (24.10., reviewer c: "blank compass on the card when every objective is more than 400 yards away") the nearest open
+  -- objective of a quest in the log at any distance: used only when no turn-in and nothing close by was found
+  local far, farD, farID
   local hidden = ns.TrackerHidden and ns.TrackerHidden() or {}
   for _, info in ipairs(ns.QuestLogEntries()) do
     local id = info.questID
@@ -553,10 +557,12 @@ local function NextAuto()
         if p and d then
           local finished = p.kind == "turnin" or p.kind == "guess"
           if (finished or d <= NEXT_NEAR) and (not bestD or d < bestD) then best, bestD, bestID = p, d, id end
+          if not finished and (not farD or d < farD) then far, farD, farID = p, d, id end
         end
       end
     end
   end
+  if not best then best, bestD, bestID = far, farD, farID end
   if not best then return nil end
   local title = ns.QuestTitle(bestID)
   local label = (best.kind == "turnin" or best.kind == "guess") and L["Turn in: %s"]:format(title) or title
@@ -763,6 +769,12 @@ local function GoldPlate(frame)
     local a = 0.75 * math.min(1, alpha / Style.DEFAULT_ALPHA)
     for _, t in ipairs(self.border) do t:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], a) end
   end
+  -- (25.10., Daniel: "no frame and no background for the arrow too") only the text stays
+  function plate:SetPlain(plain)
+    self.plain = plain and true or false
+    if self.plain then self.bg:Hide() else self.bg:Show() end
+    for _, t in ipairs(self.border) do if self.plain then t:Hide() else t:Show() end end
+  end
   plate:Layout()
   plate:SetAlpha(Style.DEFAULT_ALPHA)
   return plate
@@ -954,6 +966,10 @@ local function Update(self)
       return
     end
     SetTexts(self, t.label, L["In the objective area, nearest spot %d yards"]:format(dist), "good")
+    -- (24.10., Daniel's picture 17.10.: "In the objective area, nearest s..." cut off in Leveldon's window) the
+    -- distance and the area hint apart for the cards (Leveldon's station, Questdon's quest card): "52 yards" under the
+    -- compass, "In the objective area" in the hint line, both short enough for their lines
+    state.distShort, state.distWay = L["%d yards"]:format(dist), L["In the objective area"]
   end
   if not dist then
     ShowNeedle(self, false) ShowSeal(self, false)
@@ -1114,6 +1130,7 @@ function ns.ApplyArrowLook()
   arrow:SetShown(Runs() and true or false)
   arrow:SetScale(Scale())
   arrow.box.plate:SetAlpha(ns.db.arrowAlpha)
+  arrow.box.plate:SetPlain(ns.db.arrowPlain == true)
   Style.CombatFade(arrow, ns.db.arrowCombatFade) -- (1.20) kit v2 for own frames
 end
 

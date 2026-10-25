@@ -79,6 +79,11 @@ function API.QuestStart(questID)
   return m, x / 100, y / 100, npc
 end
 
+-- (24.10.) The quests a breadcrumb quest leads to: { questID, ... }, empty for a quest that is no breadcrumb
+function API.BreadcrumbTargets(questID)
+  return ns.BreadcrumbTargets and ns.BreadcrumbTargets(questID) or {}
+end
+
 -- Points (0-1) for unfinished objectives of a quest in the log: { {mapID, x, y}, ... }
 -- 1.14: a point may carry needsItem = itemID: the objective needs that item used
 -- somewhere else, and this is where to get it. The place of use is not among the
@@ -267,6 +272,47 @@ end
 function API.SetGuideCompass(on)
   ns.guideCompass = on and true or nil
   if ns.QueueRefresh then ns.QueueRefresh("tracker") end
+end
+-- (25.10., Daniel: "for Leveldon an option Arrow instead of the compass in the list") Leveldon's switch: the single direction
+-- arrow leads, without the guide's compass and without the list's. The values before are kept (db.arrowModePrev) and
+-- come back with the second call. ArrowMode() is read from the settings themselves, so it stays right when the player
+-- changes them by hand.
+--   API.ArrowMode(), API.SetArrowMode(on)   arrow window on, the list's compass off
+--   API.ArrowPlain(), API.SetArrowPlain(on) the arrow without plate and frame (option arrowPlain)
+function API.ArrowMode()
+  local db = ns.db
+  return db ~= nil and db.arrow == true and db.trackerCompass == false
+end
+function API.SetArrowMode(on)
+  local db = ns.db
+  if not db then return false end
+  on = on and true or false
+  if on == API.ArrowMode() then return true end
+  local function Changed(key) if ns.OptionChanged then ns.OptionChanged(key) end end
+  if on then
+    db.arrowModePrev = { compass = db.trackerCompass ~= false, arrow = db.arrow and true or false }
+    db.trackerCompass, db.arrow, db.arrowAuto = false, true, nil
+    Changed("trackerCompass")
+    db.arrow, db.arrowAuto = true, nil
+  else
+    local p = db.arrowModePrev
+    db.arrowModePrev = nil
+    db.trackerCompass = p == nil or p.compass
+    Changed("trackerCompass")
+    db.arrow, db.arrowAuto = (p ~= nil and p.arrow) or false, nil
+    if db.trackerCompass == false then db.arrow = true end -- no compass and no arrow would show no way at all
+  end
+  if ns.ApplyArrow then ns.SafeCall("arrow mode", ns.ApplyArrow) end
+  if ns.UpdateTracker then ns.SafeCall("arrow mode", ns.UpdateTracker, true) end
+  if ns.RefreshSettingsUI then ns.SafeCall("arrow mode", ns.RefreshSettingsUI) end
+  return true
+end
+function API.ArrowPlain() return ns.db ~= nil and ns.db.arrowPlain == true end
+function API.SetArrowPlain(on)
+  if not ns.db then return false end
+  ns.db.arrowPlain = on and true or false
+  if ns.OptionChanged then ns.OptionChanged("arrowPlain") end
+  return true
 end
 -- (1.3.6) The mobs of a quest's objectives: { [index] = { ids = { creatureID, ... }, need = n or nil, done } }
 -- (data creatures; need and done from the game for a quest in the log)
