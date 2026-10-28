@@ -39,7 +39,7 @@ ns.WALKS = {
 [2988]={[1412]={"f8hvfbhwfehxfhhzfki0fmi2fpi3fsi5fui6fxi8g0i9g3ibg7icgaidghidgiidgmicgsiagxi7gzi6h5i4h7i3hai1hci0hfhzhihxhlhvhnhthqhshvhqhzhpi2hphxhphthqhshrhmhuhihwhhhxhdi0hai1h7i2h4i4h2i5gzi6gwi7gti8griagoibgkicghidgdidgaidg6icg3ibg1iafyi8fvi6fti5fqi3fjhzfihyffhxfbhvf8hvf5huf2htezhtewhseshqephpelhoehhoedhoe9hne4hke0hidzhge2hje5hle9hneahneehoehhoejhpemhpephqethrexhtf0huf5hu"}}, -- Morin Cloudstalker
 [3058]={[1412]={"ea6yea72ea72eb75ed78ee7bef7eeg7heg7heh7kei7nej7qej7tek7wel81el82el84el86el89ek8cek8gek8jej8nej8qej8tej8tei8xei90eh93eh97eh9aeg9def9kee9nee9red9vee9yeea1efa4eha7ejadelafemakeoaoeoarepaxepazeob2elb6ekb8eib9eeb9ecb7eab6e8b4e5b1e3aye2ate2aqe2aqe3aje3afe3aae3a7e2a0e29xe19te19qe09kdz9gdz9ddy9adx93dw90dw8wdw8tdv8ndu8kdt8hdr8bdq89dn84dm83dl80dj7tdi7rdh7pdg7mdf7gdf7edi79dj78dl75do71dq6zds6xdt6tdu6qdy6ke16je36le56pe66s"}}, -- Arra'chea
 [3068]={[1412]={"dodhdrdddvd7dxd2dxcxdycrdzcmdzchdxcbdwc8duc7drc7dnc8dkc7dhc4dec3dbc5d4c5d0c6cwc8cscacpcccmcfcjcjcgcmcdcqc9csc4cwc0czbwd1brd1bnd4bjd7bgdcbfdgbednbfdtbgdzbie3bme5bpe5bre8bsecbtegbvejbzelc3emc6ekcbeiceegcheccke7cne3cpe0ctdwcwdpd0dmd4dld8dhdadddddcdhdedldjdndj"}}, -- Mazzranache
-[3140]={[1411]={"f4knf6krf5kuf6kqf4knf2kd"}}, -- Lar Prowltusk
+[3140]={[1411]={"f4knf6krf5kuf6kqf4knf2kd"}}, -- Lar Prowltusk (seen 2)
 [3203]={[1411]={"bp7fbr7ebt7ebt7dbu7dbt7dbs7ebr7e"}}, -- Fizzle Darkstorm
 [3205]={[1411]={"isodirociso7iqo6ino6ioo5ipo3iqo2isnziunyitnziqo3iqo6iro8iroc"}}, -- Zalazane
 [3209]={[1412]={"calfc9ldcalfcalgcbljcalkcbljcalhcalfc9ldcalfcblfcdlecelccflecflecflfcelgcdlicdlkcdlncblpcclmccllcdljcelhcelfcflecelecelccdlecdlecalfc9ldcalfcblicalkcblj"}}, -- Brave Windfeather

@@ -448,7 +448,10 @@ function ns.LastItemUse() return lastUse end -- (tests)
 -- only the player's own casts (a unit event: the casts of every mob and party member never reach Questdon)
 local castFrame = CreateFrame("Frame")
 if castFrame.RegisterUnitEvent and pcall(castFrame.RegisterUnitEvent, castFrame, "UNIT_SPELLCAST_SUCCEEDED", "player") then
-  castFrame:SetScript("OnEvent", ns.Guard("item use", function(_, _, unit, _, spellID) OnCast(unit, spellID) end))
+  castFrame:SetScript("OnEvent", ns.Guard("item use", function(_, _, unit, _, spellID)
+    OnCast(unit, spellID)
+    if unit == "player" and ns.GatherCast then ns.GatherCast(spellID) end -- (27.10.) gathering finds (Gather.lua)
+  end))
 end
 
 local function AddSpot(questID, index)

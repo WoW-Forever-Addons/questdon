@@ -3,7 +3,7 @@
 -- plus providers for objectives ATT names none for (see build_spawns.py). Sources: CMaNGOS classic-db
 -- (https://github.com/cmangos/classic-db, GPL v3, commit ec4f596: spawns, quest objectives, loot), world positions
 -- put on the maps with the Forever client's UiMapAssignment (via All The Things, MIT), Forever-new mobs from
--- ForeverDB (foreverdb.net, GPL v3, data 2026-10-22.447727b3) and our own player recordings.
+-- ForeverDB (foreverdb.net, GPL v3, data 2026-10-25.9865a282) and our own player recordings.
 -- This file is licensed under the GNU General Public License v3 (like Data/Walks.lua), see
 -- Data/Walks-LICENSE-GPLv3.txt.
 -- [creatureID] = { [uiMapID] = "xxyy..." }  x and y in base 36, tenths of a map percent (0-1000)
@@ -1998,7 +1998,7 @@ ns.SPAWNS = {
 ["o121264"]={[1433]="d2cf"},
 ["o124388"]={[1432]="9fpu"},
 ["o124389"]={[1432]="9sr2"},
-["o126049"]={[1432]="99on9era9xobaap0acnsagpgb2ntb5ox"},
+["o126049"]={[1418]="9b3u9g6sa23hag49ai2wam4qbb2xbe46"},
 ["o126158"]={[1438]="iwgl"},
 ["o126260"]={[1418]="ax58"},
 ["o140971"]={[1446]="a1fpa3eja89sah88aoh7atibatkaavjnayecb0kfb1kpb3k1b3kcb48nb5d5b7j5b7k8b7keb7lib8krbajubcawbcc3bejxbeksbgjrbgjvbgjwbik7bjkhblfnbokdbpkobqgabw79bzh9c0lhcacpcfi4cgasch9fchhwcjegck7iclibcnhwcohycqilctdqcti8cuhlcujjcxhuczi8d1htd1l5d38gd3hxd4idd4imd5hnd7apd8fxd8i8dahudai9daiedaindbi2dcendchvdciadcirddiddei0dgcddgk8di7zdnlhds9zdsggdtj7e0lte3h0e9htegadeh8xejcleje5epeneqc8escjevd9evg2excuey99f8aufgd9fggpfr9tfrekfvd8g281g2g3g56tg5dk"},

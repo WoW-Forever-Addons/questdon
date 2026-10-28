@@ -13,7 +13,7 @@ local L = ns.L
 --
 --   message  "D2:<seq>:<account token>:<line>;<line>;..."  (at most MAX_MSG
 --            characters; "D1:<seq>:..." from Questdon before 1.1 is still read)
---   lines    S G I T O F K D A X N E W R P as in Export.lua, only numbers (E: 1.3.6 dungeon entrances, W: 1.3.6 walked
+--   lines    S G I T O F K D A X N E W R P H as in Export.lua, only numbers (E: 1.3.6 dungeon entrances, W: 1.3.6 walked
 --            cells, R: 1.3.8 reward picks); (1.3.9) Q L J B: play times, drop rates, flights, abandons (Timing.lua),
 --            measurements, not facts: kept line by line (ns.StoreSample), each own line sent SAMPLE_SENDS times,
 --            at most SAMPLES_PER_HOUR an hour, before the facts (their budget is the same)
@@ -250,6 +250,15 @@ local PARSE = {
     if not (Int(npc, 1e7) and Int(m, 1e5) and Pos(x) and Pos(y)) then return nil end
     return ("P %s %s %d %d"):format(npc, m, math.floor(tonumber(x) / NEAR), math.floor(tonumber(y) / NEAR)),
       nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y) }
+  end,
+  -- (27.10.2026) a gathering find (Gather.lua): one fact per kind, source, item, map and NEAR grid cell, the count
+  -- is how often (Daniel: herbs, ore, leather, fish for our data; fish later for Luredon)
+  H = function(l, nov)
+    local k, s, id, m, x, y, item, n = l:match("^H ([hmsf]) ([oc%-]) (%d+) (%d+) (%d+%.%d) (%d+%.%d) (%d+) (%d+)$")
+    if not (k and Int(id, 1e7) and Int(m, 1e5) and Pos(x) and Pos(y) and Int(item, 1e7) and Int(n, 1e4)) then return nil end
+    if (s == "-") ~= (tonumber(id) == 0) then return nil end
+    return ("H %s %s%s %s %s %d %d"):format(k, s, id, item, m, math.floor(tonumber(x) / NEAR), math.floor(tonumber(y) / NEAR)),
+      nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y) }, tonumber(n)
   end,
   -- (1.1) the quest giver never offers this quest (NotHere.lua)
   N = function(l, nov)
@@ -687,7 +696,7 @@ end
 -- (23.10., /qd mem round 2: share about 1.4 MB at once with 8224 shared facts) without "shared" and "shareSent":
 -- others' facts come in every minute and made each quiet minute build all export lines again, though they only
 -- decide what is left out as known. Returns the fingerprint and the part of the own facts (without sampleOut).
-local FP_OWN = { "learned", "learnedObj", "learnedCredit", "learnedDrops", "learnedItemStarts", "rewardPicks" }
+local FP_OWN = { "learned", "learnedObj", "learnedCredit", "learnedDrops", "learnedItemStarts", "rewardPicks", "learnedGather" }
 local fpAcc = { 0, 0 }
 local function ExportFingerprint()
   fpAcc[1], fpAcc[2] = 0, 0

@@ -1,5 +1,16 @@
 # Changes
 
+## 1.3.12
+
+- **Update note:** new files, so restart the game after updating (a /reload is not enough).
+- **Arrow:** dungeon quests point to the entrance while you are outside; event and explore quests point to their place instead of the quest giver (Forever and Classic Era, for example the Fargodeep Mine).
+- **Pin size:** Options can now scale the quest pins on the world map and the minimap (25 to 200 %).
+- **Sizes for large screens:** on WQHD and 4K screens the XP bar and the quest list text start at 100 % and 90 % instead of 145 % and 120 % (only while you still use the defaults; your own values stay).
+- **Options window:** headers are no longer cut off ("- W...", "Qu...").
+- **Gathering places for the shared data:** when you gather herbs, mine ore, skin a creature or fish, Questdon notes the place, the node or creature and what you got, and shares it with the other learned data (option "Learn quest data"). Nothing new is shown in the game yet; the finds help the shipped data grow.
+- **Complete quest lists:** Questdon notes which quests each character has completed, and /qd scan asks the server which quest IDs exist (in the background, a few hours, /qd scan status). Both help us find quests that are still missing in the data. Nothing new is shown in the game.
+- **Data:** All The Things and ForeverDB updated (Forever build 70532); ForeverDB is now credited in the README.
+
 ## 1.3.11
 
 - **Update note:** new files, so restart the game after updating (a /reload is not enough).

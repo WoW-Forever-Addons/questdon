@@ -77,6 +77,7 @@ ns.defaults = {
   -- 1.4
   arrowScale = 1.15,
   objectivePinSize = 12,
+  mapPinScale = 1, minimapPinScale = 1, -- (Daniel 26.10.) size of all Questdon pins on the world map and the minimap
   thinObjectives = true, -- (1.3.5) many objective dots: fewer, bundled markers (minimap and world map)
   objectiveIcons = true, -- (17.10.) symbols instead of dots (mob, loot, named mob, object, place, item), groups as one
   objectiveAreas = true, -- (17.10.) the area of a group of spots in the quest's colour (world map)
@@ -104,6 +105,7 @@ ns.defaults = {
   learnedCredit = {}, -- (1.0.1) [questID] = { [index] = { c|o|i = { [id] = n } } } what gave objective credit (Learn.lua)
   learnedDrops = {}, -- (1.0.1) [itemID] = { ["c123"] = { n, map, x, y } } where a quest item dropped
   learnedItemStarts = {}, -- (1.0.1) [itemID] = questID started by a looted item
+  learnedGather = {}, -- (27.10.2026) where herbs, ore, leather and fish came from (Gather.lua)
   notHere = {}, -- (1.1) [questID] = { lv, man, ok, npc }: quests a quest giver never offers (NotHere.lua)
   shareLearned = true,
   shareChannel = true, -- (1.1) also through the open channel QuestdonNet (all Questdon players) -- (1.0.1) send own learned data to guild and group (Exchange.lua)
@@ -942,6 +944,9 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
     if ns.PrintPlanner then ns.PrintPlanner() end
   elseif msg == "export" or msg == "export all" then
     if ns.OpenExport then ns.OpenExport(msg == "export all") end
+  elseif msg == "scan" or msg:match("^scan%s") then
+    -- (1.3.12) which quest IDs the server knows (Scan.lua)
+    if ns.ScanCommand then ns.ScanCommand(msg:match("^scan%s+(%S+)") or "") end
   elseif msg == "missing" then
     if ns.OpenMissing then ns.OpenMissing() end
   elseif msg == "mapsizes" then

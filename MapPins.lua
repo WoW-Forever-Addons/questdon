@@ -1040,6 +1040,19 @@ local function OurPinCount(map)
   end)
   return ok and n or nil
 end
+-- (Daniel 26.10.: "dass jeder die selber skalieren kann") one factor for all our world map pins, 25 to 200 %
+function ns.MapPinMult()
+  local v = tonumber(ns.db and ns.db.mapPinScale) or 1
+  return math.max(0.25, math.min(2, v))
+end
+-- the map's own scaling first (from 1, so the factor never adds up), then ours on top
+local function ScaleBy(self, base)
+  if not self.SetScale then return end
+  self:SetScale(1)
+  if base then base(self) end
+  local s = self.GetScale and self:GetScale() or 1
+  self:SetScale((tonumber(s) or 1) * ns.MapPinMult())
+end
 local Setup
 function Setup()
   if provider or setupFailed then return end
@@ -1112,6 +1125,7 @@ function Setup()
     -- (1.24) and quests the quest giver did not offer at your level
     if self.SetAlpha then pcall(self.SetAlpha, self, (pin.upcoming or pin.notOffered or pin.dimmed) and 0.5 or 1) end
   end
+  function QuestPin:ApplyCurrentScale() ScaleBy(self, BaseMapPoiPinMixin.ApplyCurrentScale or MapCanvasPinMixin.ApplyCurrentScale) end
   -- Left click: point the arrow there.
   function QuestPin:OnMouseClickAction(button)
     -- (1.3.5) a dungeon entrance: a click opens the dungeon journal, right-click marks it (or removes the mark)
@@ -1173,6 +1187,7 @@ function Setup()
     self:UseFrameLevelType("PIN_FRAME_LEVEL_AREA_POI")
     if self.SetScalingLimits then self:SetScalingLimits(1, 0.9, 1.4) end
   end
+  function ObjPin:ApplyCurrentScale() ScaleBy(self, MapCanvasPinMixin.ApplyCurrentScale) end
   function ObjPin:OnAcquired(pin)
     self.pin = pin
     local size = ns.db.objectivePinSize or 12

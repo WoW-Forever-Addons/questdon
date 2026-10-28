@@ -208,6 +208,16 @@ local function QuestPoints(questID)
   if #pts > 0 then return pts end
   if ns.ObjectiveHint(questID) then return pts end -- "first get <item>", nowhere known: no target
   if (total > 0 and open == 0) or (total == 0 and not ns.HasObjectiveData(questID)) then return TurnIn() end
+  -- (26.10.2026, Daniel: "wo der Pfeil anderswo nicht so läuft") a dungeon quest whose objectives lie inside: the
+  -- entrance, as long as you are not in that dungeon (before: no target, Era has no quest points of the game)
+  local inst = (open > 0 or total == 0) and ns.QuestDungeon and ns.QuestDungeon(questID)
+  if inst and not (ns.CurrentDungeon and ns.CurrentDungeon() == inst) and ns.DungeonEntrance then
+    local em, ex, ey = ns.DungeonEntrance(inst)
+    if em and ex then
+      pts[1] = { mapID = em, x = ex, y = ey, kind = "entrance", inst = inst }
+      return pts
+    end
+  end
   if open > 0 and (types.event or types.escort) and not ns.IsItemStartQuest(questID) then
     local sm, sx, sy = ns.QuestStart(questID)
     if sm and sx then pts[1] = { mapID = sm, x = sx / 100, y = sy / 100, kind = "start" } end
@@ -599,6 +609,7 @@ local function BuildAuto()
       elseif q.kind == "guess" then return L["Turn in (probably): %s"]:format(title)
       elseif q.kind == "failed" then return L["Quest failed: %s"]:format(title)
       elseif q.kind == "start" then return L["%s: starts at the quest giver"]:format(title)
+      elseif q.kind == "entrance" then return title .. " (" .. L["Entrance: %s"]:format(ns.DungeonName(q.inst)) .. ")"
       elseif q.needsItem then return L["%s: first get %s"]:format(title, ns.ItemName(q.needsItem)) end
       return title
     end

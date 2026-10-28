@@ -37,6 +37,10 @@ local L = ns.L
 --                                                      profession trainer, f flight master, i
 --                                                      innkeeper, s spirit healer, b banker,
 --                                                      a auctioneer, st stable master
+--   H <h|m|s|f> <o|c|-> <id> <mapID> <x> <y> <itemID> <n>   (27.10.2026) a gathering find (Gather.lua):
+--                                                      herb, mining, skinning, fishing; node or pool
+--                                                      object, skinned creature, or - 0 (open water);
+--                                                      n = loot windows with that item there
 --   M <npcID> <name>                                   (1.3.5) an NPC's name as the
 --                                                      game showed it, in the locale
 --                                                      of the header (rest of the line)
@@ -292,6 +296,8 @@ function ns.ExportRecords(all)
   for q, v in pairs(orders) do if Int(q) and q > 0 and type(v) == "string" and v:match("^%d+[,%d]*$") then orderKeys[#orderKeys + 1] = q end end
   table.sort(orderKeys)
   for _, q in ipairs(orderKeys) do records[#records + 1] = ("Y %d %s"):format(q, orders[q]) end
+  -- (27.10.) where herbs, ore, leather and fish came from (Gather.lua): "H kind source id map x y item count"
+  for _, line in ipairs(ns.GatherRecords and ns.GatherRecords() or {}) do records[#records + 1] = line end
   -- (1.3.8) the reward each of your characters picked by hand: "R quest class tree item" (Rewards.lua)
   local picks = type(ns.db.rewardPicks) == "table" and ns.db.rewardPicks or {}
   local pickKeys = {}

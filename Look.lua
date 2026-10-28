@@ -135,3 +135,43 @@ function ns.MigrateLook(db)
 end
 
 ns.OnInit(function() ns.MigrateLook() end)
+
+---------------------------------------------------------------------------
+-- (26.10., Daniel: "at the WQHD monitor 125 % for the XP bar is too big, 100 % is enough, and 90 % text size as the
+-- default for WQHD, can that depend on the screen setting?") Defaults by the real screen height, once per saved
+-- settings. Only a value still at the code default is replaced, an own value stays. Heights not listed (full HD,
+-- 4K ...) keep the code defaults: nothing is assumed for them.
+---------------------------------------------------------------------------
+Look.SCREEN_DEFAULTS = {
+  -- WQHD (2560 x 1440) is Daniel's own check; 4K (Daniel 26.10.: "decide yourself") gets the same: the sizes follow the
+  -- monitor, not the pixel count (the UI fills the same part of the screen at every resolution), and a 4K desktop
+  -- monitor is about as big as a WQHD one. Full HD (his laptop: "values were ok") and everything above 2400 keep the
+  -- code defaults.
+  { minH = 1300, maxH = 2400, xpBarScale = 1.0, trackerScale = 0.9 },
+}
+
+function Look.ScreenHeight()
+  local ok, _, h = pcall(GetPhysicalScreenSize)
+  h = ok and tonumber(h)
+  if h and h == h and h > 0 then return h end
+  return nil
+end
+
+function ns.MigrateScreen(db)
+  db = db or ns.db
+  if type(db) ~= "table" or db.screenV1 then return false end
+  local h = Look.ScreenHeight()
+  if not h then return false end -- not measurable yet: next time
+  db.screenV1 = true
+  local d = ns.defaults or {}
+  for _, row in ipairs(Look.SCREEN_DEFAULTS) do
+    if h >= row.minH and h <= row.maxH then
+      for _, k in ipairs({ "xpBarScale", "trackerScale" }) do
+        if row[k] and d[k] ~= nil and tonumber(db[k]) == tonumber(d[k]) then db[k] = row[k] end
+      end
+    end
+  end
+  return true
+end
+
+ns.OnInit(function() ns.MigrateScreen() end)

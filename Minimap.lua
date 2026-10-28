@@ -307,6 +307,10 @@ local function Retint(b)
   else b.icon:SetVertexColor(r, g, bl) end
 end
 local function Look(b, pin, scale)
+  -- (Daniel 26.10.) the player's own size for all minimap pins, 25 to 200 %
+  local m = math.max(0.25, math.min(2, tonumber(ns.db and ns.db.minimapPinScale) or 1))
+  local function R(v) return math.max(3, math.floor(v * m + 0.5)) end
+  local DOT_SIZE = R(DOT_SIZE)
   b.pin = pin
   stats.dressed = stats.dressed + 1
   Unturn(b)
@@ -315,7 +319,7 @@ local function Look(b, pin, scale)
   if pin.kind == "entrance" or pin.kind == "dungeon" then
     -- (1.3.5) the game's dungeon entrance icon; the mark a bit larger than a quest marker, the others smaller
     b.ring:Hide()
-    local size = pin.kind == "entrance" and QUEST_SIZE + 20 or QUEST_SIZE + 8 -- (20.10., Daniel: far too small, the atlas icon has a wide empty edge) 34 and 22
+    local size = R(pin.kind == "entrance" and QUEST_SIZE + 20 or QUEST_SIZE + 8) -- (20.10., Daniel: far too small, the atlas icon has a wide empty edge) 34 and 22
     b:SetSize(size, size)
     local ok, res = false, nil
     if b.icon.SetAtlas then ok, res = pcall(b.icon.SetAtlas, b.icon, "Dungeon", false) end
@@ -372,7 +376,7 @@ local function Look(b, pin, scale)
     b.colorIdx = ns.QuestColorIndex(pin.questID)
   else
     b.ring:Hide()
-    b:SetSize(QUEST_SIZE, QUEST_SIZE)
+    b:SetSize(R(QUEST_SIZE), R(QUEST_SIZE))
     SetQuestIcon(b.icon, pin.iconKind or pin.kind) -- (1.2) the picked quest of the zone list
   end
   b.baseAlpha = pin.dimmed and 0.35 or (pin.kind == "dungeon" and 0.8) or 1

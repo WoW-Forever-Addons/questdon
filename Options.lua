@@ -73,7 +73,9 @@ local PAGES = {
     { key = "walkLines", name = "Routes of walking NPCs", tip = "Some quest givers and quest mobs walk a route. A red dotted line on the world map and minimap shows where they walk.", onChange = function() if ns.RefreshWalks then ns.RefreshWalks() end end },
     { key = "hideGamePOIs", name = "Hide the game's quest markers on the world map", tip = "Takes the game's own round objective markers and blue quest areas off the world map, so only Questdon's symbols and areas are shown. The game's markers on the minimap stay. Off by default.", onChange = function() if ns.ApplyGamePOIs then ns.ApplyGamePOIs() end end },
     { key = "objectivePinSize", kind = "slider", name = "Size of the objective dots", tip = "Size of the coloured dots on the world map.", min = 8, max = 24, step = 1, format = Pixels, parent = "objectivePins", onChange = RefreshPins },
+    { key = "mapPinScale", kind = "slider", name = "Map icon size", tip = "Size of all Questdon pins on the world map: quest givers, turn-ins, objectives and dungeon entrances. 100 % is the normal size.", min = 0.25, max = 2, step = 0.05, onChange = RefreshPins },
     { header = "Minimap and nameplates" },
+    { key = "minimapPinScale", kind = "slider", name = "Minimap icon size", tip = "Size of all Questdon pins on the minimap. 100 % is the normal size.", min = 0.25, max = 2, step = 0.05, parent = "minimapPins", onChange = RefreshPins },
     { key = "minimapPins", name = "Show the pins on the minimap too", tip = "The same pins as on the world map (available quests, quest mobs and objectives, learned turn-ins) for the zone you are in, also on the minimap. The options above apply there too. A quest giver with several quests is one pin. Mouse over for details, click to point the arrow there.", onChange = RefreshPins },
     { key = "minimapButton", name = "Minimap button", tip = "A Questdon button on the edge of the minimap. Left click: quest book. Right click: a menu with the most used switches and all options. Mouse over: quests here, dungeon quests and your quest log. Drag it around the minimap.", onChange = function() if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end end },
     { key = "nameplateIcons", name = "Quest mob pins on nameplates", tip = "A pin in the quest's colour above the nameplate of mobs of your open objectives. Quest givers and turn-ins keep the game's own ! and ?. Nameplates must be switched on in the game.", onChange = function() if ns.RefreshNameplates then ns.RefreshNameplates() end end },
@@ -251,9 +253,10 @@ local TOOLS = {
         if ns.db.learnedObj then wipe(ns.db.learnedObj) end
         if ns.db.learnedItems then wipe(ns.db.learnedItems) end
         -- (1.3.5) the NPC names the game showed too (/qd export M lines)
-        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "shareSent", "shareSentAt", "notHere", "exportSent", "npcNames" }) do
+        for _, k in ipairs({ "learnedCredit", "learnedDrops", "learnedItemStarts", "learnedGather", "shareSent", "shareSentAt", "notHere", "exportSent", "npcNames" }) do
           if type(ns.db[k]) == "table" then wipe(ns.db[k]) end
         end
+        if ns.GatherReset then ns.GatherReset() end
         if ns.db.guessedItems then wipe(ns.db.guessedItems) end
         -- (1.3.5, Daniel 10.10.) and every cache built from it: shared facts (count, spots), the
         -- creature index of tooltips and nameplates (learned credit), the objective points

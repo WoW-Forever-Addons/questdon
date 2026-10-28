@@ -28,7 +28,7 @@ local TABS = {
     text = "What Questdon shows on the world map and the minimap: quests you can pick up, the mobs and places of your quests, dungeon entrances.",
     -- (17.10., Daniel: "shouldn't map style be at the top under Map?") the start window's three map styles, first
     top = { "Map style and first steps" },
-    main = { "availablePins", "objectivePins", "objectiveIcons", "objectiveAreas", "walkLines", "hideGamePOIs", "minimapPins", "dungeonPins" },
+    main = { "availablePins", "objectivePins", "objectiveIcons", "objectiveAreas", "walkLines", "hideGamePOIs", "minimapPins", "dungeonPins", "mapPinScale", "minimapPinScale" },
     more = { "showLowLevel", "lowLevelRange", "showNoLevel", "hideEventQuests", "hideRepeatable", "confirmedOnly", "skipGameGivers",
       "clusterPins", "upcomingLevels", "objectivePinsTrackedOnly", "thinObjectives", "objectivePinSize", "dungeonPinsMinimap",
       "nameplateIcons", "minimapButton" } },
@@ -180,6 +180,9 @@ local function HeaderRow(text, color)
   r.name:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 6, 8)
   r.name:SetText(text)
   K.SetColor(r.name, color or "gold")
+  -- (26.10., Daniel: "- W..." and "Qu..." cut) the rows come from a pool: an option's name left its narrow width
+  -- (Fit) on the row, and a long heading on that row was cut with "...". Fit resets size and width first.
+  K.Fit(r.name, LIST_W - 12, r)
   r.line:Show()
   r.line:ClearAllPoints()
   r.line:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 6, 3)
