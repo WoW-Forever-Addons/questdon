@@ -260,10 +260,9 @@ function ns.BuildDiag()
   end)
   Probe(out, "style kit", function()
     local st = ns.Style or {}
-    local panel = ns.PanelFrame and ns.PanelFrame()
-    return ("v%s, panel %s, scale %.2f, alpha %.2f, locked %s, collapsed %s"):format(tostring(st.VERSION or "?"),
-      panel and (panel:IsShown() and "shown" or "hidden") or "missing", tonumber(ns.db.panelScale) or 1,
-      tonumber(ns.db.panelAlpha) or 0, YesNo(ns.db.panelLocked), YesNo(ns.db.panelCollapsed))
+    -- (29.10.2026) the old panel is gone: the quest list's look instead
+    return ("v%s, quest list scale %.2f, alpha %.2f"):format(tostring(st.VERSION or "?"),
+      tonumber(ns.db.trackerScale) or 1, tonumber(ns.db.trackerAlpha) or 0)
   end)
   Probe(out, "Questie", function()
     if not ns.AddOnLoaded("Questie") then return "not loaded" end

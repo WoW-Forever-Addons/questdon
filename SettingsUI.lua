@@ -80,6 +80,7 @@ local function AddItem(category, item)
     return
   end
   local kind = item.kind or "check"
+  if kind == "choice" then return end -- (29.10.2026) only in Questdon's window; Blizzard's panel keeps the two switches
   local default = ns.defaults[item.key]
   local setting = Settings.RegisterAddOnSetting(category, Var(item.key), item.key, ns.db,
     VarType(kind, default), L[item.name], default)

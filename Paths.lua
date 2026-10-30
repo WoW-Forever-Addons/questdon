@@ -294,6 +294,12 @@ function ns.PathInside(m, fromX, fromY, toX, toY, way)
 end
 -- The target lies inside a cave or building you are not in: its way in ({ mapID, x, y }, reached with the way
 -- around mountains if there is one), or nil
+-- (30.10.2026, Daniel in the Fargodeep Mine: "Angekommen ... einen Schritt weiter, dann sagt er wieder zurück") the
+-- walked cells of a cave are few, so deep inside you stood on none of them and the arrow sent you back to the way in.
+-- Once you reached the way in (or stood on its cells), you count as inside as long as the game says you are indoors
+-- or you are still near the way in; only out in the open and away from it the arrow leads to the way in again.
+local CAVE_STAY = 40 -- yards around the way in that still count as inside
+local caveIn = { m = nil, way = nil }
 function ns.PathCave(t)
   if not (t and t.mapID and t.x and t.y) or ns.db.arrowPaths == false then return nil end
   local m, px, py = ns.PlayerPosition()
@@ -301,13 +307,20 @@ function ns.PathCave(t)
   local ins = Inside(m)
   local way = InsideOf(ins, Cell(t.x, t.y), Outside(m, ins))
   if not way then return nil end
-  if Indoors() and InsideOf(ins, Cell(px, py)) == way then return nil end
+  local indoors = Indoors()
   local ex, ey = Center(way)
   local e = { mapID = m, x = ex, y = ey }
   local d = ns.DistanceAndBearing(e)
-  if d and d <= REACHED then return nil end
+  local entered = caveIn.m == m and caveIn.way == way
+  if (indoors and InsideOf(ins, Cell(px, py)) == way) or (d and d <= REACHED) then
+    caveIn.m, caveIn.way = m, way
+    return nil
+  end
+  if entered and (indoors or (d and d <= CAVE_STAY)) then return nil end
+  if entered then caveIn.m, caveIn.way = nil, nil end
   return ns.PathNext(e) or e
 end
+function ns.PathCaveForget() caveIn.m, caveIn.way = nil, nil end -- (tests)
 
 -- The arrow's next point on the way to target t ({ mapID, x, y } 0-1), or nil for the straight line
 local state = { key = nil, wps = nil, at = -1e9 }

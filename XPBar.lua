@@ -378,7 +378,9 @@ local function CreateRep()
   rep:EnableMouse(true)
   rep.bg = rep:CreateTexture(nil, "BACKGROUND")
   rep.bg:SetAllPoints(rep)
-  if not pcall(rep.bg.SetAtlas, rep.bg, "UI-HUD-ExperienceBar-Background") then
+  -- (28.10.2026) Era lacks this atlas: SetAtlas returns false there without an error
+  local okBg, setBg = pcall(rep.bg.SetAtlas, rep.bg, "UI-HUD-ExperienceBar-Background")
+  if not okBg or setBg == false then
     rep.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
     rep.bg:SetVertexColor(0, 0, 0, 0.6)
   end

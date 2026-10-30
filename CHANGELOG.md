@@ -1,5 +1,16 @@
 # Changes
 
+## 1.3.13
+
+- **Update note:** new files, so restart the game after updating (a /reload is not enough).
+- **Inns, auction houses, flight masters and banks on the map:** the world map shows them with the game's own tracking symbols, for your faction and the neutral towns (Booty Bay, Gadgetzan, Ratchet, Everlook and more). Mouse over: what it is; click: the arrow leads you there. One switch in Options > Map, on by default. Forever and Classic Era each use their own data (ForeverDB, CMaNGOS classic-db).
+- **Quest chains at a glance** (thanks to L3Hummus for the idea): next to the quest log a small window shows the chain of the quest you picked: its name, "part 3 of 7", the parts you finished, the current one in gold and the next step with its quest giver and zone. In the quest book the chain section is now a diagram, with branches side by side. A click on a part opens that quest. Option "Chain next to the quest log" (on by default).
+- **Fewer options:** the options window went from 89 to about 50 switches. Things that every player should simply have are now fixed (for example confirmed quests only), the rest is sorted by what it is for. Compass and arrow are one choice now ("Show the way with": compass, arrow or both).
+- **Clearer texts:** one name for each thing in all languages (Questdon's pins on the map, the game's markers), tooltips without references to the old Questdon window, and the title bar of the quest list tells you about Ctrl + mouse wheel (text size) and Shift + mouse wheel (opacity).
+- **Look:** the quest book, the options window, the menus and the arrow take their colours from the same set as our other addons.
+- **Classic Era:** the options button shows a gear instead of an empty square.
+- **Small fixes:** the quest book button in the quest list header shows the book again instead of an X; removing a character from the journal asks once more before it goes.
+
 ## 1.3.12
 
 - **Update note:** new files, so restart the game after updating (a /reload is not enough).

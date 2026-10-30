@@ -107,7 +107,6 @@ end
 ---------------------------------------------------------------------------
 -- Settings migration (1.19): one appearance page for panel, arrow, XP bar
 ---------------------------------------------------------------------------
-local OLD_PANEL_ALPHA = 0.75 -- default up to 1.18
 
 function ns.MigrateLook(db)
   db = db or ns.db
@@ -118,11 +117,7 @@ function ns.MigrateLook(db)
   local d = ns.defaults or {}
   local arrowDefault, xpDefault = d.arrowScale or 1.15, d.xpBarScale or 1.45
   if version < 1 then
-    -- untouched old default: the family default now; own values stay
-    if db.panelAlpha == OLD_PANEL_ALPHA then db.panelAlpha = Style.DEFAULT_ALPHA end
-    db.panelAlpha = Clamp(db.panelAlpha, 0, 1, Style.DEFAULT_ALPHA)
-    db.panelScale = Clamp(db.panelScale, smin, smax, 1)
-    db.panelWidth = math.floor(Clamp(db.panelWidth, Style.SPACING.minWidth, 500, 300) + 0.5)
+    -- (29.10.2026) the old panel's values went with Panel.lua
   end
   -- (1.25.1) new defaults: arrow 115 %, XP bar 145 %. A stored old default
   -- (1) follows the new one, an own size stays (clamped to 0.6-1.6).

@@ -8,6 +8,8 @@ local L = ns.L
 -- the client gives no map position, then the arrow hides itself.
 ---------------------------------------------------------------------------
 local ARRIVED_YARDS = 8
+local ARRIVED_LEAVE = 15 -- (30.10.2026) arrived stays until this far away (no flicker one step on)
+local arrivedAt = { mapID = nil, x = nil, y = nil }
 local arrow
 local manual -- target set by clicking a pin: { mapID, x, y, label }
 local auto   -- target from the tracked quest
@@ -555,7 +557,7 @@ local function NextAuto()
   local best, bestD, bestID
   -- (24.10., reviewer c: "blank compass on the card when every objective is more than 400 yards away") the nearest open
   -- objective of a quest in the log at any distance: used only when no turn-in and nothing close by was found
-  local far, farD, farID
+  local far, farD, farID, bestPts, farPts
   local hidden = ns.TrackerHidden and ns.TrackerHidden() or {}
   for _, info in ipairs(ns.QuestLogEntries()) do
     local id = info.questID
@@ -566,17 +568,24 @@ local function NextAuto()
         local p, d = Nearest(points)
         if p and d then
           local finished = p.kind == "turnin" or p.kind == "guess"
-          if (finished or d <= NEXT_NEAR) and (not bestD or d < bestD) then best, bestD, bestID = p, d, id end
-          if not finished and (not farD or d < farD) then far, farD, farID = p, d, id end
+          if (finished or d <= NEXT_NEAR) and (not bestD or d < bestD) then best, bestD, bestID, bestPts = p, d, id, points end
+          if not finished and (not farD or d < farD) then far, farD, farID, farPts = p, d, id, points end
         end
       end
     end
   end
-  if not best then best, bestD, bestID = far, farD, farID end
+  if not best then best, bestD, bestID, bestPts = far, farD, farID, farPts end
   if not best then return nil end
   local title = ns.QuestTitle(bestID)
   local label = (best.kind == "turnin" or best.kind == "guess") and L["Turn in: %s"]:format(title) or title
   nextCache = { mapID = best.mapID, x = best.x, y = best.y, label = L["Next: %s"]:format(label), questID = bestID, next = true }
+  -- (30.10.2026, Daniel at Kobold Candles with no quest picked: the arrow went from mob to mob, "Arrived" and one step
+  -- on the next one) a kill or collect objective brings its places here too, so its area counts as for a picked quest
+  if best.area and type(bestPts) == "table" then
+    local list = {}
+    for _, q in ipairs(bestPts) do if q.area then list[#list + 1] = q end end
+    nextCache.points = list
+  end
   return nextCache
 end
 function ns.DismissNextTarget() nextDismissed = LogSignature() end
@@ -740,9 +749,9 @@ local S = Style.SPACING
 local MEDIA = "Interface\\AddOns\\Questdon\\Media\\"
 local WHITE = "Interface\\Buttons\\WHITE8x8"
 local NAVY = { 0.08, 0.09, 0.19 }
-local GOLD = { 0.86, 0.71, 0.42 }
-local CREAM = { 0.96, 0.92, 0.84 }
-local CHAMPAGNE = { 0.97, 0.87, 0.60 }
+local GOLD = ns.Style.BOOK.gold -- (28.10.2026) the book's gold from the kit
+local CREAM = ns.Style.BOOK.textPrimary
+local CHAMPAGNE = ns.Style.BOOK.goldLight
 local FAR, NEAR = 200, 30 -- yards: matte gold beyond FAR, full shine and glow inside NEAR
 
 -- 0 far away .. 1 close
@@ -987,7 +996,11 @@ local function Update(self)
     SetTexts(self, t.label, L["Other zone or no position"], "textHint")
     return
   end
-  if dist < ARRIVED_YARDS then
+  -- (30.10.2026, Daniel: "angekommen, aber wenn man einen Schritt weiter geht, sagt er wieder zurück") arrived stays
+  -- until you are ARRIVED_LEAVE yards away from the same place
+  local here = arrivedAt.mapID == t.mapID and arrivedAt.x == t.x and arrivedAt.y == t.y
+  if dist < ARRIVED_YARDS or (here and dist < ARRIVED_LEAVE) then
+    arrivedAt.mapID, arrivedAt.x, arrivedAt.y = t.mapID, t.x, t.y
     ShowNeedle(self, false) ShowSeal(self, true)
     local hint = ns.ArrivedText(t)
     SetTexts(self, t.label, hint or L["Arrived"], "good")

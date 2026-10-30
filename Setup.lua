@@ -17,7 +17,8 @@ local frame, cards, switchRows = nil, {}, {}
 -- (17.10., Daniel: "with the game's map picked the game's areas were gone anyway; three choices: the game's own
 -- without anything of ours, the new one with symbols, the one with dots")
 -- (18.10., Daniel: "only the game's map" without Questdon's turn-in "?" too) learnPins is that "?"
-local ON_MAP = { availablePins = true, objectivePins = true, walkLines = true, dungeonPins = true, dungeonPinsMinimap = true, learnPins = true }
+local ON_MAP = { availablePins = true, objectivePins = true, walkLines = true, dungeonPins = true, dungeonPinsMinimap = true, learnPins = true,
+  servicePins = true }
 local function With(base, extra)
   local t = {}
   for k, v in pairs(base) do t[k] = v end
@@ -34,7 +35,7 @@ local STYLES = {
   { key = "game", pic = "setup_game", title = "Only the game's map",
     text = "Only the game's own quest markers and blue areas. Questdon draws nothing on the map and minimap; the quest list, the arrow and everything else stay.",
     values = { availablePins = false, objectivePins = false, walkLines = false, dungeonPins = false, dungeonPinsMinimap = false, learnPins = false,
-      objectiveIcons = false, objectiveAreas = false, hideGamePOIs = false } },
+      servicePins = false, objectiveIcons = false, objectiveAreas = false, hideGamePOIs = false } },
 }
 ns.SETUP_STYLES = STYLES -- (tests)
 
@@ -93,7 +94,7 @@ local DATA_ONLY = {
   learnQuests = true, shareLearned = true, shareChannel = true, shareTimes = true, minimapButton = true,
   -- map, minimap, nameplates, tooltips
   availablePins = false, objectivePins = false, walkLines = false, minimapPins = false, nameplateIcons = false,
-  dungeonPins = false, dungeonPinsMinimap = false, learnPins = false, hideGamePOIs = false, unitTooltips = false,
+  dungeonPins = false, dungeonPinsMinimap = false, learnPins = false, hideGamePOIs = false, unitTooltips = false, servicePins = false,
   -- windows: quest list, arrow, XP bar, quest item and target buttons
   tracker = false, arrow = false, arrowNext = false, pathDots = false, arrowCorpse = false, xpBar = false,
   ownRepBar = false, questItemButton = false, targetButton = false, exportBlizzardWaypoint = false, exportTomTom = false,

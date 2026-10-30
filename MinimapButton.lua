@@ -68,7 +68,7 @@ end
 -- The switches: label, keys (all set together), what to refresh.
 local function RefreshPins() if ns.RefreshPins then ns.RefreshPins() end end
 local SWITCHES = {
-  { label = "Quest markers on the map", keys = { "availablePins" }, apply = RefreshPins },
+  { label = "Available quests on the map", keys = { "availablePins" }, apply = RefreshPins },
   { label = "Quest mobs on the map", keys = { "objectivePins" }, apply = RefreshPins },
   { label = "Direction arrow", keys = { "arrow" }, apply = function() ns.db.arrowAuto = nil if ns.ApplyArrow then ns.ApplyArrow() end end }, -- (review 4) your choice
   { label = "Auto accept and turn in", keys = { "autoAccept", "autoTurnIn" } },
@@ -182,7 +182,8 @@ local function CreateMenu()
   else
     bg:SetColorTexture(0.10, 0.11, 0.22, 0.97)
   end
-  Edge(menu, 0.86, 0.71, 0.42, 0.9)
+  local G = Style.BOOK.gold -- (28.10.2026) the book's gold from the kit, not typed in
+  Edge(menu, G[1], G[2], G[3], 0.9)
   local title = menu:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   title:SetPoint("TOPLEFT", menu, "TOPLEFT", 14, -10)
   title:SetText(Style.Wordmark("Quest", "don"))
@@ -190,7 +191,7 @@ local function CreateMenu()
   Row(menu, y, L["Quest book"], function() HideMenu() if ns.OpenQuestBook then ns.OpenQuestBook() end end)
   y = y + 26
   local line = menu:CreateTexture(nil, "ARTWORK")
-  line:SetColorTexture(0.86, 0.71, 0.42, 0.35)
+  line:SetColorTexture(G[1], G[2], G[3], 0.35)
   line:SetPoint("TOPLEFT", menu, "TOPLEFT", 12, -y - 2)
   line:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -12, -y - 2)
   line:SetHeight(1)
@@ -203,7 +204,7 @@ local function CreateMenu()
     y = y + 24
   end
   local line2 = menu:CreateTexture(nil, "ARTWORK")
-  line2:SetColorTexture(0.86, 0.71, 0.42, 0.35)
+  line2:SetColorTexture(G[1], G[2], G[3], 0.35)
   line2:SetPoint("TOPLEFT", menu, "TOPLEFT", 12, -y - 3)
   line2:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -12, -y - 3)
   line2:SetHeight(1)

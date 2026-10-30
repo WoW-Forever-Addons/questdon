@@ -17,7 +17,8 @@ local Style = ns.Style
 --               a second button sorts them by level instead
 --   * at the bottom your level, and the XP the finished quests bring as a green part of the bar
 -- Click a quest: it becomes the picked one (the game's super track, the compass follows it).
--- Shift-click, or the book button: the whole quest to read (QuestText window below).
+-- The read button: the whole quest to read (QuestText window below). (30.10.2026, Daniel) Shift-click a quest: the
+-- quest book on its zone with the quest's card and chain.
 -- Blizzard's quest tracker is made invisible and click-through while our list is on (alpha 0,
 -- mouse off, no hooks, never in combat), as Leveldon does it.
 -- Opacity: the window's background up to fully gone with its frame (options, Shift + mouse wheel
@@ -283,7 +284,7 @@ local function CreateCard()
       for _, e in ipairs(ns.TrackerEntries()) do if e.questID == self.questID then ns.TrackerQuestMenu(e) return end end
       return
     end
-    if self.questID and IsShiftKeyDown and IsShiftKeyDown() then ns.ShowQuestText(self.questID) end
+    if self.questID and IsShiftKeyDown and IsShiftKeyDown() then ns.QuestBookOpenQuest(self.questID) end
   end)
   f:SetScript("OnEnter", function(self)
     if not self.questID then return end
@@ -291,7 +292,7 @@ local function CreateCard()
     local hint = ns.QuestHint and ns.QuestHint(self.questID)
     if hint then lines[#lines + 1] = "|cffdcc17f" .. L["Hint"] .. ":|r " .. hint end
     Style.Tooltip(self, ns.QuestTitle(self.questID), lines,
-      L["Shift-click: read the whole quest."] .. " " .. L["Right-click: abandon or hide."])
+      L["Shift-click: open it in the quest book."] .. " " .. L["Right-click: abandon or hide."])
   end)
   f:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
   -- the compass follows the arrow 20 times a second
@@ -504,6 +505,30 @@ local function ReaderGet(key)
 end
 local function ReaderSet(key, v) local db = DB() if type(db.readerPanel) ~= "table" then db.readerPanel = {} end db.readerPanel[key] = v end
 
+-- (30.10.2026, Daniel's picture: German client, progress and completion text in English) Forever sends some quest
+-- texts untranslated. Words that only English has; two of them make a text English.
+local ENGLISH = { ["the"] = true, ["you"] = true, ["and"] = true, ["your"] = true, ["have"] = true, ["what"] = true,
+  ["with"] = true, ["that"] = true, ["this"] = true, ["let"] = true, ["his"] = true, ["are"] = true, ["would"] = true,
+  ["there"] = true, ["from"] = true, ["i'm"] = true, ["can't"] = true, ["don't"] = true, ["it's"] = true }
+function ns.LooksEnglish(text)
+  if type(text) ~= "string" then return false end
+  local hits, seen = 0, {}
+  for w in text:lower():gmatch("[%a']+") do
+    if ENGLISH[w] and not seen[w] then
+      seen[w], hits = true, hits + 1
+      if hits >= 2 then return true end
+    end
+  end
+  return false
+end
+-- a text the game gave in English in a client of another language: left out
+local function InGameLanguage(text)
+  if not text then return nil end
+  local loc = ns.Value(GetLocale)
+  if loc ~= "enUS" and loc ~= "enGB" and ns.LooksEnglish(text) then return nil end
+  return text
+end
+
 function ns.QuestTextParts(id)
   local game = LogText(id)
   local saved = DB().questTexts and DB().questTexts[id] or nil
@@ -511,8 +536,8 @@ function ns.QuestTextParts(id)
   return {
     description = (game and game.d) or (saved and saved.d) or nil,
     objective = (game and game.o) or (saved and saved.o) or (data and data.o) or nil,
-    progress = saved and saved.p or nil,
-    completion = saved and saved.c or nil,
+    progress = InGameLanguage(saved and saved.p or nil),
+    completion = InGameLanguage(saved and saved.c or nil),
   }
 end
 
@@ -602,6 +627,10 @@ local function Set(key, value) local k = KEYS[key] if k and ns.db then ns.db[k] 
 
 Style.ICONS.qdRead = Style.ICONS.qdRead or {
   atlas = { "Campaign-QuestLog-LoreBook", "questlog-questtypeicon-lore" }, file = "Interface\\Icons\\INV_Misc_Book_09" }
+-- (29.10., Daniel: the quest book button showed an X) defined in Panel.lua until round 7; without it the kit falls
+-- back to the close icon
+Style.ICONS.qdZoneList = Style.ICONS.qdZoneList or {
+  atlas = {}, file = "Interface\\QuestFrame\\UI-QuestLog-BookIcon", color = true }
 
 local function Mode() return ns.db.trackerMode == "zones" and "zones" or "near" end
 
@@ -773,7 +802,7 @@ local function RowFor(e, focusID)
   if e.questID == focusID then row:SetActive(true) end
   row:SetOnClick(function(_, button)
     if button == "RightButton" then ShowQuestMenu(e) return end
-    if IsShiftKeyDown and IsShiftKeyDown() then ns.ShowQuestText(e.questID) return end
+    if IsShiftKeyDown and IsShiftKeyDown() then ns.QuestBookOpenQuest(e.questID) return end
     Pick(e.questID)
   end)
   row:SetTooltip(function()
@@ -783,7 +812,7 @@ local function RowFor(e, focusID)
     if e.dist then lines[#lines + 1] = { L["Distance"], Yards(e.dist) } end
     local hint = ns.QuestHint and ns.QuestHint(e.questID)
     if hint then lines[#lines + 1] = "|cffdcc17f" .. L["Hint"] .. ":|r " .. hint end
-    return e.title, lines, L["Click: pick it (compass). Shift-click: read the whole quest."] .. " " .. L["Right-click: abandon or hide."]
+    return e.title, lines, L["Click: pick it. Shift-click: open it in the quest book."] .. " " .. L["Right-click: abandon or hide."]
   end)
   return row
 end
@@ -1329,7 +1358,7 @@ local function Build()
       row:SetTooltip(function() if ns.HoverQuestRow then ns.HoverQuestRow(row, e.questID) end end) -- (20.10.) marks stand out on the maps
       row:SetOnClick(function(_, button)
         if button == "RightButton" then ShowQuestMenu(e) return end
-        if IsShiftKeyDown and IsShiftKeyDown() then ns.ShowQuestText(e.questID) return end
+        if IsShiftKeyDown and IsShiftKeyDown() then ns.QuestBookOpenQuest(e.questID) return end
         Pick(e.questID)
       end)
       -- (Questdon review 2) a failed quest and a timed quest's time left in these tabs too
@@ -1586,7 +1615,7 @@ local function Create()
     buttons = {
       -- (Daniel 12.10.: "a button up top for the options too")
       { key = "options", kind = "options", tooltip = { L["Options"] }, onClick = function() if ns.OpenOptions then ns.OpenOptions() end end },
-      { key = "read", kind = "qdRead", tooltip = { L["Read the whole quest"], nil, L["Shift-click a quest does it too."] },
+      { key = "read", kind = "qdRead", tooltip = { L["Read the whole quest"] },
         onClick = function() local id = card and card.questID if id then ns.ShowQuestText(id) end end },
       -- (1.3.8) the quest book button of the old window
       { key = "book", kind = "qdZoneList", tooltip = { L["Quest book"], nil, L["Your journal, the quests of the zone and a search over all quests. /qd journal, /qd zone"] },
@@ -1609,6 +1638,13 @@ local function Create()
   if panel._header and panel._header.EnableMouseWheel then
     panel._header:EnableMouseWheel(true)
     panel._header:SetScript("OnMouseWheel", WheelAlpha)
+    -- (29.10.2026, round 8 of the critique: nobody finds the wheel) the title bar says what it does
+    panel._header:SetScript("OnEnter", function(self)
+      local lines = { L["Ctrl + mouse wheel: text size."], L["Shift + mouse wheel: background opacity."] }
+      if not docked then table.insert(lines, 1, L["Drag to move."]) end
+      Style.Tooltip(self, L["Quest list"], lines)
+    end)
+    panel._header:SetScript("OnLeave", function(self) if Style.HideTooltip then Style.HideTooltip(self) end end)
   end
   -- (20.10., Daniel) the mouse wheel on the list: scroll through the quests when not all fit (the header's wheel stays the opacity)
   if panel.EnableMouseWheel then

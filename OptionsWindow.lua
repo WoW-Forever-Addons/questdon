@@ -28,42 +28,41 @@ local TABS = {
     text = "What Questdon shows on the world map and the minimap: quests you can pick up, the mobs and places of your quests, dungeon entrances.",
     -- (17.10., Daniel: "shouldn't map style be at the top under Map?") the start window's three map styles, first
     top = { "Map style and first steps" },
-    main = { "availablePins", "objectivePins", "objectiveIcons", "objectiveAreas", "walkLines", "hideGamePOIs", "minimapPins", "dungeonPins", "mapPinScale", "minimapPinScale" },
-    more = { "showLowLevel", "lowLevelRange", "showNoLevel", "hideEventQuests", "hideRepeatable", "confirmedOnly", "skipGameGivers",
-      "clusterPins", "upcomingLevels", "objectivePinsTrackedOnly", "thinObjectives", "objectivePinSize", "dungeonPinsMinimap",
-      "nameplateIcons", "minimapButton" } },
+    -- (28.10.2026, Daniel: "die Optionen einfach teilweise zu viel ... Sollten wir einfach Sachen vorgeben") 89 switches
+    -- down to 52, the hidden ones from 54 to 29; what we decide as developers is in ns.FIXED_OPTIONS (Options.lua)
+    main = { "availablePins", "objectivePins", "objectiveIcons", "learnPins", "minimapPins", "dungeonPins", "servicePins" },
+    more = { "showLowLevel", "lowLevelRange", "objectivePinsTrackedOnly", "objectiveAreas", "hideGamePOIs", "walkLines",
+      "nameplateIcons", "dungeonPinsMinimap", "mapPinScale", "minimapPinScale", "minimapButton" } },
   { key = "list", title = "Quest list and arrow", pic = "opt_list",
     text = "Your quests in Questdon's list with a compass, and the arrow that leads you to the next objective.",
     -- (25.10., Daniel: "you cannot tell at first sight which option is for the list and which for the arrow") headers
-    main = { "header:Quest list", "tracker", "trackerCompass", "trackerPlain",
-      "header:Direction arrow", "arrow", "arrowPlain", "arrowNext", "pathDots", "arrowCorpse" },
-    more = { "header:Quest list", "trackerDock", "trackerHideGrey", "trackerHideBlizz", "trackerScale", "trackerAlpha", "trackerCombatFade",
-      "header:Direction arrow", "arrowLocked", "arrowScale", "arrowAlpha", "arrowCombatFade", "button:arrow", "nextConfirmedOnly",
-      "header:Targeting and waypoints", "targetButton", "exportBlizzardWaypoint", "exportTomTom" } },
+    main = { "header:Quest list", "tracker",
+      "header:Direction arrow", "wayMode", "arrowNext" },
+    more = { "header:Quest list", "trackerPlain", "trackerHideGrey", "trackerScale",
+      "header:Direction arrow", "arrowPlain", "arrowLocked", "arrowScale", "button:arrow",
+      "header:Targeting and waypoints", "targetButton", "exportTomTom" } },
   { key = "accept", title = "Accept and turn in", pic = "opt_accept",
-    text = "Quests taken and turned in for you, the reward that suits you marked, hints for chains and groups.",
-    main = { "autoAccept", "autoTurnIn", "suggestReward", "highlightBest" },
-    more = { "skipTrivial", "autoPickBest", "chainHint", "shareQuests", "partyProgress", "dungeonHint", "unitTooltips",
-      "notifySound", "notifyText" } },
+    text = "Quests taken and turned in for you, the reward that suits you marked, a sound when something is done.",
+    main = { "autoAccept", "autoTurnIn", "suggestReward", "notifySound", "notifyText" },
+    more = { "skipTrivial", "shareQuests", "unitTooltips", "questieFirst" } },
   { key = "xp", title = "XP bar", pic = "opt_xp",
     text = "Questdon's experience bar: XP, rested XP, finished quests, XP per hour and the time to the next level.",
-    main = { "xpBar", "xpBarText", "hideBlizzardXP", "ownRepBar" },
-    more = { "xpBarLocked", "xpBarScale", "xpBarAlpha", "xpBarCombatFade", "button:xp", "artInXPPlace", "xpBarWidth", "xpBarHeight" } },
+    main = { "xpBar", "xpBarText", "hideBlizzardXP" },
+    more = { "xpBarLocked", "xpBarScale", "xpBarWidth", "button:xp" } },
   { key = "comfort", title = "Comfort", pic = "opt_comfort",
-    text = "Small helpers: sell junk and repair at a merchant, fast loot, a button for quest items.",
-    main = { "sellJunk", "autoRepair", "fastLoot", "questItemButton", "starterNotice" },
-    more = { "useGuildRepair", "itemButtonScale", "journalShots", "journalLevelShot", "journalMoments", "journalStory" } },
+    text = "Small helpers: sell junk and repair at a merchant, fast loot, a button for quest items, and the journal.",
+    main = { "sellJunk", "autoRepair", "fastLoot", "questItemButton" },
+    more = { "useGuildRepair", "journalShots", "journalMoments", "journalLevelShot" } },
   { key = "share", title = "Sharing and data", pic = "opt_share",
     text = "What Questdon learns while you play and shares with other Questdon players (only quest and map numbers, never names).",
     top = { "Only collect and share data" }, -- (25.10.) Setup.lua ns.SetDataOnly
-    main = { "learnQuests", "shareLearned", "shareChannel", "shareTimes" },
-    more = { "learnPins", "pinsOnlyUnknown", "questieFirst" },
+    -- (28.10.2026, Daniel: "Für Questdon und uns ist das Sammeln immens wichtig ... ab Werk an ist ein Muss") on by default
+    main = { "learnQuests", "shareLearned", "shareChannel" },
     tools = { "Export learned data", "Quests hidden as not offered", "Delete learned quest data" } },
   { key = "help", title = "Help", pic = "opt_help",
-    text = "Positions, tests and reports for bug reports.",
+    text = "Positions, reports for bug reports and the dungeon quests as text.",
     status = true,
-    tools = { "Reset positions", "Test the arrow", "Reset XP session", "Diagnostics", "Dungeon quests",
-      "XP sources" } },
+    tools = { "Reset positions", "Reset XP session", "Diagnostics", "Dungeon quests" } },
 }
 ns.OPTION_TABS = TABS -- (tests)
 
@@ -238,6 +237,17 @@ local function OptionRow(key, indent)
     r.minus:SetScript("OnClick", ns.Guard("options", function() Set(v - step) end))
     r.plus:SetScript("OnClick", ns.Guard("options", function() Set(v + step) end))
     room = room - 130
+  elseif item.kind == "choice" then
+    -- (29.10.2026, round 6) one of a few values: the pill shows it, a click moves on to the next
+    local i = item.get and item.get() or 1
+    local why = item.status and item.status()
+    room = room - K.SetPill(r, why or T(item.choices[i]), why and "warning" or "good", 130)
+    if not off then
+      r.onClick = function()
+        item.set(i % #item.choices + 1)
+        Render()
+      end
+    end
   elseif item.kind == "button" then
     r.btn:Show() r.btn:ClearAllPoints()
     r.btn:SetPoint("RIGHT", r, "RIGHT", -10, 0)

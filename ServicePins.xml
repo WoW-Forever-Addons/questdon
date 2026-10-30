@@ -1,0 +1,15 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<!-- (30.10.2026) inns, auction houses, flight masters and banks (ServicePins.lua, which defines the mixin).
+	     No OnEnter/OnLeave scripts: the map canvas calls the mixin's OnMouseEnter/OnMouseLeave itself. -->
+	<Frame name="QuestdonServicePinTemplate" mixin="QuestdonServicePinMixin" enableMouse="true" virtual="true">
+		<Size x="16" y="16"/>
+		<Layers>
+			<Layer level="ARTWORK">
+				<Texture parentKey="Icon" setAllPoints="true"/>
+			</Layer>
+		</Layers>
+		<Scripts>
+			<OnLoad method="OnLoad"/>
+		</Scripts>
+	</Frame>
+</Ui>

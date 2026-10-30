@@ -146,32 +146,21 @@ local J3 = {} -- (1.3.11 Stufe 3) chapters, the review, the journal as text (bel
 -- Small helpers
 ---------------------------------------------------------------------------
 -- (1.3.4) The book's own colours (the panel and the other windows keep Style.COLORS).
+-- (28.10.2026, Questdon review: "a colour does not mean the same everywhere") the book's colours come from the kit's
+-- Style.BOOK, the colours with a meaning (accent, good, warning, critical) from Style.COLORS, as in every other window;
+-- only what the book alone draws stays here
+local function Copy(c) return { c[1], c[2], c[3], c[4], hex = c.hex } end
 local THEME = {
-  background    = { 0.10, 0.11, 0.22 },
-  backgroundLow = { 0.15, 0.10, 0.25 },
-  header        = { 0.07, 0.08, 0.17 },
-  textPrimary   = { 0.96, 0.92, 0.84 },
-  textSecondary = { 0.80, 0.76, 0.68 },
-  textHint      = { 0.58, 0.57, 0.66 },
-  gold          = { 0.86, 0.71, 0.42 },
-  goldLight     = { 0.97, 0.87, 0.60 },
-  goldDark      = { 0.42, 0.30, 0.14 },
-  accent        = { 0.40, 0.68, 0.98 },
-  good          = { 0.47, 0.84, 0.44 },
-  warning       = { 0.98, 0.80, 0.34 },
-  critical      = { 0.93, 0.40, 0.36 },
   divider       = { 0.86, 0.71, 0.42, 0.22 },
-  rowHover      = { 1, 1, 1, 0.05 },
-  rowActive     = { 0.86, 0.71, 0.42, 0.16 },
   barBackground = { 1, 1, 1, 0.09 },
-  card          = { 0.17, 0.21, 0.40 },
-  cardLow       = { 0.11, 0.13, 0.28 },
   cardEdge      = { 0.86, 0.71, 0.42, 0.30 },
   violet        = { 0.66, 0.36, 0.95 },
   cyan          = { 0.30, 0.86, 0.95 },
 }
+for k, c in pairs(ns.Style.BOOK) do THEME[k] = Copy(c) end
+for _, k in ipairs({ "accent", "good", "warning", "critical" }) do THEME[k] = Copy(ns.Style.COLORS[k]) end
 for _, c in pairs(THEME) do
-  c.hex = string.format("ff%02x%02x%02x", math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
+  c.hex = c.hex or string.format("ff%02x%02x%02x", math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
 end
 ns.QUESTBOOK_THEME = THEME -- (tests)
 
@@ -1014,7 +1003,7 @@ local ZoneKind = {
     f.fill:SetPoint("BOTTOMLEFT", f.track, "BOTTOMLEFT", 0, 0)
     Gradient(f.fill, "HORIZONTAL", "goldDark", 1, "goldLight", 1)
     -- (1.3.4) "12/48" next to the bar
-    f.num = Text(f, 9, "textHint", "RIGHT")
+    f.num = Text(f, 10, "textHint", "RIGHT") -- (29.10.2026) not below GameFontHighlightSmall
     f.num:SetPoint("RIGHT", f, "BOTTOMRIGHT", -10, 8)
     return f
   end,
@@ -1281,8 +1270,40 @@ Pic.Kind = {
   end,
 }
 
+-- (30.10.2026, Daniel: the card had no room for it, "unter die Quest in der Liste") the chain of the quest whose card is
+-- open, as a line of the zone list right under its row (Chain.lua draws it); a click on a box that sums up parts shows
+-- the whole chain
+local CH = { full = false, fullFor = nil } -- (one local: the file is at Lua's limit of 200)
+function CH.Height(id, w)
+  if not ns.ChainDraw then return 0 end
+  if not CH.measure then
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:Hide()
+    CH.measure = ns.ChainDiagram(f)
+  end
+  local used = ns.ChainDraw(CH.measure, id, 0, 0, w, { full = CH.fullFor == id and CH.full })
+  ns.ChainClear(CH.measure)
+  return used
+end
+CH.Kind = {
+  create = function(list)
+    local f = CreateFrame("Frame", nil, list)
+    f.diagram = ns.ChainDiagram(f)
+    f.diagram.summaryHint = L["Click: show the whole chain."]
+    f.diagram.onSummary = function()
+      local id = f.item and f.item.questID
+      CH.full, CH.fullFor = not (CH.fullFor == id and CH.full), id
+      if ns.UpdateZoneQuests then ns.UpdateZoneQuests() end -- (Refresh is declared further down)
+    end
+    return f
+  end,
+  render = function(f, it)
+    ns.ChainDraw(f.diagram, it.questID, 12, 6, it.w or (RowW(f) - 24), { full = CH.fullFor == it.questID and CH.full })
+  end,
+}
+
 local KINDS = { head = HeadKind, empty = EmptyKind, entry = EntryKind, quest = QuestKind, zone = ZoneKind,
-  dsum = DunSumKind, dpath = DunPathKind, dpick = DunPickKind, shots = Pic.Kind }
+  dsum = DunSumKind, dpath = DunPathKind, dpick = DunPickKind, shots = Pic.Kind, chain = CH.Kind }
 
 ---------------------------------------------------------------------------
 -- Zones
@@ -1833,7 +1854,10 @@ function J3.CharCard(c)
     title = name, sub = table.concat(sub, "  ·  "),
     r1 = c.l and L["Level %d"]:format(c.l) or "", r2 = L["%d quests"]:format(c.q or 0) .. "  ·  " .. when,
     onClick = function(_, button)
-      if button == "RightButton" and not me and ns.JournalForgetCharacter(key) then Refresh() end
+      -- (28.10.2026, Questdon review: deleting without a question) a second right-click within 5 seconds
+      if button == "RightButton" and not me and ns.Confirm("forget:" .. tostring(key),
+          L["Right-click again within 5 seconds to take %s off the list."]:format(tostring(name)))
+        and ns.JournalForgetCharacter(key) then Refresh() end
     end,
     tooltip = function()
       local lines = {}
@@ -2242,6 +2266,19 @@ local function ZoneQuestItems(m)
     end
   end
   if #items == 0 then items[1] = { kind = "empty", h = 60, text = L["No quests known for this zone."] } end
+  -- (30.10.2026) the open card's quest: its chain right under its row
+  local open = ns.QuestBookDetailID and ns.QuestBookDetailID()
+  if open and ns.ChainGraph and ns.ChainGraph(open) then
+    for i, it in ipairs(items) do
+      if it.kind == "quest" and it.questID == open then
+        local lw = lists.zone and ns.Num(lists.zone.GetWidth and lists.zone:GetWidth())
+        local w = ((lw and lw > 100) and lw or (lists.zone and lists.zone.rowW) or (W - 20)) - 8 - 24
+        local h = CH.Height(open, w)
+        if h > 0 then table.insert(items, i + 1, { kind = "chain", h = h + 14, questID = open, w = w }) end
+        break
+      end
+    end
+  end
   return items, s
 end
 
@@ -3509,7 +3546,7 @@ function UpdateDungeonBar()
     showChip:Set(L["Show on map"], false)
     showChip:SetAlpha(known and 1 or 0.45)
     showChip.tipTitle = L["Show on map"]
-    showChip.tipLines = { known and L["Opens the world map at the entrance and lets its marker pulse for a moment."] or L["No entrance known for this dungeon."] }
+    showChip.tipLines = { known and L["Opens the world map at the entrance and lets its pin pulse for a moment."] or L["No entrance known for this dungeon."] }
     showChip:Show()
   end
   -- route: the quest givers of what you can take now (dungeon quests and the steps before them)
@@ -3652,7 +3689,11 @@ function ns.QuestBookDetail(id)
   -- what to do
   local qt = ns.QuestText and ns.QuestText(id)
   local todo = {}
-  if qt and type(qt.o) == "string" and qt.o ~= "" then todo[1] = { qt.o, "textPrimary" } end
+  -- (30.10.2026, Daniel's picture: German client, the objective sentence in English) our data's English sentence only
+  -- in an English client; the game's own objectives follow below
+  local loc = ns.Value(GetLocale)
+  local english = loc ~= "enUS" and loc ~= "enGB" and ns.LooksEnglish and qt and ns.LooksEnglish(qt.o)
+  if qt and type(qt.o) == "string" and qt.o ~= "" and not english then todo[1] = { qt.o, "textPrimary" } end
   local own = ObjectiveTexts(id)
   if ns.InQuestLog(id) and #own > 0 then
     for _, l in ipairs(own) do todo[#todo + 1] = l end
@@ -3680,13 +3721,19 @@ function ns.QuestBookDetail(id)
   local rewards = {}
   for _, r in ipairs(ns.QuestRewardLines and ns.QuestRewardLines(id) or {}) do rewards[#rewards + 1] = { r, "textPrimary" } end
   Section(L["Rewards"], rewards)
-  -- chain
+  -- chain: (30.10.2026, L3Hummus) a diagram (Chain.lua) where the quest has a chain of 2 parts or more
   local chain = {}
-  for _, pre in ipairs(ns.QuestPrereqs(id) or {}) do
+  local graph = ns.ChainGraph and ns.ChainGraph(id)
+  if graph then
+    d.sections[#d.sections + 1] = { title = L["Chain"], chain = id,
+      lines = { { L["Part %d of %d"]:format(graph.layerOf[id], #graph.layers), "textPrimary" } } }
+    chain = nil
+  end
+  for _, pre in ipairs(chain and ns.QuestPrereqs(id) or {}) do
     local done = ns.IsQuestDone(pre)
     chain[#chain + 1] = { L["Before: %s"]:format(ns.QuestTitleWithPart(pre)), done and "good" or "warning" }
   end
-  for _, nx in ipairs(ns.FollowUpQuests(id) or {}) do
+  for _, nx in ipairs(chain and ns.FollowUpQuests(id) or {}) do
     chain[#chain + 1] = { L["Then: %s"]:format(ns.QuestTitleWithPart(nx)), "textSecondary" }
     if #chain >= 6 then break end
   end
@@ -3959,6 +4006,23 @@ function ns.QuestBookShowQuest(id, focus)
   if changed and not focus and Refresh then Refresh(false) end -- the clicked line stands out
 end
 function ns.QuestBookDetailID() return detailID end
+
+-- (30.10.2026, Daniel: "mit Shift-Links-Klick die Quest im Quest-Buch im Zonenbereich aufgemacht") the book on the zone
+-- of the quest (where it starts, else the zone shown), with the quest's card and its chain
+function ns.QuestBookOpenQuest(id)
+  id = ns.Num(id)
+  if not id then return end
+  local m = ns.QuestStart(id)
+  local zone = m and (ZoneOf(m) or m)
+  if zone then SelectZone(zone) else ns.OpenQuestBook("zone") end
+  ns.QuestBookShowQuest(id)
+  -- its row (and the chain under it) in sight
+  local list = lists.zone
+  for i, it in ipairs(list and list.items or {}) do
+    if it.kind == "quest" and it.questID == id then list:ScrollTo(math.max(1, i - 1)) break end
+  end
+end
+function ns.QuestBookZoneList() return lists.zone end -- (tests)
 
 -- (1.3.11) Show a journal entry in the card (nil closes it); a moment with a
 -- spot in its zone also shows that spot on the journal's round map.
@@ -4233,6 +4297,21 @@ local function RenderZone(reset)
   P.zNear:SetShown(showChips)
   Layout(P.zChips, 6, W - 2 - SIDE_W - 28 - (ns.Num(P.zNear:GetWidth()) or 110) - 12)
   lists.zone:SetItems(items, not reset)
+  -- (30.10.2026, Daniel: a chain lower down took the rest of the list away until he scrolled) the list draws only lines
+  -- that fit: when a chain line opens, scroll so its quest and the chain are in sight (once per quest, so your own
+  -- scrolling stays)
+  local qi, ci
+  for i, it in ipairs(items) do
+    if it.kind == "chain" then ci = i break end
+    if it.kind == "quest" then qi = i end
+  end
+  if not ci then CH.scrolledFor = nil return end
+  if CH.scrolledFor == items[ci].questID then return end
+  CH.scrolledFor = items[ci].questID
+  local list, sum = lists.zone, 0
+  for i = list.offset, ci do sum = sum + (items[i].h or ROW_H) end
+  if list.offset <= qi and sum <= list:Height() then return end
+  if (items[qi].h or ROW_H) + items[ci].h <= list:Height() then list:ScrollTo(qi) else list:ScrollTo(ci) end
 end
 
 local function RenderSearch(reset)

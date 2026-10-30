@@ -43,7 +43,7 @@ ns.defaults = {
   journalMoments = true, -- (1.3.11) deaths, dungeons, new zones, loot, home, professions, reputation
   journalStory = true, -- (1.3.12) the turn-in text (db.questTexts[id].c), shortened, in the card of a completed quest's entry
   journalLevelShot = false, -- (1.3.11) a screenshot at each level-up
-  notifyText = true,
+  notifyText = false, -- (30.10.2026, Daniel: "Meldung wenn Quest fertig kann standard aus") the sound stays
   learnQuests = true,
   learnPins = true,
   pinsOnlyUnknown = true,
@@ -58,7 +58,7 @@ ns.defaults = {
   -- (1.3.6, Daniel 12.10.) own quest list instead of Blizzard's tracker, with the arrow built in as a compass
   tracker = true,
   trackerShown = true,
-  trackerCompass = true,
+  trackerCompass = false, -- (30.10.2026, Daniel: "standardweise nur der Pfeil ... cleaner") the arrow window shows the way
   trackerDock = true, -- (1.3.6) under Leveldon's window when both are open
   trackerHideBlizz = true,
   trackerMode = "near",
@@ -83,9 +83,6 @@ ns.defaults = {
   objectiveAreas = true, -- (17.10.) the area of a group of spots in the quest's colour (world map)
   walkLines = true, -- (17.10.) routes of walking quest NPCs as red dots (Walks.lua)
   hideGamePOIs = false, -- (17.10.) the game's own quest markers and areas off the world map
-  panelScale = 1,
-  panelAlpha = 0.82, -- 1.19: family default (was 0.75)
-  panelWidth = 300, -- 1.15.1: wider for German texts, adjustable
   itemButtonScale = 1,
   -- 1.5
   xpBar = true,
@@ -97,7 +94,6 @@ ns.defaults = {
   xpBarPos = nil,
   unitTooltips = true,
   objectivePinsTrackedOnly = false,
-  nextQuestHint = false, -- (1.0) off: the game shows ! on map and minimap itself
   guessedItems = {}, -- (1.0) [itemID] = { questID } guessed from items that appeared after accepting a quest
   learnedItems = {}, -- (1.0) [itemID] = questID that handed the item out (Cleanup.lua)
   npcSpots = {}, -- (1.3.6) [creatureID] = { { map, x, y }, ... } where you talked to a quest NPC (Learn.lua: walks around)
@@ -111,22 +107,15 @@ ns.defaults = {
   shareChannel = true, -- (1.1) also through the open channel QuestdonNet (all Questdon players) -- (1.0.1) send own learned data to guild and group (Exchange.lua)
   shared = {}, -- (1.0.1) what other players reported: [key] = { v = { variants }, c, t }
   shareSent = {}, -- (1.0.1) [key] = what was last sent
-  showPanel = false, -- (1.3.4) off for new players: the minimap button shows what the window did
   minimapButton = true, -- (1.3.4) minimap button: quest book, menu, info tooltip
   minimapButtonAngle = 200,
-  bookButton = true, -- (1.3) quest book button at the bottom of the window
-  panelPos = nil,
   learned = {}, -- [questID] = { title, level, faction, start = {...}, finish = {...} }
   -- 1.13: [questID] = false for quests the server does not know (Exists.lua)
   questExists = {},
   -- 1.18
-  dungeonQuests = true, -- panel row "Dungeon quests"
   dungeonHint = true,   -- chat line when entering a dungeon
   partyProgress = true, -- quest progress with group members (addon messages)
   -- 1.19: one appearance page (Style kit) for panel, arrow and XP bar
-  panelLocked = false,
-  panelCollapsed = false,
-  panelCombatFade = false,
   arrowLocked = false,
   arrowAlpha = 0.82,
   arrowPlain = true, -- (25.10.) no plate and frame behind the arrow's text; (25.10., Daniel) the default, like the list
@@ -165,6 +154,8 @@ ns.defaults = {
   -- 1.3.5: the entrance of every dungeon with a known entrance: world map; minimap only within 300 yards
   dungeonPins = true,
   dungeonPinsMinimap = true,
+  -- (30.10.2026) inns, auction houses, flight masters and banks on the world map (ServicePins.lua), one switch (Daniel 30.10.)
+  servicePins = true,
 }
 
 ---------------------------------------------------------------------------
@@ -578,19 +569,32 @@ frame:SetScript("OnEvent", function(_, event, ...)
     -- (1.3.7, Daniel 13.10.: "by default the compass in the list and the arrow off") once: with the list and its
     -- compass on, the separate arrow window goes off (switch it on again for both at once)
     -- (1.3.8, Daniel 13.10.: "the old window can go completely") its lines are at the bottom of the quest list now
-    if not QuestdonDB.panelV138 then
-      QuestdonDB.showPanel, QuestdonDB.panelV138 = false, true
-    end
     if not QuestdonDB.arrowV137 then
       -- (Questdon review 5) not when the list was closed: then the arrow is the only way shown
       if QuestdonDB.tracker ~= false and QuestdonDB.trackerCompass ~= false and QuestdonDB.trackerShown ~= false then QuestdonDB.arrow = false end
       QuestdonDB.arrowV137 = true
+    end
+    -- (30.10.2026, Daniel: by default only the arrow shows the way, the compass goes into the quest list only when
+    -- chosen in the options) once: who still shows the way with the list's compass only (the old default)
+    -- gets the arrow window instead; "Arrow" and "Both" stay as chosen
+    -- (30.10.2026, Daniel: "Meldung wenn Quest fertig kann standard aus") once for everybody; who wants it switches it on
+    if not QuestdonDB.notifyTextV1313 then
+      QuestdonDB.notifyText, QuestdonDB.notifyTextV1313 = false, true
+    end
+    if not QuestdonDB.arrowV1313 then
+      if QuestdonDB.trackerCompass ~= false and not (QuestdonDB.arrow and not QuestdonDB.arrowAuto) then
+        QuestdonDB.trackerCompass, QuestdonDB.arrow, QuestdonDB.arrowAuto = false, true, nil
+      end
+      QuestdonDB.arrowV1313 = true
     end
     -- (1.3.11, Daniel 25.10.: "no background and no frame shall be the default for Questdon and Leveldon, also with the
     -- arrow") once for everybody: the quest list and the arrow see-through; who wants the frame switches it on again
     if not QuestdonDB.plainV1311 then
       QuestdonDB.trackerPlain, QuestdonDB.arrowPlain, QuestdonDB.plainV1311 = true, true, true
     end
+    -- (28.10.2026, Daniel: "Sachen vorgeben, weil wir sind die Entwickler") the options no longer in the window: once to
+    -- the value we chose (Options.lua ns.FIXED_OPTIONS)
+    if ns.ApplyFixedOptions then ns.ApplyFixedOptions(QuestdonDB) end
     -- (1.24) per character: what quest givers offered (Offers.lua)
     if type(QuestdonCharDB) ~= "table" then QuestdonCharDB = {} end
     ns.charDB = QuestdonCharDB
