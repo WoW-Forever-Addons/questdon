@@ -400,30 +400,78 @@ function ns.PathReset() state.key, state.wps, state.at, state.me, state.out, sta
 -- ({ mapID, { x, y }, ... } 0-1, from you to the target), or nil when it points straight. way: the point the
 -- arrow points at (Arrow.lua), cave: the target lies inside and that point leads to its way in.
 local line = { pts = {} }
-function ns.PathLine(t, way, cave)
+-- (31.10.2026, LEISTUNG_PRUEFUNG D17) no closure per call; m, px, py: the position read already this frame (PathDots)
+local function Add(pts, n, x, y)
+  n = n + 1
+  local p = pts[n]
+  if not p then p = {} pts[n] = p end
+  p[1], p[2] = x, y
+  return n
+end
+function ns.PathLine(t, way, cave, m, px, py)
   if not (t and way and t.mapID) then return nil end
-  local m, px, py = ns.PlayerPosition()
+  if not m then m, px, py = ns.PlayerPosition() end
   if m ~= t.mapID or not px then return nil end
   local pts, n = line.pts, 0
-  local function add(x, y) n = n + 1 local p = pts[n] if not p then p = {} pts[n] = p end p[1], p[2] = x, y end
-  add(px, py)
+  n = Add(pts, n, px, py)
   -- the waypoints still ahead (state belongs to the target the arrow asked for last: the way in for a cave)
   local wps = state.wps
   if wps then
-    for k = 1, #wps - 1 do local x, y = Center(wps[k]) add(x, y) end
+    for k = 1, #wps - 1 do local x, y = Center(wps[k]) n = Add(pts, n, x, y) end
   end
   if cave then
     local ins = Inside(m)
     local wayIn = InsideOf(ins, Cell(t.x, t.y), Outside(m, ins))
-    if wayIn then local x, y = Center(wayIn) add(x, y) end
+    if wayIn then local x, y = Center(wayIn) n = Add(pts, n, x, y) end
   elseif n == 1 then
-    add(way.x, way.y)
+    n = Add(pts, n, way.x, way.y)
   end
-  add(t.x, t.y)
+  n = Add(pts, n, t.x, t.y)
   for k = n + 1, #pts do pts[k] = nil end
   line.mapID = m
   return line
 end
+
+-- (31.10.2026, docs/LEISTUNG_PRUEFUNG_2026-10-31.md C14) walked cells and insides have a limit in all maps together
+-- (Daniel's file 23.10.: 5133 cells in 19 maps, 342 inside): above it the maps walked longest ago go as a whole
+-- (QuestdonDB.walkedAt: map -> time you last walked there), down to 90 %; the map you are on stays.
+local MAX_WALKED, MAX_INSIDES = 20000, 4000
+local cellCount = {} -- [key] = cells in all maps (counted once, then kept up)
+local function CountCells(key)
+  local n = 0
+  for _, cells in pairs(type(ns.db[key]) == "table" and ns.db[key] or {}) do
+    if type(cells) == "table" then for _ in pairs(cells) do n = n + 1 end end
+  end
+  return n
+end
+local function Thin(key, max, keep)
+  local t = ns.db[key]
+  local at = type(ns.db.walkedAt) == "table" and ns.db.walkedAt or {}
+  local total = CountCells(key) -- counted again: the tables may have been replaced (learned data deleted)
+  while total > max * 0.9 do
+    local oldM, oldT
+    for m in pairs(t) do
+      if m ~= keep then
+        local tm = ns.Num(at[m]) or 0
+        if not oldT or tm < oldT then oldM, oldT = m, tm end
+      end
+    end
+    if oldM == nil then break end
+    local n = 0
+    if type(t[oldM]) == "table" then for _ in pairs(t[oldM]) do n = n + 1 end end
+    t[oldM] = nil
+    if key == "walked" then at[oldM] = nil end
+    total = total - n
+  end
+  cellCount[key] = total
+end
+-- a new cell in walked or insides of map m
+local function Counted(key, max, m)
+  cellCount[key] = (cellCount[key] or CountCells(key) - 1) + 1
+  if cellCount[key] > max then Thin(key, max, m) end
+end
+ns.PathCellCount = function(key) cellCount[key] = nil return CountCells(key) end -- (tests)
+ns.PathLimits = function(w, i) MAX_WALKED, MAX_INSIDES = w or 20000, i or 4000 cellCount = {} end -- (tests)
 
 -- Where you walk: one note every RECORD_EVERY seconds when you moved on the ground (not on a flight path,
 -- not flying, not swimming)
@@ -443,7 +491,7 @@ local function Record()
     ns.db.insides = type(ns.db.insides) == "table" and ns.db.insides or {}
     local t = ns.db.insides[m]
     if type(t) ~= "table" then t = {} ns.db.insides[m] = t end
-    if t[c] == nil then t[c] = wayIn.c end
+    if t[c] == nil then t[c] = wayIn.c Counted("insides", MAX_INSIDES, m) end
   else
     wayIn = nil
     lastOut = { m = m, c = c }
@@ -453,7 +501,12 @@ local function Record()
   ns.db.walked = type(ns.db.walked) == "table" and ns.db.walked or {}
   local w = ns.db.walked[m]
   if type(w) ~= "table" then w = {} ns.db.walked[m] = w end
-  w[c] = true
+  ns.db.walkedAt = type(ns.db.walkedAt) == "table" and ns.db.walkedAt or {}
+  ns.db.walkedAt[m] = ns.Num(ns.Value(time)) or ns.Num(ns.Value(GetTime)) or 0
+  if not w[c] then
+    w[c] = true
+    Counted("walked", MAX_WALKED, m)
+  end
 end
 ns.PathRecord = Record -- (tests)
 ns.OnInit(function()

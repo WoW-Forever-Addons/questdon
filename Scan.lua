@@ -23,6 +23,22 @@ local C_QuestLog = ns.QL or C_QuestLog -- (25.10.2026) Era shims, Core.lua ApiPr
 --    QuestdonCharDB.doneIDs (one call, nothing else).
 ---------------------------------------------------------------------------
 local RANGES = { { 1, 26000 }, { 76000, 100000 }, { 190000, 290000 } }
+-- (31.10.2026, Daniel: "Forever-db2 selbst lesen") the IDs of Forever's client table QuestV2 outside these ranges
+-- (DonData/Data/Client_Quests.lua, tools/open/forever_db2.py), each as a range of its own, in order
+do
+  local extra = not ns.DONDATA_MISSING and ns.CLIENT_SCAN_IDS
+  if type(extra) == "table" then
+    local add = {}
+    for _, id in ipairs(extra) do
+      local inside = false
+      for _, r in ipairs(RANGES) do if id >= r[1] and id <= r[2] then inside = true break end end
+      if type(id) == "number" and not inside then add[#add + 1] = id end
+    end
+    table.sort(add)
+    for _, id in ipairs(add) do RANGES[#RANGES + 1] = { id, id } end
+    table.sort(RANGES, function(a, b) return a[1] < b[1] end)
+  end
+end
 local RATE, FAST = 10, 20
 local INFLIGHT = 60
 local TIMEOUT = 30

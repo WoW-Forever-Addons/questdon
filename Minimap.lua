@@ -7,8 +7,13 @@ local L = ns.L
 -- rules for Questie), for the map the player is on, drawn on the minimap.
 -- Quest givers with several quests are one pin (ns.GroupQuestPins).
 --
--- Own frames only: a container parented to the minimap, our own buttons on
--- it. The minimap is only read (size, zoom); nothing of it is changed.
+-- Own frames only: our own buttons on the minimap. The minimap is only read
+-- (size, zoom); nothing of it is changed.
+--
+-- (30.10.2026, DonMap M3) The buttons are placed by DonMap (source "questdon",
+-- sticky: every pin keeps its button while in view, DonMap MiniPins.lua).
+-- What is shown, the bundles, the look and the clock stay here: the frame
+-- QuestdonMinimapPins ticks and asks DonMap to place the pins anew.
 --
 -- Cost: the pin list is rebuilt at most once per second after quest events
 -- (and at once on a new map), skipped when its signature did not change. The
@@ -63,14 +68,12 @@ local DIAMETER = {
   indoor = { [0] = 300, 240, 180, 120, 80, 50 },
 }
 
-local container
+local container           -- the clock (DonMap places the buttons)
+local src                 -- (DonMap M3) the DonMap source "questdon"
 local nearAt             -- (1.3.5) where and for which radius the dots were made: { c, n, w, r }
-local free = {}          -- buttons not in use
 local entryPool = {}
-local entries = {}       -- { pin = displayPin, c, n, w (world position), btn = button while shown }
+local entries = {}       -- { pin = displayPin, c, n, w (world position), btn = button while shown (placed by DonMap) }
 local curMap, lastSig
-local last = {}          -- last position update: n, w, facing, radius, size
-local dirty = false
 local stats = { builds = 0, skipped = 0, updates = 0, shown = 0, radius = "?", rotate = "?", dressed = 0, nearGame = 0 }
 local RotateText
 
@@ -182,6 +185,42 @@ function ns.OnMinimap(x, y, halfSize, margin, shape)
   return x * x + y * y <= r * r
 end
 
+-- (31.10.2026, docs/LEISTUNG_PRUEFUNG_2026-10-31.md D17) The minimap's dot layers (the way's dots, PathDots.lua, and
+-- the walking routes, Walks.lua) each had their own clock and read the position, radius, size and facing themselves.
+-- MinimapDue: due when GetTime() enters a new slot of `every` seconds, so the layers tick on the same frame (the clock
+-- is only read once 80 % of `every` passed since the last tick: dt summed up, no call each frame);
+-- MinimapView: the position, once per frame (fresh: read again, for direct calls and the tests); MinimapGeometry adds
+-- radius, size, facing and shape, also once per frame and only when a layer has something to show. The table is reused.
+function ns.MinimapDue(state, every, dt)
+  local e = (state.e or every) + (tonumber(dt) or every)
+  state.e = e
+  if e < every * 0.8 then return false end
+  local slot = math.floor((ns.Num(ns.Value(GetTime)) or 0) / every)
+  if slot == state.slot then return false end
+  state.slot, state.e = slot, 0
+  return true
+end
+local view = {}
+function ns.MinimapView(fresh)
+  local now = ns.Num(ns.Value(GetTime))
+  if not fresh and now and view.at == now then return view end
+  view.at, view.geo = now, nil
+  local m, px, py = ns.PlayerPosition()
+  view.m, view.px, view.py = m, px, py
+  if m and px then view.pc, view.pn, view.pw = ns.WorldPos(m, px, py) else view.pc, view.pn, view.pw = nil, nil, nil end
+  return view
+end
+function ns.MinimapGeometry(v)
+  if v.geo then return v end
+  v.geo = true
+  v.radius = Minimap and ns.MinimapRadius() or nil
+  v.size = Minimap and ns.Num(ns.Value(Minimap.GetWidth, Minimap)) or nil
+  v.rotating = Minimap and Rotating() or false
+  v.facing = v.rotating and ns.Num(ns.Value(GetPlayerFacing)) or nil
+  v.shape = MinimapShape()
+  return v
+end
+
 ---------------------------------------------------------------------------
 -- Pin frames (our own buttons)
 ---------------------------------------------------------------------------
@@ -238,8 +277,8 @@ local function SetQuestIcon(tex, kind)
   tex:SetVertexColor(1, 1, 1)
 end
 
-local function NewPin()
-  local b = CreateFrame("Button", nil, container)
+local function NewPin(parent)
+  local b = CreateFrame("Button", nil, parent or Minimap)
   b:SetSize(QUEST_SIZE, QUEST_SIZE)
   b.icon = b:CreateTexture(nil, "OVERLAY")
   b.icon:SetAllPoints(b)
@@ -264,19 +303,6 @@ local function NewPin()
   return b
 end
 
-local function Take()
-  local b = table.remove(free)
-  return b or NewPin()
-end
-
-local function Give(e)
-  local b = e.btn
-  if not b then return end
-  b:Hide()
-  b.pin, b.members = nil, nil
-  e.btn = nil
-  free[#free + 1] = b
-end
 
 -- (1.3.8, F2) objects to click: a diamond in the quest colour with a dark edge, mobs keep the round dot
 local SQUARE, QUARTER = "Interface\\Buttons\\WHITE8X8", math.pi / 4
@@ -422,9 +448,8 @@ end
 -- not move (1.22: before, pins hidden for a moment, e.g. while the facing or
 -- the minimap size was secret, stayed hidden until the player moved).
 local function HideAll()
-  for _, e in ipairs(entries) do Give(e) end
+  if src then src:Release() end
   stats.shown = 0
-  dirty = true
 end
 
 ---------------------------------------------------------------------------
@@ -599,11 +624,21 @@ local function Display(pins, base)
   return display
 end
 
+-- (1.3.4, 1.3.7) givers the game marks itself, (1.3.5) entrances only close by: left out at the build (DonMap places)
+local DUNGEON_YARDS = math.sqrt(DUNGEON2)
+local function Leave(pin)
+  local kind = pin.kind
+  if ns.db.skipGameGivers and (kind == "available" or kind == "turnin") then return true, true end
+  if kind == "dungeon" and ns.db.dungeonPinsMinimap == false then return true end
+  return false
+end
+
 local function Rebuild(force, moved)
   if force then ForgetBase() end
   if not Enabled() or not curMap then
     HideAll()
     entries, lastSig = {}, nil
+    if src then src:SetPoints(entries, "none") end
     return
   end
   local pins, base = MinimapPins(curMap, moved)
@@ -611,111 +646,98 @@ local function Rebuild(force, moved)
   if not force and lastSig and sig == lastSig then stats.skipped = stats.skipped + 1 return end
   lastSig = sig
   -- (17.10., /qd mem) the entry tables of the last build are used again (a new one per pin at each build before)
+  if src then src:Release() end
   for _, e in ipairs(entries) do
-    Give(e)
     e.pin, e.head, e.members = nil, nil, nil
     entryPool[#entryPool + 1] = e
   end
   entries = {}
+  local near = 0
   for _, pin in ipairs(Display(pins, base)) do
     local c, n, w = ns.WorldPos(curMap, pin.x, pin.y)
     if c then
       local e = entryPool[#entryPool]
       if e then entryPool[#entryPool] = nil else e = {} end
       e.pin, e.c, e.n, e.w = pin, c, n, w
+      -- (DonMap M3) the world position DonMap places by (a bundle's middle after Rebundle)
+      e.wc, e.wn, e.ww = c, n, w
+      local leave, game = Leave(pin)
+      e.leave, e.hide = leave, leave
+      e.range = pin.kind == "dungeon" and DUNGEON_YARDS or nil
+      if game then near = near + 1 end -- the game's own blip marks this giver
       entries[#entries + 1] = e
     end
   end
   for i = #display, 1, -1 do display[i] = nil end
+  stats.nearGame = near
   stats.builds = stats.builds + 1
-  dirty = true
+  if src then src:SetPoints(entries, curMap .. "#" .. sig) end
 end
 
 ---------------------------------------------------------------------------
--- Positions
+-- Positions (DonMap M3: DonMap places the buttons; here what it needs)
 ---------------------------------------------------------------------------
-local function Update()
-  if not Enabled() then if stats.shown > 0 then HideAll() end return end
+-- What DonMap asks before it places the pins: the player's place, the view and the facing. Nothing (nil) hides the
+-- pins; they come back at the next update even when the player did not move (1.22). A new map builds the list anew,
+-- (1.3.5) moving on or zooming out the dots near you.
+local function View()
   local mapID, px, py = PlayerOnZone()
-  if not mapID then if stats.shown > 0 then HideAll() end curMap = nil return end
+  if not mapID then curMap = nil return nil end
   if mapID ~= curMap then curMap = mapID Rebuild(true) end
   local pc, pn, pw = ns.WorldPos(mapID, px, py)
-  if not pc then if stats.shown > 0 then HideAll() end return end
+  if not pc then return nil end
   local radius, source = ns.MinimapRadius()
   stats.radius = source
   local size = ns.Num(ns.Value(Minimap.GetWidth, Minimap))
-  if not size or size <= 0 or not radius then if stats.shown > 0 then HideAll() end return end
+  if not size or size <= 0 or not radius then return nil end
   local facing
   local rotating, rsource = Rotating()
   stats.rotating, stats.rotateSource = rotating, rsource
   if rotating then
     facing = ns.Num(ns.Value(GetPlayerFacing))
-    if not facing then if stats.shown > 0 then HideAll() end return end -- cannot place them right
+    if not facing then return nil end -- cannot place them right
   end
-  -- (1.3.5) moved on or zoomed out: the dots near you again
   if nearAt and (nearAt.c ~= pc or radius > nearAt.r * 1.05
       or (pn - nearAt.n) ^ 2 + (pw - nearAt.w) ^ 2 > (REBUILD_MOVE * nearAt.r) ^ 2) then
     stats.moved = (stats.moved or 0) + 1
     Rebuild(false, true)
   end
-  if not dirty and last.n == pn and last.w == pw and last.facing == facing and last.radius == radius and last.size == size then
-    return
-  end
-  last.n, last.w, last.facing, last.radius, last.size = pn, pw, facing, radius, size
-  dirty = false
-  stats.updates = stats.updates + 1
-  local half = size / 2
-  -- (1.3.5) new pins or another zoom: bundle again (the dressed buttons follow)
-  local k = half / radius
-  if bundledFor ~= entries or bundledK ~= k then
-    for _, e in ipairs(entries) do Give(e) end
-    Bundle(k, radius)
-    stats.bundles = (stats.bundles or 0) + 1
-  end
   local shape = MinimapShape()
-  -- cheap cut before the rotation: farther than the view's corner (square minimap)
-  local reach = radius * 1.5
-  local reach2 = reach * reach
-  local n, near = 0, 0
-  local leaveNear = ns.db.skipGameGivers
+  return pc, pn, pw, radius, size / 2, facing, shape
+end
+
+-- (1.3.5) new pins or another zoom: bundle again (DonMap gave the buttons back, the dressed buttons follow)
+local function Rebundle(k, radius)
+  Bundle(k, radius)
   for _, e in ipairs(entries) do
-    local x, y, inView
-    if n < MAX_SHOWN and e.c == pc and e.head == e then
-      local dn, de = e.dn - pn, -(e.dw - pw)
-      local d2 = dn * dn + de * de
-      local kind = e.pin.kind
-      -- (1.3.7, Daniel 13.10.: "still double !, when I come closer one goes away"; the game's own ! shows right at
-      -- the edge of the minimap, zoomed out fully) the game marks givers in the whole view: Questdon leaves them all
-      if leaveNear and (kind == "available" or kind == "turnin") then
-        near = near + 1 -- the game's own blip marks this giver
-      elseif kind == "dungeon" and (ns.db.dungeonPinsMinimap == false or d2 > DUNGEON2) then
-        -- (1.3.5) entrances only close by (and with their option on): no clutter at the edge
-      elseif d2 <= reach2 then
-        x, y = ns.MinimapOffset(dn, de, radius, half, facing)
-        inView = ns.OnMinimap(x, y, half, 4, shape)
-      end
-    end
-    if inView then
-      n = n + 1
-      local b = e.btn
-      if not b then
-        b = Take()
-        e.btn = b
-        b.members = e.members
-        Look(b, e.pin, e.scale)
-      end
-      Retint(b)
-      b:ClearAllPoints()
-      b:SetPoint("CENTER", container, "CENTER", x, y)
-      local close = b.kind == "objective" and e.dn and (e.dn - pn) ^ 2 + (e.dw - pw) ^ 2 < CLOSE_YARDS * CLOSE_YARDS or nil
-      if close ~= b.close then b.close = close b:SetAlpha(Alpha(b)) end
-      b:Show()
-    elseif e.btn then
-      Give(e)
-    end
+    e.wn, e.ww = e.dn, e.dw
+    e.hide = e.leave or e.head ~= e
   end
-  stats.shown = n
-  stats.nearGame = near
+  stats.bundles = (stats.bundles or 0) + 1
+end
+
+local function Dress(b, e)
+  e.btn = b -- the button while shown (DonMap keeps it as e.button too)
+  b.members = e.members
+  Look(b, e.pin, e.scale)
+end
+
+local function Place(b, e, dn, de)
+  Retint(b)
+  local close = b.kind == "objective" and dn * dn + de * de < CLOSE_YARDS * CLOSE_YARDS or nil
+  if close ~= b.close then b.close = close b:SetAlpha(Alpha(b)) end
+end
+
+local function Release(b, e)
+  e.btn = nil
+  b.pin, b.members = nil, nil
+end
+
+local function Update()
+  if not src then return end
+  local n, placed = src:Refresh("minimap")
+  if placed then stats.updates = stats.updates + 1 end
+  stats.shown = n or 0
 end
 
 ---------------------------------------------------------------------------
@@ -723,11 +745,17 @@ end
 ---------------------------------------------------------------------------
 local function Setup()
   if container or not Minimap then return end
+  if not (DonMapAPI and DonMapAPI.version and DonMapAPI.version >= 3) then return end -- DonMap 1.2 (## Dependencies)
+  -- the clock: own frame on the minimap, hidden while the option is off
   container = CreateFrame("Frame", "QuestdonMinimapPins", Minimap)
   container:SetPoint("CENTER", Minimap, "CENTER", 0, 0)
   container:SetSize(1, 1)
-  local level = ns.Num(ns.Value(Minimap.GetFrameLevel, Minimap))
-  if level then container:SetFrameLevel(level + 5) end
+  src = DonMapAPI.Register("questdon", {
+    -- miniLevel 6: above GatherMate (+ 5), as the pins sat before in their container at + 5
+    title = "Questdon", layer = 4, miniLevel = 6, world = false, minimap = Enabled,
+    sticky = true, clock = false, max = MAX_SHOWN,
+    newPin = NewPin, view = View, dress = Dress, place = Place, release = Release, rebundle = Rebundle,
+  })
   -- (1.23) Throttled before the protected call: no closure or table per frame.
   local elapsed = 0
   container:SetScript("OnUpdate", function(_, dt)
@@ -739,12 +767,13 @@ local function Setup()
   -- option off: the container is hidden, so its OnUpdate does not run at all
   container:SetShown(Enabled())
 end
+ns.MinimapSource = function() return src end -- (tests, /qd diag)
 
 -- force: options or commands changed something (rebuild at once).
 function ns.RefreshMinimapPins(force)
   if not container then Setup() end
   if not container then return end
-  if not Enabled() then HideAll() entries, lastSig = {}, nil container:Hide() return end
+  if not Enabled() then HideAll() entries, lastSig = {}, nil src:SetPoints(entries, "none") container:Hide() return end
   container:Show()
   Rebuild(force)
   Update()
@@ -785,4 +814,4 @@ ns.On("QUESTLINE_UPDATE", QueueFresh)
 ns.On("BAG_UPDATE_DELAYED", Queue) -- the base pins (quests to take, turn-ins, entrances) do not read the bags
 ns.On("PLAYER_LEVEL_UP", QueueFresh)
 for _, e in ipairs({ "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN" }) do ns.On(e, ForgetBase) end
-ns.On("ZONE_CHANGED_NEW_AREA", function() curMap = nil dirty = true end)
+ns.On("ZONE_CHANGED_NEW_AREA", function() curMap = nil end)

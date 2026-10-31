@@ -1,32 +1,4 @@
-Data/ATT_Quests.lua is generated from the quest data of All The Things (https://github.com/ATTWoWAddon/AllTheThings), used under the following license:
-
-MIT License
-
-Copyright (c) 2026 AllTheThings WoW Addon
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-----------------------------------------------------------------------
-
-Data/Walks.lua (patrol routes of quest NPCs) is generated from the waypoint tables creature_movement and
-creature_movement_template of the CMaNGOS classic database (https://github.com/cmangos/classic-db, commit ec4f596,
-Copyright (C) the CMaNGOS project and its contributors). That data is licensed under the GNU General Public License
-version 3; Data/Walks.lua is distributed under the same license, see Data/Walks-LICENSE-GPLv3.txt. The generator is
-qk-tools/walks.py in the Questdon workshop. Everything else in Questdon keeps its own license (LICENSE.txt).
+Questdon's quest data (All The Things, MIT; CMaNGOS classic-db and ForeverDB, GPL v3) is no longer part of Questdon:
+since 30.10.2026 it is the addon DonData, which Questdon needs (## Dependencies: DonData). Its licenses are in
+DonData/THIRD_PARTY_LICENSES.txt and in the head of each of its data files. Questdon's own code keeps its license (LICENSE.txt).
 World of Warcraft content and materials are trademarks and copyrights of Blizzard Entertainment.

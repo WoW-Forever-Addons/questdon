@@ -403,7 +403,7 @@ end
 -- second (the growth between two samples; a drop is the game's garbage collection). Out of combat only: the
 -- game's memory count walks all memory.
 ---------------------------------------------------------------------------
-local MEM_ADDONS = { "Questdon", "Questie", "Leveldon", "Geardon", "Leatrix_Plus", "ElvUI" }
+local MEM_ADDONS = { "Questdon", "DonData", "Questie", "Leveldon", "Geardon", "Leatrix_Plus", "ElvUI" }
 local memRun
 function ns.MemoryCheck(seconds)
   seconds = math.max(5, math.min(120, tonumber(seconds) or 30))

@@ -1,9 +1,10 @@
-# Questdon 1.3.11 (WoW Forever)
+# Questdon 1.4.0 (WoW Forever und WoW Classic Era)
 
 Quest- und Komforthilfe für World of Warcraft: Forever (Client "Camelot", Interface 16001).
 Questdon bringt eine eigene Questdatenbank mit (umgewandelt aus All The Things) und ergänzt Questie (Kartenmarkierungen), ersetzt es nicht. Questie wird nicht gebraucht.
 
 ## Installation
+Questdon braucht **DonData** (Questdatenbank und Gelerntes) und **DonMap** (Kartenpins, Minimap-Punkte, Richtungspfeil, Kompass). Die CurseForge-App installiert beide mit. Von Hand: die Ordner `Questdon`, `DonData` und `DonMap` nebeneinander in den AddOns-Ordner kopieren, ohne die beiden lädt Questdon nicht.
 Ordner `Questdon` nach `World of Warcraft\_classic_beta_\Interface\AddOns\` kopieren (nach dem Release den dann gültigen Forever-Ordner nutzen).
 Im Spiel: `/reload` oder neu einloggen. `/qd` öffnet Questdons Optionsfenster (Reiter mit Erklärungen und Beispielbildern, Suche), ebenso das Zahnrad in der Questliste und das Menü am Minimap-Knopf. Unter Esc > Optionen > Reiter "AddOns" > Questdon gibt es einen Knopf dorthin.
 Esc > "AddOns" ist nur die Liste zum Ein- und Ausschalten der Addons.

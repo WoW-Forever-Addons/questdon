@@ -1,5 +1,17 @@
 # Changes
 
+## 1.4.0
+
+- **New required addons: DonData and DonMap.** Questdon's quest database is now the addon **DonData**, its map pins, arrow and compass are the addon **DonMap**. The CurseForge app installs both for you. If you install by hand, download DonData and DonMap too and put their folders next to Questdon in `Interface\AddOns`, or Questdon does not load.
+- **Update note:** new files, so restart the game after updating (a /reload is not enough).
+- **Same quests, shared with Leveldon:** the quest data, and everything Questdon learned while you played, now live in DonData. It is loaded once for Questdon and Leveldon, and what you learned moves over by itself at your first login.
+- **Map, arrow and compass from DonMap:** the quest pins on the world map and the minimap, the direction arrow, the compass and the way back to your corpse are drawn by DonMap. They look and work as before. The inn, auction house, flight master and bank symbols now also show in combat and no longer grow when you zoom the minimap. `/donmap questdon` and `/donmap services` switch them off and on.
+- **Better reward advice:** the green frame now uses the same gear score as Geardon: the stats for your class and talent tree, plus armor and weapon damage. It marks the reward that gains the most over what you wear; the pick of other players of your class only shows when no reward beats your gear. No green frame on a one-hand weapon or a shield while you wear a two-hander. The gold coin for the most valuable reward stays.
+- **Lighter:** learned and shared data takes about a third of the memory it took, quest texts are only read when you first need one (about 1 MB less after loading), turn-in names of finished quests no longer read all texts, and the minimap waypoints, the quest list and the XP bar no longer run timers of their own.
+- **More Forever quests known:** quest IDs from the Forever game client fill gaps in the data.
+- **Spawn fixes:** the Vile Fin murlocs of Silverpine Forest and the owlbeasts of Winterspring no longer show on the edge of the neighbouring zone; on Classic Era the Magenta Cap Clusters at the Uldaman entrance are in the Badlands.
+- **Shared base:** options, minimap button and window style come from DonCore, the common base of the Don addons. Your button position and settings stay.
+
 ## 1.3.13
 
 - **Update note:** new files, so restart the game after updating (a /reload is not enough).

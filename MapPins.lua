@@ -1013,9 +1013,9 @@ end
 function ns.MapPinStats() return stats end
 
 local setupFailed = false
-local builtMap -- (1.3.5) the map whose pins are drawn now (kept in combat)
-local builtCount = 0 -- (23.10.) pins acquired by the last build (unchanged map: kept only while all are there)
-local forceBuild = false -- (23.10.) the pre-combat build draws with the map closed
+-- (DonMap M3b, 30.10.2026) the map's data provider is DonMap's (DonMapAPI.NewWorldProvider): it keeps the rules for
+-- combat (the pins of the map last drawn stay), the closed map, the build right before combat and "all our pins still on
+-- the canvas"; what is drawn stays here (build, same, zoomed below)
 -- (23.10., Daniel's /qd mem with Leveldon: "map" 69 KB a second at 0.7 calls, also with the map closed) who asks the
 -- map to draw: while /qd mem runs, each call is counted as "map from <file:line>" (the first place outside Questdon)
 local function MapCaller(closed)
@@ -1028,17 +1028,6 @@ local function MapCaller(closed)
     end
   end
   ns.MemCount("map from " .. at .. (closed and " (closed)" or ""))
-end
--- our pins still on the canvas (nil: cannot be told, then the map is drawn anew)
-local function OurPinCount(map)
-  if not map.EnumeratePinsByTemplate then return nil end
-  local n = 0
-  local ok = pcall(function()
-    for _, t in ipairs({ QUEST_TEMPLATE, OBJECTIVE_TEMPLATE, AREA_TEMPLATE }) do
-      for _ in map:EnumeratePinsByTemplate(t) do n = n + 1 end
-    end
-  end)
-  return ok and n or nil
 end
 -- (Daniel 26.10.: "dass jeder die selber skalieren kann") one factor for all our world map pins, 25 to 200 %
 function ns.MapPinMult()
@@ -1395,62 +1384,53 @@ function Setup()
     if self.SetAlpha then self:SetAlpha(area.dimmed and 0.5 or 1) end
   end
 
-  -- The map canvas calls these: protected, so an error here never breaks the map.
-  local p = CreateFromMixins(MapCanvasDataProviderMixin)
-  p.RemoveAllData = ns.Guard("map", function(self)
-    lastSig, builtMap = nil, nil
-    self:GetMap():RemoveAllPinsByTemplate(QUEST_TEMPLATE)
-    self:GetMap():RemoveAllPinsByTemplate(OBJECTIVE_TEMPLATE)
-    self:GetMap():RemoveAllPinsByTemplate(AREA_TEMPLATE)
-  end)
-  p.RefreshAllData = ns.Guard("map", function(self)
-    -- (1.3.5, Daniel 10.10.: "entrance pins are not shown on the map in combat") New pins cannot be made in
-    -- combat: the map canvas calls SetPassThroughButtons on every pin it hands out, and that may not be called
-    -- by addon code in combat (#nocombat since 10.1.5). So the pins of the map last drawn stay as they are
-    -- when that map is opened again in combat; only another map's pins go (they would stand in wrong places).
-    -- Entering combat with the map closed, the player's zone is drawn beforehand (PLAYER_REGEN_DISABLED below).
-    if InCombatLockdown() then
-      local m = ns.Num(self:GetMap():GetMapID())
-      if m and m == builtMap then stats.keptInCombat = (stats.keptInCombat or 0) + 1 return end
-      self:RemoveAllData()
-      return
-    end
-    ns.RedrawGameIfPending() -- (18.10.) the option went off: the game draws its markers again once
-    local map = self:GetMap()
-    local closed = map.IsShown and not ns.True(ns.Value(map.IsShown, map))
-    MapCaller(closed)
-    -- (23.10., Daniel's /qd mem: the map drew its pins also while closed) nothing to see: drawn when the map opens (the
-    -- map asks every provider then; OnShow below as a fallback). The pre-combat build (map closed) is the exception.
-    if closed and not forceBuild then
-      stats.closedSkips = (stats.closedSkips or 0) + 1
-      lastSig, builtMap, precomputed = nil, nil, nil
-      return
-    end
-    local mapID = ns.Num(map:GetMapID())
-    if not mapID then self:RemoveAllData() precomputed = nil return end
-    local pins, sig
+  -- What the map draws (DonMap's provider calls these; protected, so an error here never breaks the map).
+  -- The pins of one request: worked out once, by "same" or by "build" (from the event path's precomputed list if it has one).
+  local curMap, curPins, curSig
+  local function PinsOf(mapID)
     if precomputed and precomputed.mapID == mapID then
-      pins, sig = precomputed.pins, precomputed.sig
-    else
-      if ns.HarvestQuestLines then ns.HarvestQuestLines(mapID) end
-      pins = ns.PinsForMap(mapID)
+      local pc = precomputed
+      precomputed = nil
+      return pc.pins, pc.sig, true
     end
     precomputed = nil
+    if ns.HarvestQuestLines then ns.HarvestQuestLines(mapID) end
+    return ns.PinsForMap(mapID)
+  end
+  local function Scales(map)
+    local canvas = map.GetCanvasScale and ns.Value(map.GetCanvasScale, map) or nil
+    return ns.db.clusterPins and canvas or nil, canvas
+  end
+  local opts = { templates = { QUEST_TEMPLATE, OBJECTIVE_TEMPLATE, AREA_TEMPLATE }, stats = stats }
+  opts.ask = ns.Guard("map", function(prov, map, closed)
+    ns.RedrawGameIfPending() -- (18.10.) the option went off: the game draws its markers again once
+    MapCaller(closed)
+    -- (23.10., Daniel's /qd mem: the map drew its pins also while closed) nothing to see: drawn when the map opens
+    if (closed and not prov:Forced()) or prov:Off() then precomputed = nil end
+  end)
+  opts.removed = function() lastSig = nil end
+  -- (23.10.) the map asks again (the game refreshes all its providers) and nothing changed: same map, pins, zoom steps
+  -- (DonMap keeps them while all our pins are still on the canvas)
+  opts.same = ns.Guard("map", function(prov, map, mapID)
+    local pins, sig, pre = PinsOf(mapID)
+    curMap, curPins, curSig = mapID, pins, sig
+    if pre or not lastSig then return false end
+    local scale, canvas = Scales(map)
+    if ns.ClusterBucket(scale) ~= clusterBucket or ns.ClusterBucket(canvas) ~= objBucket then return false end
+    curSig = ns.PinsSignature(mapID, pins)
+    return curSig == lastSig
+  end)
+  opts.kept = function()
+    curMap, curPins, curSig = nil, nil, nil
+    ns.QueueClearGamePOIs() -- (17.10.) option hideGamePOIs: the game drew its own markers again
+  end
+  opts.build = ns.Guard("map", function(prov, map, mapID)
+    local pins, sig
+    if curMap == mapID then pins, sig = curPins, curSig else pins, sig = PinsOf(mapID) end
+    curMap, curPins, curSig = nil, nil, nil
     -- (1.21) quest givers with several quests: one pin (display only)
     -- (1.25) and no second "!" where the game draws one
-    local canvas = map.GetCanvasScale and ns.Value(map.GetCanvasScale, map) or nil
-    local scale = ns.db.clusterPins and canvas or nil
-    -- (23.10.) the map asks again (the game refreshes all its providers) and nothing changed: same map, pins, zoom
-    -- steps, and all our pins still on the canvas: they stay
-    if not sig and mapID == builtMap and lastSig and ns.ClusterBucket(scale) == clusterBucket and ns.ClusterBucket(canvas) == objBucket then
-      sig = ns.PinsSignature(mapID, pins)
-      if sig == lastSig and OurPinCount(map) == builtCount then
-        stats.sameSkips = (stats.sameSkips or 0) + 1
-        ns.QueueClearGamePOIs() -- (17.10.) option hideGamePOIs: the game drew its own markers again
-        return
-      end
-    end
-    self:RemoveAllData()
+    local scale, canvas = Scales(map)
     clusterBucket = ns.ClusterBucket(scale)
     -- (1.3.5) dense objective dots: fewer markers (quest givers and turn-ins are never thinned)
     objBucket = ns.ClusterBucket(canvas)
@@ -1476,37 +1456,28 @@ function Setup()
       zoomCache[zkey] = { display, areas, objThinned }
       zoomCacheN = zoomCacheN + 1
     end
-    local count = 0
-    for _, area in ipairs(areas or {}) do self:GetMap():AcquirePin(AREA_TEMPLATE, area) count = count + 1 end
+    for _, area in ipairs(areas or {}) do prov:Acquire(AREA_TEMPLATE, area) end
     ns.QueueClearGamePOIs() -- (17.10.) option hideGamePOIs
     for _, pin in ipairs(display) do
       -- (1.3.5) dungeon entrances only with their option (the minimap has its own)
       if not (pin.kind == "dungeon" and ns.db.dungeonPins == false) then
-        self:GetMap():AcquirePin(pin.kind == "objective" and OBJECTIVE_TEMPLATE or QUEST_TEMPLATE, pin)
-        count = count + 1
+        prov:Acquire(pin.kind == "objective" and OBJECTIVE_TEMPLATE or QUEST_TEMPLATE, pin)
       end
     end
-    stats.builds = stats.builds + 1
-    builtMap, builtCount = mapID, count
     lastSig = sig
-  end)
-  -- (23.10.) the map opened: drawn now if a call while it was closed was skipped (the map normally asks itself)
-  p.OnShow = ns.Guard("map", function(self)
-    if not builtMap and self:GetMap() and not InCombatLockdown() then self:RefreshAllData() end
+    return true
   end)
   -- (1.28) zoomed: only with "Merge markers" on, and only when the rounded zoom step changed
   -- (1.3.5) and when objective dots were thinned for another zoom step (the budget follows the zoom)
-  p.OnCanvasScaleChanged = ns.Guard("map", function(self)
-    if InCombatLockdown() or not self:GetMap() then return end
+  opts.zoomed = ns.Guard("map", function(prov, map, scale)
     local thin = objThinned and (ns.db.thinObjectives ~= false or ns.SymbolsOn())
-    if not ns.db.clusterPins and not thin then return end
-    local map = self:GetMap()
-    local scale = map.GetCanvasScale and ns.Value(map.GetCanvasScale, map) or nil
-    local bucket = ns.ClusterBucket(scale)
-    if (ns.db.clusterPins and bucket ~= clusterBucket) or (thin and bucket ~= objBucket) then self:RefreshAllData() end
+    if not ns.db.clusterPins and not thin then return false end
+    local bucket = ns.ClusterBucket(ns.Num(scale))
+    return (ns.db.clusterPins and bucket ~= clusterBucket) or (thin and bucket ~= objBucket) or false
   end)
-  local ok = pcall(WorldMapFrame.AddDataProvider, WorldMapFrame, p)
-  if ok then provider = p else setupFailed = true end
+  if not (DonMapAPI and (DonMapAPI.version or 0) >= 4) then setupFailed = "old DonMap" return end
+  provider = DonMapAPI.NewWorldProvider("questdon", opts)
+  if not provider then setupFailed = true end
 end
 
 -- (17.10., Daniel: "the game's own markers are annoying, build the option in") Option hideGamePOIs (off): the game's
@@ -1514,31 +1485,8 @@ end
 -- the game's code (Questdon's rule): after our own refresh of the map and after the quest events the game redraws
 -- them on, its two quest providers are asked to remove their pins (a moment later, so theirs ran first). Turned
 -- off, they are asked to draw again.
-local function GameQuestProviders()
-  local out = {}
-  local list = WorldMapFrame and WorldMapFrame.dataProviders
-  if type(list) ~= "table" then return out end
-  for dp in pairs(list) do
-    for _, name in ipairs({ "QuestDataProviderMixin", "QuestBlobDataProviderMixin" }) do
-      local m = rawget(_G, name)
-      if type(m) == "table" and type(dp) == "table" and m.RefreshAllData and dp.RefreshAllData == m.RefreshAllData then
-        out[#out + 1] = dp
-      end
-    end
-  end
-  return out
-end
-ns.GameQuestProviders = GameQuestProviders -- (tests)
--- (17.10., Daniel's picture: the game's markers and blue area still there) also the pins themselves, by their
--- templates (the game's quest markers and quest areas; never Questdon's own, never the "!" of quests to pick up)
-local GAME_TEMPLATES = { QuestPinTemplate = true, QuestBlobPinTemplate = true }
-local function GameTemplate(t)
-  return type(t) == "string" and not t:find("^Questdon") and (GAME_TEMPLATES[t] or t:find("QuestBlob") ~= nil)
-end
-ns.IsGameQuestTemplate = GameTemplate -- (tests)
-local clearStats = { providers = 0, templates = 0, runs = 0 }
-local hiddenBlobs = setmetatable({}, { __mode = "k" }) -- the game's quest area pins Questdon hid
-function ns.GamePOIStats() return clearStats end
+-- (DonMap M3b, 30.10.2026) the work is DonMap's (DonMapAPI.HideGameQuestMarks, WorldProvider.lua); Questdon says when
+-- (the option) and which of the game's round markers stay (KeepPin), and draws the turn-ins itself when none can stay.
 -- (18.10.) Of the game's round markers (QuestPinTemplate) the ? of finished quests stay: a pin is kept when its quest
 -- is complete. true: keep it, false: remove it, nil: not to be told (the pin carries no quest): then everything goes as
 -- before and Questdon draws the turn-in "?" itself (ns.gameKeepsTurnIns = false).
@@ -1554,130 +1502,35 @@ local function SetKeeps(v)
   -- world map, and only if its pins changed (was a full redraw of map, minimap and nameplates)
   if ns.QueueRefresh then ns.QueueRefresh("map") end
 end
-function ns.ClearGamePOIs()
-  if not (ns.db and ns.db.hideGamePOIs) or InCombatLockdown() then return 0 end
-  local n = 0
-  local blobMixin = rawget(_G, "QuestBlobDataProviderMixin")
-  for _, dp in ipairs(GameQuestProviders()) do
-    -- the quest provider keeps its ? pins (taken one by one below), unless they cannot be told apart
-    local isBlob = type(blobMixin) == "table" and blobMixin.RefreshAllData and dp.RefreshAllData == blobMixin.RefreshAllData
-    if (isBlob or ns.gameKeepsTurnIns == false) and dp.RemoveAllData and pcall(dp.RemoveAllData, dp) then n = n + 1 end
-  end
-  clearStats.providers, clearStats.templates, clearStats.runs = n, 0, clearStats.runs + 1
-  local map = WorldMapFrame
-  if map and type(map.pinPools) == "table" and map.RemoveAllPinsByTemplate then
-    for t in pairs(map.pinPools) do
-      if GameTemplate(t) then
-        if t:find("QuestBlob") then
-          -- (17.10., Daniel: "with the game's map picked, the game's areas were gone anyway") the quest area is one
-          -- pin its provider keeps for good: given back to the pool it never came again. Only hidden now.
-          if map.EnumeratePinsByTemplate then
-            local ok = pcall(function() for pin in map:EnumeratePinsByTemplate(t) do pin:Hide() hiddenBlobs[pin] = true end end)
-            if ok then clearStats.templates = clearStats.templates + 1 end
-          end
-        else
-          local done = false
-          if ns.gameKeepsTurnIns ~= false and map.EnumeratePinsByTemplate and map.RemovePin then
-            local drop, unknown, seen = nil, false, 0
-            local ok = pcall(function()
-              for pin in map:EnumeratePinsByTemplate(t) do
-                seen = seen + 1
-                local keep = KeepPin(pin)
-                if keep == nil then unknown = true end
-                if not keep then drop = drop or {} drop[#drop + 1] = pin end
-              end
-            end)
-            if ok and not unknown then
-              local all = true
-              for _, pin in ipairs(drop or {}) do if not pcall(map.RemovePin, map, pin) then all = false end end
-              if all then done = true if seen > 0 then SetKeeps(true) end end -- (true only once pins were seen that carry their quest)
-            end
-          end
-          if not done then
-            SetKeeps(false) -- the pins cannot be told apart: all go, Questdon draws the turn-ins
-            if pcall(map.RemoveAllPinsByTemplate, map, t) then clearStats.templates = clearStats.templates + 1 end
-          else
-            clearStats.templates = clearStats.templates + 1
-          end
-        end
-      end
-    end
-  end
-  return n + clearStats.templates
+local DM = DonMapAPI and (DonMapAPI.version or 0) >= 4 and DonMapAPI -- DonMap 1.1 with M3b (## Dependencies)
+if DM then
+  DM.HideGameQuestMarks("questdon", {
+    on = function() return ns.db and ns.db.hideGamePOIs and true or false end,
+    keep = KeepPin, keeps = SetKeeps, keeping = function() return ns.gameKeepsTurnIns end, prefix = "Questdon",
+  })
+else -- an older DonMap: no map pins, nothing to clear
+  local function None() return 0 end
+  DM = { GameQuestProviders = function() return {} end, IsGameQuestTemplate = function() return false end,
+    GameQuestMarkStats = function() return { providers = 0, templates = 0, runs = 0 } end, ClearGameQuestMarks = None,
+    QueueClearGameQuestMarks = None, RedrawGameIfPending = None, ApplyGameQuestMarks = None,
+    GameRedrawPending = function() return false end, HiddenGameBlobs = function() return {} end, GameMarkShown = function() return false end }
 end
-local clearQueued = false
-function ns.QueueClearGamePOIs()
-  if clearQueued or not (ns.db and ns.db.hideGamePOIs) then return end
-  clearQueued = true
-  ns.After(0.05, function() clearQueued = false ns.ClearGamePOIs() end)
-end
-for _, e in ipairs({ "QUEST_LOG_UPDATE", "QUEST_POI_UPDATE", "SUPER_TRACKING_CHANGED", "ZONE_CHANGED_NEW_AREA" }) do
-  ns.On(e, function() if WorldMapFrame and WorldMapFrame.IsShown and WorldMapFrame:IsShown() then ns.QueueClearGamePOIs() end end)
-end
--- the option changed: take them away now, or let the game draw them again
--- (18.10., Daniel: "the game's map picked in the start window, and everything was missing") the game's markers came
--- back only through the two providers Questdon recognises by their mixin; those Questdon had taken by template stayed
--- away. Now every provider of the map draws anew (the map's own RefreshAllDataProviders), right away and once more
--- the next time the map is drawn (the map may be closed while the option changes).
-local gameRedraw = false
-local function RedrawGame()
-  local map = WorldMapFrame
-  for pin in pairs(hiddenBlobs) do pcall(pin.Show, pin) hiddenBlobs[pin] = nil end
-  for _, dp in ipairs(GameQuestProviders()) do if dp.RefreshAllData then pcall(dp.RefreshAllData, dp) end end
-  if map and map.RefreshAllDataProviders then pcall(map.RefreshAllDataProviders, map) end
-end
-function ns.GameRedrawPending() return gameRedraw end -- (tests)
-function ns.RedrawGameIfPending()
-  if not gameRedraw or (ns.db and ns.db.hideGamePOIs) or InCombatLockdown() then return end
-  gameRedraw = false
-  ns.After(0.05, function() if not (ns.db and ns.db.hideGamePOIs) and not InCombatLockdown() then RedrawGame() end end)
-end
-function ns.ApplyGamePOIs()
-  if ns.db.hideGamePOIs then gameRedraw = false ns.ClearGamePOIs() return end
-  gameRedraw = true
-  if InCombatLockdown() then return end
-  RedrawGame()
-end
-ns.HiddenGameBlobs = function() return hiddenBlobs end -- (tests)
-
--- (18.10., Daniel's picture: "sometimes the game's trackers and ? come on the map, then they are gone again") the
--- game draws its markers on every map change and quest event, and they were taken away only 0.05 s later (after
--- the queue above), so they flashed. An own small frame (no hook) now looks every 0.03 s while the world map is
--- open and the option is on: as soon as a game marker is shown it is cleared, in the same frame or the next.
--- It only reads the map's pools (no new tables), nothing runs with the option off or the map closed.
-local function GameMarkShown(map)
-  local pools = map.pinPools
-  if type(pools) ~= "table" then return false end
-  for t, pool in pairs(pools) do
-    if GameTemplate(t) and type(pool) == "table" and type(pool.activeObjects) == "table" then
-      local blob = t:find("QuestBlob") ~= nil
-      for pin in pairs(pool.activeObjects) do
-        if not blob then
-          if ns.gameKeepsTurnIns == false or KeepPin(pin) ~= true then return true end
-        elseif type(pin) == "table" and pin.IsShown and pin:IsShown() then return true end
-      end
-    end
-  end
-  return false
-end
-ns.GameMarkShown = GameMarkShown -- (tests)
-local function WatchCheck(map) if GameMarkShown(map) then ns.ClearGamePOIs() end end
-local watch = CreateFrame("Frame")
-local watchElapsed = 0
-watch:SetScript("OnUpdate", function(_, dt)
-  if not (ns.db and ns.db.hideGamePOIs) then return end
-  watchElapsed = watchElapsed + (tonumber(dt) or 0)
-  if watchElapsed < 0.03 then return end
-  watchElapsed = 0
-  local map = WorldMapFrame
-  if not (map and map.IsShown and map:IsShown()) or InCombatLockdown() then return end
-  ns.SafeCall("game markers watch", WatchCheck, map) -- (23.10.) no closure every 0.03 s
-end)
+ns.GameQuestProviders = DM.GameQuestProviders -- (tests)
+ns.IsGameQuestTemplate = DM.IsGameQuestTemplate -- (tests)
+ns.GamePOIStats = DM.GameQuestMarkStats
+ns.ClearGamePOIs = DM.ClearGameQuestMarks
+ns.QueueClearGamePOIs = DM.QueueClearGameQuestMarks
+ns.RedrawGameIfPending = DM.RedrawGameIfPending
+ns.ApplyGamePOIs = DM.ApplyGameQuestMarks
+ns.GameRedrawPending = DM.GameRedrawPending -- (tests)
+ns.HiddenGameBlobs = DM.HiddenGameBlobs -- (tests)
+ns.GameMarkShown = DM.GameMarkShown -- (tests)
 
 function ns.MapProvider() return provider end -- (tests)
 -- For /qd diag: are the map pins set up?
 function ns.MapPinsState()
   if provider then return "ready" end
+  if setupFailed == "old DonMap" then return "DonMap too old (update DonMap)" end
   if setupFailed then return "failed (AddDataProvider)" end
   if not WorldMapFrame then return "waiting for the world map" end
   return "not available (map APIs missing)"
@@ -1720,6 +1573,7 @@ end
 local function RefreshIfChanged()
   if not provider then Setup() end
   if not (provider and provider:GetMap() and WorldMapFrame:IsShown()) then return end
+  if provider:Off() then return end -- (review) /donmap questdon off: nothing to work out
   if InCombatLockdown() then stats.combat = (stats.combat or 0) + 1 return end
   local mapID = ns.Num(provider:GetMap():GetMapID())
   if mapID then
@@ -1755,19 +1609,7 @@ loader:SetScript("OnEvent", ns.Guard("ADDON_LOADED", function(self, _, name)
   end
 end))
 ns.On("PLAYER_REGEN_ENABLED", Queue)
--- (1.3.5) Combat starts (the lockdown begins right after this event): with the world map closed and set to
--- the player's zone, its pins are drawn now, unless they are drawn already, so the map opened in combat
--- shows them (entrances included).
-ns.On("PLAYER_REGEN_DISABLED", function()
-  if not provider or InCombatLockdown() or WorldMapFrame:IsShown() or not provider:GetMap() then return end
-  local m = ns.Num(provider:GetMap():GetMapID())
-  local zone = C_Map and C_Map.GetBestMapForUnit and ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
-  if not m or m ~= zone or m == builtMap then return end
-  stats.preCombat = (stats.preCombat or 0) + 1
-  forceBuild = true
-  provider:RefreshAllData()
-  forceBuild = false
-end)
+-- (1.3.5) the build right before combat (map closed, set to the player's zone) is DonMap's (WorldProvider.lua)
 ns.On("QUEST_LOG_UPDATE", Queue)
 -- (Questdon review 5) "Only for tracked quests": another quest tracked changes which dots show (the minimap kept the
 -- old quest's dots until a quest or bag event)

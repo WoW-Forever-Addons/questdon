@@ -116,9 +116,7 @@ function ns.MigrateLook(db)
   local smin, smax = Style.SCALE_MIN, Style.SCALE_MAX
   local d = ns.defaults or {}
   local arrowDefault, xpDefault = d.arrowScale or 1.15, d.xpBarScale or 1.45
-  if version < 1 then
-    -- (29.10.2026) the old panel's values went with Panel.lua
-  end
+  -- (29.10.2026) version 0 had the old panel's values: they went with Panel.lua
   -- (1.25.1) new defaults: arrow 115 %, XP bar 145 %. A stored old default
   -- (1) follows the new one, an own size stays (clamped to 0.6-1.6).
   if db.arrowScale == nil or tonumber(db.arrowScale) == 1 then db.arrowScale = arrowDefault end

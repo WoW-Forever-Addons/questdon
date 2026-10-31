@@ -121,9 +121,16 @@ local function TurnInName(id)
   local fin = ns.QUEST_ENDS and ns.QUEST_ENDS[id]
   local name = fin and fin[4] and ns.LocalNpcName and ns.LocalNpcName(fin[4])
   if name then return name end
+  -- (31.10.2026, C11) the English names DonData keeps outside the texts' string (Data/Quest_Texts.lua), so a login
+  -- with finished quests in the list does not read the texts (about 1 MB); the texts only once something else read them
+  name = ns.QuestEnderName and ns.QuestEnderName(id)
+  if name then return name end
+  local T = ns.QUEST_TEXTS
+  if type(T) ~= "table" or rawget(T, "enUS") == nil then return nil end
   local qt = ns.QuestText and ns.QuestText(id)
   return qt and qt.e or nil
 end
+ns.TrackerTurnInName = TurnInName -- (tests)
 
 local function Short(o)
   if not o then return "" end
@@ -1668,7 +1675,9 @@ ns.OnInit(function()
   Create()
   ns.NewTicker(1, function() ns.UpdateTracker() end)     -- distances
   ns.NewTicker(0.2, function() ns.SafeCall("trackerNeedles", TurnNeedles) end)
-  ns.NewTicker(0.5, function() ns.SafeCall("trackerBlizz", ApplyBlizzTracker) end) -- the game shows it again
+  -- (31.10.2026, LEISTUNG_PRUEFUNG B9) no own 0.5 s ticker for Blizzard's tracker any more: ns.UpdateTracker applies it
+  -- on every refresh (quest log, zone, bags, group ...) and with the distances every second, which also catches the
+  -- game showing it again; PLAYER_REGEN_ENABLED below after a fight
   ns.After(0, function() ns.UpdateTracker(true) end)
 end)
 ns.On("QUEST_LOG_UPDATE", Queue)

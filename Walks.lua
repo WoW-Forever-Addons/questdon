@@ -9,13 +9,16 @@ local _, ns = ...
 -- Own frames only (like PathDots.lua): a container on the minimap and an own data provider with an own pin template
 -- on the world map. Cost: the dots of a route are worked out once; which NPCs matter is read again only when the
 -- quest log, the map or the level changed, at most every RELEVANT_EVERY seconds.
+-- (31.10.2026, LEISTUNG_PRUEFUNG D17) the minimap's dots every 0.2 s (was 0.1 s), on the same frame as the way's dots
+-- and with the position read once for both (ns.MinimapDue, ns.MinimapView in Minimap.lua); placed again only when
+-- you, the minimap or the NPCs that matter changed.
 ---------------------------------------------------------------------------
 local SPACING = 12          -- yards between two dots
 local MAX_MAP_DOTS = 400    -- on the world map, all routes together
 local MAX_DOTS = 80         -- on the minimap
 local DOT_PX, RING_PX = 4, 7
 local MIN_GAP_PX = 8
-local UPDATE_INTERVAL = 0.1
+local UPDATE_INTERVAL = 0.2
 local RELEVANT_EVERY = 30 -- (17.10., /qd mem: 5 s before) the log, the level and the map count at once anyway
 local COLOR = { 0.92, 0.14, 0.1, 1 }
 local RING = { 0.08, 0.02, 0.02, 0.75 }
@@ -292,26 +295,28 @@ local function Texture(i)
   return t
 end
 local SetupMinimap
-local function UpdateMinimap()
+local placed = {} -- (D17) what the shown dots were placed for
+local function UpdateMinimap(fresh)
   if not container then SetupMinimap() end
   if not container then return end
-  if not Enabled() or ns.db.minimapPins == false or not (Minimap and ns.MinimapRadius) then HideFrom(1) return end
-  local m, px, py = ns.PlayerPosition()
-  if not (m and px) or not NpcsOnMap(m) then HideFrom(1) return end
-  local npcs = RelevantNpcs(m).npcs
-  if #npcs == 0 then HideFrom(1) return end
-  local pc, pn, pw = ns.WorldPos(m, px, py)
-  local radius = ns.MinimapRadius()
-  local size = ns.Num(ns.Value(Minimap.GetWidth, Minimap))
-  if not (pc and radius and size and size > 0) then HideFrom(1) return end
-  local facing
-  if ns.MinimapRotating and ns.MinimapRotating() then
-    facing = ns.Num(ns.Value(GetPlayerFacing))
-    if not facing then HideFrom(1) return end
-  end
+  if not Enabled() or ns.db.minimapPins == false or not (Minimap and ns.MinimapRadius) then HideFrom(1) placed.r = nil return end
+  local v = ns.MinimapView(fresh)
+  local m = v.m
+  if not (m and v.px) or not NpcsOnMap(m) then HideFrom(1) placed.r = nil return end
+  local rel = RelevantNpcs(m)
+  local npcs = rel.npcs
+  if #npcs == 0 then HideFrom(1) placed.r = nil return end
+  ns.MinimapGeometry(v)
+  local pc, pn, pw = v.pc, v.pn, v.pw
+  local radius, size, facing = v.radius, v.size, v.facing
+  if not (pc and radius and size and size > 0) then HideFrom(1) placed.r = nil return end
+  if v.rotating and not facing then HideFrom(1) placed.r = nil return end
+  local shape = v.shape
+  if placed.r == rel and placed.pn == pn and placed.pw == pw and placed.radius == radius and placed.size == size
+      and placed.facing == facing and placed.shape == shape then return end
+  placed.r, placed.pn, placed.pw, placed.radius, placed.size, placed.facing, placed.shape = rel, pn, pw, radius, size, facing, shape
   local half = size / 2
   local stride = math.max(1, math.ceil(MIN_GAP_PX / (SPACING * half / radius)))
-  local shape = type(GetMinimapShape) == "function" and ns.Value(GetMinimapShape) or "ROUND"
   local n = 0
   for _, npc in ipairs(npcs) do
     local d = RouteDots(npc, m)
@@ -339,7 +344,7 @@ local function UpdateMinimap()
   shown = n
 end
 ns.WalkMinimapShown = function() return shown end -- (tests)
-ns.WalkMinimapUpdate = function() ns.SafeCall("walks", UpdateMinimap) end -- (tests)
+ns.WalkMinimapUpdate = function() ns.SafeCall("walks", UpdateMinimap, true) end -- (tests)
 
 function SetupMinimap()
   if container or not Minimap then return end
@@ -348,11 +353,9 @@ function SetupMinimap()
   container:SetSize(1, 1)
   local level = ns.Num(ns.Value(Minimap.GetFrameLevel, Minimap))
   if level then container:SetFrameLevel(level + 3) end -- under the way's dots and the quest pins
-  local elapsed = 0
+  local clock = {}
   container:SetScript("OnUpdate", function(_, dt)
-    elapsed = elapsed + (tonumber(dt) or 0)
-    if elapsed < UPDATE_INTERVAL then return end
-    elapsed = 0
+    if not ns.MinimapDue(clock, UPDATE_INTERVAL, dt) then return end
     ns.SafeCall("walks", UpdateMinimap)
   end)
 end
@@ -445,7 +448,7 @@ ns.WalkTickMap = TickMap -- (tests)
 function ns.RefreshWalks()
   relevant = {}
   if provider and provider:GetMap() then provider:RefreshAllData() end
-  ns.SafeCall("walks", UpdateMinimap)
+  ns.SafeCall("walks", UpdateMinimap, true)
 end
 
 ns.OnInit(function()

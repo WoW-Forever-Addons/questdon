@@ -266,6 +266,59 @@ local function Picks(questID, class)
   return out
 end
 
+---------------------------------------------------------------------------
+-- (31.10.2026, Daniel: one judgement of gear in DonData, offen/sonstiges.md "Gemeinsame Ausrüstungsbewertung") With
+-- DonDataAPI 3 the glow goes by DonData's value (stats with the same weights, armor, weapon DPS, item level last), the
+-- same judgement as Geardon's arrow: the usable choice that gains the most over what you wear in its slot. The players'
+-- picks come after it (Daniel 31.10.: "Bewertung zuerst"), only when no choice is better than what you wear. Without
+-- DonDataAPI 3 the old order below.
+---------------------------------------------------------------------------
+local twoHands = {}
+local function Shared()
+  local api = rawget(_G, "DonDataAPI")
+  if type(api) == "table" and (tonumber(api.version) or 0) >= 3 and type(api.GearCompare) == "function" then return api end
+  return nil
+end
+local DUAL = { 16, 17 }
+local ONE_HAND = { INVTYPE_WEAPON = true, INVTYPE_WEAPONMAINHAND = true, INVTYPE_WEAPONOFFHAND = true,
+  INVTYPE_SHIELD = true, INVTYPE_HOLDABLE = true }
+local function SharedBest(api, n, class, level)
+  local bestI, bestGain
+  -- (Kritikrunde) a one-hand or off-hand item alone would take your two-hand weapon away: no glow (Geardon: "twohand")
+  local mh = ns.Value(GetInventoryItemLink, "player", 16)
+  local _, mhLoc = Instant(type(mh) == "string" and mh or nil)
+  for i = 1, n do
+    local link = ns.Value(GetQuestItemLink, "choice", i)
+    local s, slots = Score(link, class, level) -- nil: your class cannot use it
+    local _, equipLoc = Instant(type(link) == "string" and link or nil)
+    -- (Kritikrunde, as Geardon) not before its level; a one-hand weapon of a dual wielder against the weaker hand
+    local info = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+    -- (pcall gives ok first: the required level, GetItemInfo's 5th value, is the 6th)
+    local req = type(link) == "string" and info and ns.Num(select(6, pcall(info, link))) or 0
+    if equipLoc == "INVTYPE_WEAPON" and ns.Value(rawget(_G, "CanDualWield")) == true then slots = DUAL end
+    if s and type(link) == "string" and req <= (level or 1)
+        and not (mhLoc == "INVTYPE_2HWEAPON" and ONE_HAND[equipLoc or ""]) then
+      local olds
+      if equipLoc == "INVTYPE_2HWEAPON" then
+        twoHands[1], twoHands[2] = nil, nil
+        for _, slot in ipairs({ 16, 17 }) do
+          local wl = ns.Value(GetInventoryItemLink, "player", slot)
+          if type(wl) == "string" then twoHands[#twoHands + 1] = wl end
+        end
+        olds = { twoHands[1] and twoHands or false }
+      else
+        olds = {}
+        for k, slot in ipairs(slots) do olds[k] = ns.Value(GetInventoryItemLink, "player", slot) or false end
+      end
+      for _, old in ipairs(olds) do -- (rings, trinkets) the gain over the weaker one counts
+        local ok, sign, gain = pcall(api.GearCompare, link, old or nil)
+        if ok and sign == 1 and (not bestGain or gain > bestGain) then bestI, bestGain = i, gain end
+      end
+    end
+  end
+  return bestI
+end
+
 -- index of the suggested choice and why ("players" or "rule"), nil when there is none
 function ns.SuggestRewardIndex()
   local n = ns.Num(ns.Value(GetNumQuestChoices)) or 0
@@ -279,6 +332,13 @@ function ns.SuggestRewardIndex()
     local id = ns.GetItemID(ns.Value(GetQuestItemLink, "choice", i))
     local c = id and picks[id] or 0
     if c > bestN then bestI, bestN = i, c end
+  end
+  local api = Shared()
+  if api then
+    local gi = SharedBest(api, n, class, level)
+    if gi then return gi, "rule" end
+    if bestI and bestN >= PICKS_NEEDED then return bestI, "players" end
+    return nil
   end
   if bestI and bestN >= PICKS_NEEDED then return bestI, "players" end
   -- (22.10.) no choice has stats: the armor you can wear that adds the most armor to what you wear in its slot

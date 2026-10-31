@@ -9,10 +9,10 @@ local L = ns.L
 --   [uiMapID] = { { kind, x, y, side }, ... }   kind i, a, f, b; x, y in percent; side A, H or N.
 -- Shown: your faction's and neutral ones. One option for all four, servicePins (Daniel 30.10.: one switch, not one per
 -- kind, so the options stay few). Mouse over: what it is; click: the arrow leads you there.
--- An own map data provider with its own pin template (ServicePins.xml), so the quest pins stay as they are. Pins
--- cannot be made in combat (the map canvas calls SetPassThroughButtons): in combat the pins drawn stay.
+-- (30.10.2026, DonMap M3) Drawn by DonMap as the source "services" (own buttons on the map, each symbol only on its
+-- own map, not on the continent): no map data provider and no pin template any more, so the symbols are drawn in
+-- combat too. /donmap services switches them off as well.
 ---------------------------------------------------------------------------
-local TEMPLATE = "QuestdonServicePinTemplate"
 local SIZE = 16
 local CARD_COLOR = { 0.85, 0.74, 0.52 } -- the stripe of the hover card: warm grey, not a quest colour
 local SPREAD = 0.012 -- two symbols on one spot (Undercity's bank inside the auction house) side by side
@@ -70,83 +70,82 @@ function ns.ServicePinTooltip(pin)
   return (k and ("|T" .. k.icon .. ":16:16|t ") or "") .. ns.ServiceName(pin and pin.service), lines, L["Click: arrow"]
 end
 
-local provider, setupFailed
-local stats = { builds = 0, pins = 0, keptInCombat = 0 }
+local src
+local stats = { builds = 0, pins = 0 }
 function ns.ServicePinStats() return stats end
 
-local function Setup()
-  if provider or setupFailed then return end
-  if not (WorldMapFrame and WorldMapFrame.AddDataProvider and MapCanvasDataProviderMixin and MapCanvasPinMixin) then return end
-
-  QuestdonServicePinMixin = CreateFromMixins(MapCanvasPinMixin)
-  local Pin = QuestdonServicePinMixin
-  function Pin:OnLoad()
-    self:UseFrameLevelType("PIN_FRAME_LEVEL_AREA_POI")
-    if self.SetScalingLimits then self:SetScalingLimits(1, 1, 1.4) end
-    self:SetSize(SIZE, SIZE)
-  end
-  function Pin:ApplyCurrentScale()
-    if not self.SetScale then return end
-    self:SetScale(1)
-    if MapCanvasPinMixin.ApplyCurrentScale then MapCanvasPinMixin.ApplyCurrentScale(self) end
-    local s = self.GetScale and self:GetScale() or 1
-    self:SetScale((tonumber(s) or 1) * (ns.MapPinMult and ns.MapPinMult() or 1))
-  end
-  function Pin:OnAcquired(pin)
-    self.qdPin = pin
-    self:SetPosition(pin.x, pin.y)
-    local k = KINDS[pin.service]
-    if self.Icon and k then self.Icon:SetTexture(k.icon) end
-  end
-  function Pin:OnMouseClickAction(button)
-    if button == "LeftButton" and self.qdPin and ns.PointArrowFromPin then
-      ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.qdPin.x, self.qdPin.y, ns.ServiceName(self.qdPin.service), "service")
+-- every symbol of every map for DonMap, each shown only on its own map (point.only); in map order, so the same data
+-- gives the same list
+function ns.ServicePoints()
+  local out = {}
+  if not (ns.db and ns.db.servicePins ~= false and type(ns.SERVICES) == "table") then return out end
+  local maps = {}
+  for mapID in pairs(ns.SERVICES) do if type(mapID) == "number" then maps[#maps + 1] = mapID end end
+  table.sort(maps)
+  for _, mapID in ipairs(maps) do
+    for i, p in ipairs(ns.ServicePins(mapID)) do
+      p.mapID, p.only, p.key, p.icon = mapID, true, ("%d:%02d"):format(mapID, i), KINDS[p.service].icon
+      out[#out + 1] = p
     end
   end
-  Pin.OnClick = ns.Guard("map click", function(self, button) self:OnMouseClickAction(button) end)
-  -- right-click zooms the map out, as on quest pins
-  function Pin:ShouldMouseButtonBePassthrough(button) return button == "RightButton" end
-  Pin.OnMouseEnter = ns.Guard("map tooltip", function(self)
+  return out
+end
+
+-- the symbol's button (DonMap places it): click points the arrow there, right-click zooms the map out as before
+local function NewPin(parent, size)
+  local b = CreateFrame("Button", nil, parent)
+  b:SetSize(size, size)
+  b.Icon = b:CreateTexture(nil, "ARTWORK")
+  b.Icon:SetAllPoints(b)
+  if b.RegisterForClicks then b:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
+  b:SetScript("OnEnter", ns.Guard("map tooltip", function(self)
     if not self.qdPin then return end
     local title, lines, hint = ns.ServicePinTooltip(self.qdPin)
     ns.PinCard(self, title, lines, hint, "service", CARD_COLOR)
-  end)
-  function Pin:OnMouseLeave() ns.PinCardHide(self) end
-
-  local p = CreateFromMixins(MapCanvasDataProviderMixin)
-  p.qdService = true -- (tests: the harness keeps the quest provider apart)
-  local builtMap
-  p.RemoveAllData = ns.Guard("map", function(self)
-    builtMap = nil
-    self:GetMap():RemoveAllPinsByTemplate(TEMPLATE)
-  end)
-  p.RefreshAllData = ns.Guard("map", function(self)
-    local map = self:GetMap()
-    local mapID = ns.Num(map:GetMapID())
-    if InCombatLockdown() then
-      if mapID and mapID == builtMap then stats.keptInCombat = stats.keptInCombat + 1 return end
-      self:RemoveAllData()
-      return
+  end))
+  b:SetScript("OnLeave", function(self) ns.PinCardHide(self) end)
+  b:SetScript("OnClick", ns.Guard("map click", function(self, button)
+    local pin = self.qdPin
+    if not pin then return end
+    if button == "LeftButton" and ns.PointArrowFromPin then
+      ns.PointArrowFromPin(pin.mapID, pin.x, pin.y, ns.ServiceName(pin.service), "service")
+    elseif button == "RightButton" and WorldMapFrame and WorldMapFrame.NavigateToParentMap then
+      WorldMapFrame:NavigateToParentMap()
     end
-    self:RemoveAllData()
-    if not mapID then return end
-    for _, pin in ipairs(ns.ServicePins(mapID)) do map:AcquirePin(TEMPLATE, pin) end
-    builtMap = mapID
-    stats.builds = stats.builds + 1
-  end)
-  local ok = pcall(WorldMapFrame.AddDataProvider, WorldMapFrame, p)
-  if ok then provider = p else setupFailed = true end
+  end))
+  return b
+end
+
+local function Paint(b, points, size)
+  local pin = points[1]
+  b.qdPin = pin
+  b:SetSize(size, size)
+  local k = KINDS[pin.service]
+  if k then b.Icon:SetTexture(k.icon) end
+end
+
+local function Setup()
+  if src or not (DonMapAPI and DonMapAPI.version and DonMapAPI.version >= 3) then return end
+  src = DonMapAPI.Register("services", {
+    title = "Questdon: " .. L["Inns, auction houses, flight masters and banks on the map"], layer = 0, minimap = false,
+    world = function() return ns.db and ns.db.servicePins ~= false end,
+    size = function() return SIZE * (ns.MapPinMult and ns.MapPinMult() or 1) end,
+    newPin = NewPin, paint = Paint,
+  })
+  ns.RefreshServicePins()
 end
 ns.SetupServicePins = Setup -- (tests)
+ns.ServiceSource = function() return src end -- (tests, /qd diag)
 
--- Options: draw anew
+-- Options: the symbols anew (DonMap draws them when the map is open)
 function ns.RefreshServicePins()
-  if not provider then Setup() end
-  if provider and provider:GetMap() and WorldMapFrame:IsShown() and not InCombatLockdown() then provider:RefreshAllData() end
+  if not src then return Setup() end
+  local list = ns.ServicePoints()
+  src:SetPoints(list)
+  stats.builds, stats.pins = stats.builds + 1, #list
+  src:Refresh("world")
 end
 
-ns.OnInit(function()
-  Setup()
-  -- the world map may load later (Blizzard_WorldMap)
-  ns.On("ADDON_LOADED", function() if not provider then Setup() end end)
-end)
+ns.OnInit(Setup)
+-- the faction may not be readable yet when Questdon loads: the list again once the world is there
+ns.On("PLAYER_ENTERING_WORLD", function() if src then ns.RefreshServicePins() end end)

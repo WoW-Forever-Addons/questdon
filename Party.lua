@@ -210,7 +210,6 @@ local function Changed()
   refreshQueued = true
   ns.After(0.5, function()
     refreshQueued = false
-    if ns.UpdatePanel then ns.UpdatePanel("ifChanged") end
     if ns.RefreshPinsIfChanged then ns.RefreshPinsIfChanged() end
   end)
 end

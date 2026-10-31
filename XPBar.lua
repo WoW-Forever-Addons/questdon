@@ -293,7 +293,14 @@ end
 
 -- OnUpdate of our own frames: the alpha of the game's frame they sit on (fades of the game or
 -- of an action bar addon). Divided by UIParent's, which our frames get anyway.
-local function FollowAlpha(self)
+-- (31.10.2026, LEISTUNG_PRUEFUNG D23) every frame only while it changes (a fade); while it stays the same, a look
+-- every FOLLOW_IDLE seconds (a fade starting shows a frame later at most that much).
+local FOLLOW_IDLE = 0.1
+local function FollowAlpha(self, dt)
+  if self.followIdle then
+    self.followWait = (self.followWait or 0) - (tonumber(dt) or 0)
+    if self.followWait > 0 then return end
+  end
   local src = self.alphaFrom
   if type(src) ~= "table" or type(src.GetEffectiveAlpha) ~= "function" then return end
   local ok, a = pcall(src.GetEffectiveAlpha, src)
@@ -303,6 +310,9 @@ local function FollowAlpha(self)
   if a ~= self.followAlpha then
     self.followAlpha = a
     self:SetAlpha(a)
+    self.followIdle = false
+  else
+    self.followIdle, self.followWait = true, FOLLOW_IDLE
   end
 end
 
@@ -410,7 +420,7 @@ local function ShowRep(target, id, holder)
     return false
   end
   if not rep then CreateRep() end
-  rep.alphaFrom = holder or target
+  rep.alphaFrom, rep.followIdle = holder or target, false -- (D23) looked at again on the next frame
   local anchor = type(target.StatusBar) == "table" and target.StatusBar or target
   if rep.anchor ~= anchor then
     rep:ClearAllPoints()
@@ -495,7 +505,7 @@ local function ShowArt(c)
     art:SetPoint("BOTTOMRIGHT", c, "BOTTOMRIGHT", 0, -pad)
     art.anchor = c
   end
-  art.alphaFrom = c
+  art.alphaFrom, art.followIdle = c, false -- (D23)
   art:Show()
   return true
 end
@@ -563,7 +573,6 @@ end
 function ns.ToggleXPBar()
   ns.db.xpBar = not ns.db.xpBar
   ns.UpdateXPBar()
-  if ns.UpdatePanel then ns.UpdatePanel() end -- (1.2) the window shows the XP lines while the bar is off
 end
 
 -- (1.23) Batched with the other quest displays (Core.lua, 0.5 s).

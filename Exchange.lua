@@ -41,6 +41,19 @@ local L = ns.L
 -- never shown or exported. Shared data never overrides own learning or the
 -- game; it ranks before the bundled data where it is used (turn-ins,
 -- objective spots).
+--
+-- (31.10.2026, docs/LEISTUNG_PRUEFUNG_2026-10-31.md A5) Each fact is ONE string in QuestdonDB.shared (DonDataDB.shared),
+-- not four tables (635 byte a fact before, Daniel's file 23.10.: 8509 facts 5.3 MB):
+--   "<t> <c>|<variant>|<variant>..."   t time of the last change, c highest count (0: none)
+--   variant "<n>,<o>,<m>,<x>,<y>,<id>,<f>,<v>,<reporters>"   n reporters, o of them through the open channel, an empty
+--           field is not there; reporters separated by spaces, one that came through the open channel ends in "*"
+-- Older saved tables ({ t, c, v = { { m, x, y, id, f, v, n, o, r = { [reporter] = true or "o" } } } }) are turned into
+-- strings once per session (Migrate, sharedVersion 3: an older Questdon wipes the table instead of misreading it).
+-- At most MAX_SHARED facts; Prune keeps the most reported, then the own faction's quests, then the newest (a count per
+-- rank, no sort of all facts). A variant with MAX_REPORTERS reporters takes no more reports. The open channel gives at
+-- most RECV_PER_SEC lines a second (more are dropped and counted as limited). The sent lists (shareSent, shareSentAt,
+-- exportSent: about 0.4 MB in Daniel's file) stay as they are: their lines average 16 characters, a checksum saves
+-- little, and they only grow with the own facts.
 ---------------------------------------------------------------------------
 -- (25.10.2026, CLASSIC_ERA_PLAN.md) Classic Era has its own prefix and channel: Era data never mixes with Forever data
 local PREFIX = ns.ERA and "QdShareEra" or "QdShare"
@@ -51,9 +64,11 @@ local MAX_PER_HOUR = 30     -- messages per hour (a long backlog is spread out)
 local SPOTS_PER_OBJECTIVE = 10 -- objective spots sent per objective (1.2: was 5, sightings add more)
 local KNOWN = 3             -- others who reported a fact the same way: no need to send it
 local MAX_MSG = 240         -- characters per message (limit 255)
-local MAX_SHARED = 20000    -- facts kept
+local MAX_SHARED = 8000     -- facts kept ((A5) was 20000: about 12 MB in the old format)
 local MAX_VARIANTS = 3      -- differing reports per fact
-local MAX_REPORTERS = 8     -- reporters kept per variant
+local MAX_REPORTERS = 5     -- reporters kept per variant ((A5) was 8; CONFIRM_NOT_HERE needs 5)
+local RECV_PER_SEC = 20     -- (A5) lines a second taken from the open channel
+local T_REFRESH = 86400     -- (A5) a report that changes nothing renews the fact's time once a day
 local PER_SENDER = 200      -- facts per sender and hour
 local CONFIRM = 2           -- reporters needed before a fact is used
 local RESEND = 86400        -- (1.3.5) an own fact goes out again after a day
@@ -90,15 +105,22 @@ local version = 0           -- changes whenever shared data changes (caches)
 local function Now() return ns.Num(ns.Value(GetTime)) or 0 end
 local function Clock() return ns.Num(ns.Value(time)) or Now() end
 
+local Migrate -- (A5) below: older saved facts into the compact strings, once per session
+local migrated = nil -- the shared table that was migrated
 local function DB()
   local db = ns.db
   if type(db.shared) ~= "table" then db.shared = {} end
   if type(db.shareSent) ~= "table" then db.shareSent = {} end
   if type(db.shareSentAt) ~= "table" then db.shareSentAt = {} end -- (1.3.5)
   -- (1.1) shared data of the test builds counted the own echo as a player: start clean once
-  if db.sharedVersion ~= 2 then
+  -- (A5) 3: the compact strings (an older Questdon wipes them: it only knows 2)
+  if db.sharedVersion ~= 2 and db.sharedVersion ~= 3 then
     wipe(db.shared)
     db.sharedVersion = 2
+  end
+  if migrated ~= db.shared then
+    migrated = db.shared
+    Migrate(db)
   end
   return db
 end
@@ -325,27 +347,168 @@ local function SharedCount()
   return sharedCount
 end
 
--- Make room: facts with one reporter go first, oldest first.
-local placeQ, pruneGen = {}, 0 -- (16.10.) see Changed below
-local spotCache, spotVersion, spotStale = nil, -1, {}
-local function Prune()
-  local shared = DB().shared
-  local list = {}
-  for key, e in pairs(shared) do
-    local best = 0
-    for _, v in ipairs(type(e.v) == "table" and e.v or {}) do best = math.max(best, ns.Num(v.n) or 0) end
-    list[#list + 1] = { key = key, n = best, t = ns.Num(e.t) or 0 }
+-- (A5) The compact strings (format at the top). Decode gives the old shape: { t, c, v = { { m, x, y, id, f, v, n, o,
+-- r = { [reporter] = true or "o" } } } }; an old table is returned as it is.
+local function Field(v)
+  if v == nil then return "" end
+  v = tostring(v)
+  if v:find("[,|%s]") then return nil end
+  return v
+end
+local function EncodeVariant(v)
+  if type(v) ~= "table" then return nil end
+  local reps = {}
+  for rep, how in pairs(type(v.r) == "table" and v.r or {}) do
+    if type(rep) == "string" and rep:match("^%w+$") then reps[#reps + 1] = how == "o" and (rep .. "*") or rep end
   end
-  table.sort(list, function(a, b) if a.n ~= b.n then return a.n < b.n end return a.t < b.t end)
-  local remove = #list - math.floor(MAX_SHARED * 0.9)
-  for i = 1, math.max(remove, 0) do shared[list[i].key] = nil stats.pruned = stats.pruned + 1 end
-  sharedCount = nil
-  if remove > 0 then pruneGen, placeVersion, spotCache = pruneGen + 1, placeVersion + 1, nil end -- every quest anew
+  table.sort(reps)
+  local n = ns.Num(v.n) or #reps
+  local m, x, y, id, f, val = Field(v.m), Field(v.x), Field(v.y), Field(v.id), Field(v.f), Field(v.v)
+  if not (m and x and y and id and f and val) then return nil end
+  return ("%d,%d,%s,%s,%s,%s,%s,%s,%s"):format(math.floor(n), math.floor(ns.Num(v.o) or 0), m, x, y, id, f, val,
+    table.concat(reps, " "))
+end
+local function Encode(e)
+  local parts = { ("%d %d"):format(math.floor(ns.Num(e.t) or 0), math.floor(ns.Num(e.c) or 0)) }
+  for _, v in ipairs(type(e.v) == "table" and e.v or {}) do
+    local s = EncodeVariant(v)
+    if s then parts[#parts + 1] = s end
+  end
+  if #parts == 1 then return nil end
+  return table.concat(parts, "|")
+end
+-- noReps: without the reporters (Best: only the values and counts are read)
+local function DecodeVariant(s, noReps)
+  local n, o, m, x, y, id, f, val, reps = s:match("^(%d+),(%d*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)$")
+  if not n then return nil end
+  local v = { n = tonumber(n), o = tonumber(o) or 0, m = tonumber(m), x = tonumber(x), y = tonumber(y), id = tonumber(id),
+    f = f ~= "" and f or nil, v = val ~= "" and val or nil }
+  if not noReps then
+    local r = {}
+    for rep in reps:gmatch("%S+") do
+      if rep:sub(-1) == "*" then r[rep:sub(1, -2)] = "o" else r[rep] = true end
+    end
+    v.r = r
+  end
+  return v
+end
+local function Decode(e)
+  if type(e) == "table" then return type(e.v) == "table" and e or nil end
+  if type(e) ~= "string" then return nil end
+  local t, c, rest = e:match("^(%d+) (%d+)(.*)$")
+  if not t then return nil end
+  c = tonumber(c)
+  local out = { t = tonumber(t), c = c > 0 and c or nil, v = {} }
+  for vs in rest:gmatch("|([^|]+)") do
+    local v = DecodeVariant(vs)
+    if v then out.v[#out.v + 1] = v end
+  end
+  return out
+end
+-- (tests, tools) a fact in the old shape (a copy for a string; changing it changes nothing)
+function ns.SharedEntry(key)
+  local e = ns.db and type(ns.db.shared) == "table" and ns.db.shared[key]
+  if type(e) == "table" then return e end
+  return Decode(e)
 end
 
+-- Make room: facts with fewer reporters go first, then (A5) quests this character's faction can never do, then the
+-- oldest (by day). (A5) No sort of all facts: they are counted per rank, the ranks (a few hundred) sorted, and one more
+-- pass removes everything below the cut (and part of the cut's rank).
+local QUEST_KEYS = { S = true, G = true, T = true, I = true, O = true, F = true, K = true, A = true, X = true, N = true, R = true }
+local function Rank(key, e, reach)
+  local best, t = 0, 0
+  if type(e) == "string" then
+    t = tonumber(e:match("^(%d+)")) or 0
+    for n in e:gmatch("|(%d+),") do
+      n = tonumber(n)
+      if n > best then best = n end
+    end
+  elseif type(e) == "table" then
+    for _, v in ipairs(type(e.v) == "table" and e.v or {}) do best = math.max(best, type(v) == "table" and ns.Num(v.n) or 0) end
+    t = ns.Num(e.t) or 0
+  end
+  best = math.min(best, 9)
+  local side = 1
+  if reach and type(key) == "string" and QUEST_KEYS[key:sub(1, 1)] then
+    local q = tonumber(key:match("^%a (%d+)"))
+    if q then
+      local ok, can = pcall(reach, q)
+      if ok and can == false then side = 0 end
+    end
+  end
+  return (best * 2 + side) * 100000 + math.floor(t / 86400) % 100000
+end
+
+local placeQ, pruneGen = {}, 0 -- (16.10.) see Changed below
+local spotCache, spotVersion, spotStale = nil, -1, {}
 -- (Questdon review 4) places (objective spots, turn-ins, starts) have their own version: a reward pick or a
 -- level fact from the open channel rebuilt every quest's points and re-scanned all shared facts
+-- ((A5) declared before Prune now: Prune counted up a global of that name and stopped with an error at the limit)
 local placeVersion = 0
+local bestMemo, bestMemoN, memoSize = {}, {}, 0 -- (A5) Best of a fact string (SharedTurnIn, SharedNotHere)
+local function Forget() bestMemo, bestMemoN, memoSize = {}, {}, 0 end
+ns.SharedForget = Forget -- (measurements)
+
+local function PruneTo(target)
+  local shared = DB().shared
+  local reach = ns.QuestReachable
+  local hist, total = {}, 0
+  for key, e in pairs(shared) do
+    local r = Rank(key, e, reach)
+    hist[r] = (hist[r] or 0) + 1
+    total = total + 1
+  end
+  local remove = total - target
+  if remove > 0 then
+    local ranks = {}
+    for r in pairs(hist) do ranks[#ranks + 1] = r end
+    table.sort(ranks)
+    local cut, part, acc = math.huge, 0, 0
+    for _, r in ipairs(ranks) do
+      if acc + hist[r] <= remove then acc = acc + hist[r] else cut, part = r, remove - acc break end
+    end
+    local removed = 0
+    for key, e in pairs(shared) do
+      local r = Rank(key, e, reach)
+      if r < cut or (r == cut and part > 0) then
+        if r == cut then part = part - 1 end
+        shared[key] = nil
+        removed = removed + 1
+      end
+    end
+    stats.pruned = stats.pruned + removed
+    pruneGen, placeVersion, spotCache = pruneGen + 1, placeVersion + 1, nil -- every quest anew
+    Forget()
+  end
+  sharedCount = nil
+end
+local function Prune() PruneTo(math.floor(MAX_SHARED * 0.9)) end
+ns.SharedPruneTo = PruneTo -- (measurements)
+
+-- (A5) once per session (and for every new shared table): old tables into strings and down to MAX_SHARED. Returns how
+-- many entries changed.
+function Migrate(db)
+  local shared, n = db.shared, 0
+  for key, e in pairs(shared) do
+    if type(e) ~= "string" then
+      shared[key] = type(key) == "string" and type(e) == "table" and Encode(e) or nil
+      n = n + 1
+    end
+  end
+  db.sharedVersion = 3
+  sharedCount = nil
+  if SharedCount() > MAX_SHARED then Prune() end
+  Forget()
+  return n
+end
+function ns.SharedMigrate()
+  local db = ns.db
+  if type(db.shared) ~= "table" then return 0 end
+  migrated = db.shared
+  return Migrate(db)
+end
+
 -- (16.10. late, Daniel's /qd mem: "API ObjectivePoints" 188 KB a second) with the open channel busy, every new
 -- reporter of any place made every quest's places count as changed (the arrow's, the API's, the map's): each quest
 -- has its own version now, and only its shared spots are looked up again.
@@ -368,37 +531,53 @@ end
 
 local function Store(key, value, count, reporter, open)
   local shared = DB().shared
-  local e = shared[key]
-  if not e then
+  local e = Decode(shared[key])
+  local new = not e
+  if new then
     if SharedCount() >= MAX_SHARED then Prune() end
     e = { v = {} }
-    shared[key] = e
-    sharedCount = (sharedCount or 0) + 1
   end
-  e.t = Clock()
-  if count and count > (ns.Num(e.c) or 0) then e.c = math.min(count, 9999) end
+  local clock = Clock()
+  local changed = false
+  if count and count > (ns.Num(e.c) or 0) then e.c = math.min(count, 9999) changed = true end
   -- (1.1) reporters through the open channel are kept as "o" (o = how many)
+  local found = false
   for _, v in ipairs(e.v) do
     if Same(v, value) then
+      found = true
+      v.r = type(v.r) == "table" and v.r or {}
+      v.n = ns.Num(v.n) or 0
       local had = v.r[reporter]
+      -- (A5) a variant with MAX_REPORTERS reporters takes no more reports
       if not had and v.n < MAX_REPORTERS then
         v.r[reporter] = open and "o" or true
         v.n = v.n + 1
         if open then v.o = (ns.Num(v.o) or 0) + 1 end
         Changed(key)
+        changed = true
       elseif had == "o" and not open then
         v.r[reporter] = true -- the same player through guild or group
         v.o = math.max((ns.Num(v.o) or 1) - 1, 0)
         Changed(key)
+        changed = true
       end
-      return
+      break
     end
   end
-  if #e.v < MAX_VARIANTS then
+  if not found and #e.v < MAX_VARIANTS then
     value.r, value.n = { [reporter] = open and "o" or true }, 1
     if open then value.o = 1 end
     e.v[#e.v + 1] = value
     Changed(key)
+    changed = true
+  end
+  -- (A5) nothing new: the string stays (its time is renewed once a day, for Prune)
+  if not changed and type(shared[key]) == "string" and clock - (ns.Num(e.t) or 0) < T_REFRESH then return end
+  e.t = clock
+  local s = Encode(e)
+  if s then
+    shared[key] = s
+    if new then sharedCount = (sharedCount or 0) + 1 end
   end
 end
 
@@ -410,7 +589,30 @@ local function Confirmed(v, needOpen)
   local trusted = n - (ns.Num(v.o) or 0)
   return trusted >= CONFIRM or n >= (needOpen or CONFIRM_OPEN)
 end
-local function Best(e, needOpen)
+-- (A5) memo: SharedTurnIn and SharedNotHere ask for the same facts again and again (a string is its own key: a
+-- changed fact is another string). The variant returned is read only.
+local function Best(e, needOpen, memo)
+  if type(e) == "string" then
+    local cache = memo and (needOpen and bestMemoN or bestMemo)
+    if cache then
+      local hit = cache[e]
+      if hit ~= nil then return hit or nil end
+    end
+    local best, bestN
+    local need = needOpen or CONFIRM_OPEN
+    for vs in e:gmatch("|([^|]+)") do
+      local n, o = vs:match("^(%d+),(%d*),")
+      n, o = tonumber(n), tonumber(o) or 0
+      if n and (n - o >= CONFIRM or n >= need) and (not bestN or n > bestN) then best, bestN = vs, n end
+    end
+    local v = best and DecodeVariant(best, true) or false
+    if cache then
+      if memoSize >= 2000 then Forget() cache = needOpen and bestMemoN or bestMemo end
+      cache[e] = v
+      memoSize = memoSize + 1
+    end
+    return v or nil
+  end
   if type(e) ~= "table" or type(e.v) ~= "table" then return nil end
   local best
   for _, v in ipairs(e.v) do
@@ -431,12 +633,20 @@ local function Allowed(reporter, lines)
   return true
 end
 
+local recvAt, recvLines = 0, 0 -- (A5) the open channel's lines in the current second
 local function OnMessage(_, prefix, text, chatType, sender)
   if prefix ~= PREFIX then return end
   -- (1.3.5) guild and group are trusted, the channel is open, every other way is ignored
   local open = chatType == "CHANNEL" -- (1.1) anybody can be in the channel
   if not open and not (type(chatType) == "string" and TRUSTED_WAYS[chatType]) then stats.otherWay = stats.otherWay + 1 return end
   if type(text) ~= "string" or not ns.Usable(text) or #text > 255 then return end
+  -- (A5) at most RECV_PER_SEC lines a second from the open channel (thousands of players send there): the rest is
+  -- dropped before anything is read
+  if open then
+    local now = Now()
+    if now - recvAt >= 1 or now < recvAt then recvAt, recvLines = now, 0 end
+    if recvLines >= RECV_PER_SEC then stats.limited = stats.limited + 1 stats.flood = (stats.flood or 0) + 1 return end
+  end
   local full = FullSender(sender)
   if not full then return end
   if full == MyFullName() then stats.own = stats.own + 1 return end
@@ -456,6 +666,7 @@ local function OnMessage(_, prefix, text, chatType, sender)
   if open then stats.recvChannel = stats.recvChannel + 1 end
   local lines = {}
   for line in payload:gmatch("[^;]+") do lines[#lines + 1] = line end
+  if open then recvLines = recvLines + #lines end
   if not Allowed(reporter, #lines) then stats.limited = stats.limited + #lines return end
   for _, line in ipairs(lines) do
     local key, value, count
@@ -871,7 +1082,7 @@ end
 ---------------------------------------------------------------------------
 -- Turn-in point others reported: map, x, y (0-1), reporters, (1.3.5) the NPC's creature ID (0 = unknown).
 function ns.SharedTurnIn(questID)
-  local v = Best(ns.db and ns.db.shared and ns.db.shared["T " .. tostring(questID)])
+  local v = Best(ns.db and ns.db.shared and ns.db.shared["T " .. tostring(questID)], nil, true)
   if v and v.m and v.x and v.y then return v.m, v.x / 100, v.y / 100, v.n, v.id end
 end
 
@@ -960,7 +1171,7 @@ end
 -- (1.1) Two or more other players found that the quest giver never offers it.
 -- (1.3.5) Two through guild or group, or CONFIRM_NOT_HERE in all: it hides a quest.
 function ns.SharedNotHere(questID)
-  return Best(ns.db and ns.db.shared and ns.db.shared["N " .. tostring(questID)], CONFIRM_NOT_HERE) ~= nil
+  return Best(ns.db and ns.db.shared and ns.db.shared["N " .. tostring(questID)], CONFIRM_NOT_HERE, true) ~= nil
 end
 function ns.SharedNotHereCount()
   local n = 0
@@ -981,6 +1192,7 @@ function ns.SharedEntrances(inst)
     entrCache, entrVersion = {}, version
     for key, e in pairs(ns.db and ns.db.shared or {}) do
       local id = type(key) == "string" and tonumber(key:match("^E (%d+) "))
+      e = id and Decode(e) -- (A5)
       if id and type(e) == "table" and type(e.v) == "table" then
         for _, v in ipairs(e.v) do -- every confirmed way in, not only the most reported one
           if type(v) == "table" and v.m and Confirmed(v) then
@@ -1001,7 +1213,8 @@ function ns.SharedRewardPicks(questID, class)
   local out = {}
   local pre = ("R %d %d "):format(tonumber(questID) or 0, tonumber(class) or 0)
   for key, e in pairs(ns.db and ns.db.shared or {}) do
-    if type(key) == "string" and key:sub(1, #pre) == pre and type(e) == "table" and type(e.v) == "table" then
+    e = type(key) == "string" and key:sub(1, #pre) == pre and Decode(e) -- (A5)
+    if e and type(e.v) == "table" then
       local item = tonumber(key:match(" (%d+)$"))
       local n = 0
       for _, v in ipairs(e.v) do n = n + (ns.Num(v.n) or 0) end
@@ -1033,6 +1246,7 @@ function ns.ResetShared()
   wipe(db.shared)
   sharedCount, version, placeVersion = 0, version + 1, placeVersion + 1
   pruneGen, spotCache = pruneGen + 1, nil -- (16.10.) every quest's places anew
+  Forget() -- (A5)
   -- (23.10.) learned data deleted (Options.lua calls this): the kept send list goes too
   backlog.list, backlog.pos, backlog.fp, backlog.at = nil, 1, nil, 0
   quiet.fp, quiet.nextDue = nil, nil

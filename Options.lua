@@ -12,18 +12,15 @@ local function RefreshPins() if ns.RefreshPins then ns.RefreshPins() end end
 local function RefreshTargetButton() if ns.RefreshTargetButton then ns.RefreshTargetButton() end end
 local function SyncWaypoint() if ns.SyncWaypoint then ns.SyncWaypoint() end end
 local function RefreshItemButton() if ns.RefreshItemButton then ns.RefreshItemButton() end end
-local function UpdatePanel() if ns.UpdatePanel then ns.UpdatePanel() end end
 local function ApplyArrow() if ns.ApplyArrow then ns.ApplyArrow() end end
 local function Pixels(v) return ("%d"):format(v) end
 local function Levels(v) return ("%d"):format(v) end
 local function Upcoming(v) v = math.floor((tonumber(v) or 0) + 0.5) return v == 0 and L["off"] or ("+%d"):format(v) end
-local function RefreshLevels() RefreshPins() UpdatePanel() end
-local function PanelLook() if ns.ApplyPanelLook then ns.ApplyPanelLook() end end
 local function ArrowLook() if ns.ApplyArrow then ns.ApplyArrow() end end
 local function XPBarLook() if ns.ApplyXPBarLook then ns.ApplyXPBarLook() end end
 local function UpdateXPBar() if ns.UpdateXPBar then ns.UpdateXPBar() end end
--- (1.2) switching the bar also changes the window (its experience lines)
-local function UpdateXPBarAndPanel() UpdateXPBar() if ns.UpdatePanel then ns.UpdatePanel() end if ns.UpdateTracker then ns.UpdateTracker(true) end end
+-- (1.2) switching the bar also changes the quest list (its experience lines)
+local function UpdateXPBarAndList() UpdateXPBar() if ns.UpdateTracker then ns.UpdateTracker(true) end end
 -- (25.10., Daniel: "Show window changes nothing") while a guide (Leveldon) shows the compass in its window, Questdon's
 -- arrow and the list's compass stay aside whatever these switches say: the row says so (OptionsWindow.lua item.status)
 local function GuideStatus() return ns.GuideActive and ns.GuideActive() and "Leveldon" or nil end
@@ -47,7 +44,7 @@ local PAGES = {
     { header = "Available quests" },
     { key = "availablePins", name = "Show available quests on the map", tip = "Yellow ! for quests you can pick up now: level, faction, race, class and previous quests are checked. Data from All The Things plus what Questdon learned. Skipped where Questie or Forever Quest Pins already show the quest.", onChange = RefreshPins },
     { key = "showLowLevel", name = "Also show low level quests", tip = "Shows quests far below your level too.", parent = "availablePins", onChange = RefreshPins },
-    { key = "lowLevelRange", kind = "slider", name = "Low level from levels below yours", tip = "A quest counts as low level when its level is at least this many levels below yours. Low level quests are hidden on the map, the minimap, the nameplates and in the dungeon list unless 'Also show low level quests' is on. Default 10.", min = 3, max = 20, step = 1, format = Levels, parent = "availablePins", onChange = RefreshLevels },
+    { key = "lowLevelRange", kind = "slider", name = "Low level from levels below yours", tip = "A quest counts as low level when its level is at least this many levels below yours. Low level quests are hidden on the map, the minimap, the nameplates and in the dungeon list unless 'Also show low level quests' is on. Default 10.", min = 3, max = 20, step = 1, format = Levels, parent = "availablePins", onChange = RefreshPins },
     -- (1.24) replaces "Quests without a level count as low level" (the setting is dropped, see Core.lua)
     -- (1.0) event quests and "confirmed only"
     -- (1.25) no second "!" where the game draws its own
@@ -136,7 +133,7 @@ local PAGES = {
     { key = "arrowScale", kind = "slider", name = "Size", tip = "Size of the direction arrow and its text.", min = SMIN, max = SMAX, step = 0.05, parent = "arrow", onChange = ArrowLook },
     { kind = "button", name = "Reset position", button = "Reset", tip = "Puts the arrow back to its default place.", onClick = function() if ns.ResetArrowPosition then ns.ResetArrowPosition() end end },
     { header = "XP bar" },
-    { key = "xpBar", name = "Show window", tip = "Blue: your XP. Yellow: XP of the finished quests in your log. Light blue: rested XP. Mouse over for details. /qd xpbar toggles it.", onChange = UpdateXPBarAndPanel },
+    { key = "xpBar", name = "Show window", tip = "Blue: your XP. Yellow: XP of the finished quests in your log. Light blue: rested XP. Mouse over for details. /qd xpbar toggles it.", onChange = UpdateXPBarAndList },
     { key = "xpBarLocked", name = "Lock window", tip = "When unlocked, drag the bar with the left mouse button.", parent = "xpBar" },
     { key = "xpBarScale", kind = "slider", name = "Size", tip = "Overall size of the XP bar including the text.", min = SMIN, max = SMAX, step = 0.05, parent = "xpBar", onChange = UpdateXPBar },
     { kind = "button", name = "Reset position", button = "Reset", tip = "Puts the XP bar back to its default place.", onClick = function() if ns.ResetXPBarPosition then ns.ResetXPBarPosition() end end },
@@ -228,7 +225,6 @@ local TOOLS = {
     end, "Puts the quest list, the arrow, the XP bar and the quest item button back to their default places." },
   { "Reset XP session", "Reset", function()
       if ns.ResetXPSession then ns.ResetXPSession() end
-      UpdatePanel()
     end, "Starts XP per hour from zero." },
   -- (1.1) quests hidden as "not offered here" (NotHere.lua)
   { "Quests hidden as not offered", "Show again", function()
