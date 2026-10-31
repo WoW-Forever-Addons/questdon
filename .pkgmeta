@@ -1,5 +1,9 @@
 package-as: Questdon
 
+required-dependencies:
+  - dondata
+  - donmap
+
 manual-changelog:
   filename: CHANGELOG.md
   markup-type: markdown
