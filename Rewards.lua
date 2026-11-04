@@ -386,31 +386,22 @@ function ns.SuggestRewardIndex()
 end
 
 local glow
+-- (04.11.2026, Era-Test) only the soft green shimmer, no hard 2 px box any more (Daniel: "der grüne kasten wirkt out
+-- of the box. vielleicht nur den grünen schimmer behalten?"); a bit stronger and a little past the button instead
 local function ShowGlow(button)
   if not button then return end
   if not glow then
     glow = CreateFrame("Frame", "QuestdonRewardSuggest", UIParent)
     glow:SetFrameStrata("DIALOG")
-    glow.edges = {}
-    for i = 1, 4 do
-      local t = glow:CreateTexture(nil, "OVERLAY")
-      t:SetColorTexture(0.25, 1, 0.35, 0.95)
-      glow.edges[i] = t
-    end
     glow.soft = glow:CreateTexture(nil, "ARTWORK")
     glow.soft:SetTexture("Interface\\Buttons\\CheckButtonHilight")
     glow.soft:SetBlendMode("ADD")
-    glow.soft:SetVertexColor(0.3, 1, 0.4, 0.6)
+    glow.soft:SetVertexColor(0.3, 1, 0.4, 0.8)
     glow.soft:SetAllPoints()
   end
   glow:ClearAllPoints()
-  glow:SetPoint("TOPLEFT", button, "TOPLEFT", -2, 2)
-  glow:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 2, -2)
-  local e = glow.edges
-  e[1]:ClearAllPoints() e[1]:SetPoint("TOPLEFT") e[1]:SetPoint("TOPRIGHT") e[1]:SetHeight(2)
-  e[2]:ClearAllPoints() e[2]:SetPoint("BOTTOMLEFT") e[2]:SetPoint("BOTTOMRIGHT") e[2]:SetHeight(2)
-  e[3]:ClearAllPoints() e[3]:SetPoint("TOPLEFT") e[3]:SetPoint("BOTTOMLEFT") e[3]:SetWidth(2)
-  e[4]:ClearAllPoints() e[4]:SetPoint("TOPRIGHT") e[4]:SetPoint("BOTTOMRIGHT") e[4]:SetWidth(2)
+  glow:SetPoint("TOPLEFT", button, "TOPLEFT", -4, 4)
+  glow:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 4, -4)
   glow.index = button.GetID and button:GetID() or nil
   glow:Show()
 end

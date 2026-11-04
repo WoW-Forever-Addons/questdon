@@ -51,8 +51,9 @@ local L = ns.L
 -- as the game shows them, so the shipped translations can grow. They are only
 -- in /qd export, never in what Questdon shares with guild and group. "new" leaves out what the bundled data has
 -- already (starts at the same spot, objective spots near its points,
--- known prerequisites, credit sources and levels); turn-ins, drops, item
--- starts and X lines are always included (the data has none of them).
+-- known prerequisites, credit sources and levels). (03.11.2026) Also the shipped
+-- turn-ins, drop sources, dungeon entrances, service symbols and reward picks, and
+-- every fact the data build has already (Known_Facts.lua, ns.KnownLine below).
 --
 -- (1.3.3) Daniel 06.10.: "new" also leaves out lines already sent. A line
 -- counts as sent only after the player clicks "Mark as sent" in the export
@@ -136,6 +137,154 @@ local function SpotKnown(questID, index, map, x, y)
   return false
 end
 
+-- (03.11.2026) the shipped turn-in (DonData QUEST_ENDS): same map, about the same spot, the same NPC (or none said)
+local function EndKnown(questID, map, x, y, npcID)
+  local e = ns.QUEST_ENDS and ns.QUEST_ENDS[questID]
+  return type(e) == "table" and e[1] == map and type(e[2]) == "number" and type(e[3]) == "number"
+    and Near(e[2], e[3], x * 100, y * 100, SAME_SPOT) and (npcID == 0 or e[4] == nil or e[4] == npcID) or false
+end
+
+-- (03.11.2026) the shipped drop sources of a quest item (DonData ITEM_SOURCES: creatures that drop it)
+local function DropKnown(itemID, kind, id)
+  local s = kind == "c" and ns.ITEM_SOURCES and ns.ITEM_SOURCES[itemID]
+  return type(s) == "table" and Has(s[1], id) or false
+end
+
+---------------------------------------------------------------------------
+-- (03.11.2026, Daniel: "nur das senden, was wir noch nicht haben") A line the data has already stays home, in the
+-- share as in /qd export "new": the shipped data (above for S G O K F A T D; here E, V, R) and ns.KNOWN_FACTS
+-- (DonData/Data/Known_Facts.lua, tools/open/build_known.py): what the data build collected but does not ship (yet),
+-- one key per fact (KnownKeys), hashed and sorted, 5 characters each. A hash can match a fact we do not have
+-- (about 1 in 10000 lines with 100000 keys): that line is not sent, the next player's is.
+---------------------------------------------------------------------------
+local HASH_MOD = 1073741789 -- prime below 2^30: 5 digits of 64
+local DIGIT = {}            -- byte -> 0..63: "#" to "d" without "\" and "]"
+do
+  local d = 0
+  for b = 35, 100 do
+    if b ~= 92 and b ~= 93 then DIGIT[b] = d d = d + 1 end
+  end
+end
+local function KeyHash(s)
+  local h = 0
+  for i = 1, #s do h = (h * 131 + s:byte(i)) % HASH_MOD end
+  return h
+end
+ns.KnownKeyHash = KeyHash -- (tests)
+
+local function InHash(h)
+  local s = ns.KNOWN_FACTS
+  if type(s) ~= "string" or #s < 5 then return false end
+  local lo, hi = 1, math.floor(#s / 5)
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    local p = mid * 5 - 4
+    local b1, b2, b3, b4, b5 = s:byte(p, p + 4)
+    local v = ((((DIGIT[b1] or 0) * 64 + (DIGIT[b2] or 0)) * 64 + (DIGIT[b3] or 0)) * 64 + (DIGIT[b4] or 0)) * 64 + (DIGIT[b5] or 0)
+    if v == h then return true elseif v < h then lo = mid + 1 else hi = mid - 1 end
+  end
+  return false
+end
+local function InKnown(key)
+  return key ~= nil and type(ns.KNOWN_FACTS) == "string" and InHash(KeyHash(key))
+end
+
+-- A walked cell the data build has ("W <map> <cell>", Paths.lua WalkRecords): hashed without a new string per cell
+local function HashDigits(h, n)
+  if n >= 10 then h = HashDigits(h, math.floor(n / 10)) end
+  return (h * 131 + 48 + n % 10) % HASH_MOD
+end
+local walkPrefix = {} -- map -> hash of "W <map> "
+function ns.KnownWalkCell(m, c)
+  if type(ns.KNOWN_FACTS) ~= "string" or type(m) ~= "number" or type(c) ~= "number" or c < 0 then return false end
+  local h = walkPrefix[m]
+  if not h then h = KeyHash(("W %d "):format(m)) walkPrefix[m] = h end
+  return InHash(HashDigits(h, c))
+end
+
+-- Python's round() of a one-decimal number (the data build's 1 % cells of O and P): halves to the even side
+local function PyRound(v)
+  v = tonumber(v) or 0
+  local f = math.floor(v)
+  local d = v - f
+  if d > 0.5 + 1e-9 then return f + 1 elseif d < 0.5 - 1e-9 then return f end
+  return f % 2 == 0 and f or f + 1
+end
+local function Cell(v)
+  local g = ns.GridCell or function(p, size) return math.floor(math.floor(p * 10 + 0.5) / (size * 10)) end
+  return g(tonumber(v) or 0, 1)
+end
+
+-- The key of a line as store/build.py fact_key names the fact (and a second one: a "maybe" follow-up is known
+-- as "maybe" or "sure"); nil: not keyed (W, a start or turn-in without an NPC).
+local KEYS = {
+  S = function(l) local q, m, n = l:match("^S (%d+) (%d+) %S+ %S+ (%d+) ") if q and n ~= "0" then return ("S %s %s %s"):format(q, m, n) end end,
+  G = function(l) local q, m, o = l:match("^G (%d+) (%d+) %S+ %S+ (%d+) ") if q then return ("G %s %s %s"):format(q, m, o) end end,
+  T = function(l) local q, m, n = l:match("^T (%d+) (%d+) %S+ %S+ (%d+)$") if q and n ~= "0" then return ("T %s %s %s"):format(q, m, n) end end,
+  I = function(l) local q, i = l:match("^I (%d+) (%d+) ") if q then return ("I %s %s"):format(q, i) end end,
+  O = function(l)
+    local q, i, m, x, y = l:match("^O (%d+) (%d+) (%d+) (%S+) (%S+)$")
+    if q then return ("O %s %s %s %d %d"):format(q, i, m, PyRound(x), PyRound(y)) end
+  end,
+  F = function(l)
+    local q, p, v = l:match("^F (%d+) (%d+) ([12])$")
+    if q then return ("F %s %s"):format(q, p), v == "1" and ("F %s %s 1"):format(q, p) or nil end
+  end,
+  K = function(l) local q, i, k, id = l:match("^K (%d+) (%d+) ([coi]) (%d+) ") if q then return ("K %s %s %s:%s"):format(q, i, k, id) end end,
+  D = function(l) local it, k, id = l:match("^D (%d+) ([co]) (%d+) ") if it then return ("D %s %s:%s"):format(it, k, id) end end,
+  A = function(l) local q, lv = l:match("^A (%d+) (%d+)$") if q then return ("A %s %s"):format(q, lv) end end,
+  X = function(l) local q = l:match("^X (%d+)$") if q then return "X " .. q end end,
+  N = function(l) local q, n = l:match("^N (%d+) (%d+) ") if q then return ("N %s %s"):format(q, n) end end,
+  R = function(l) local q, c, t, i = l:match("^R (%d+) (%d+) (%d) (%d+)$") if q then return ("R %s %s %s %s"):format(q, c, t, i) end end,
+  P = function(l)
+    local n, m, x, y = l:match("^P (%d+) (%d+) (%S+) (%S+)$")
+    if n then return ("P %s %s %d %d"):format(n, m, PyRound(x), PyRound(y)) end
+  end,
+  Y = function(l) local q, o = l:match("^Y (%d+) (%S+)$") if q then return ("Y %s %s"):format(q, o) end end,
+  H = function(l)
+    local k, s, id, m, x, y, item = l:match("^H ([hmsf]) ([oc%-]) (%d+) (%d+) (%S+) (%S+) (%d+) ")
+    if k then return ("H %s %s%s %s %s %d %d"):format(k, s, id, item, m, Cell(x), Cell(y)) end
+  end,
+  E = function(l) local i, m = l:match("^E (%d+) (%d+) ") if i then return ("E %s %s"):format(i, m) end end,
+  V = function(l) local n, r, m = l:match("^V (%d+) (%S+) (%d+) ") if n then return ("V %s %s %s"):format(n, r, m) end end,
+}
+function ns.KnownKeys(line)
+  local f = type(line) == "string" and KEYS[line:sub(1, 1)]
+  if f then return f(line) end
+end
+
+local EMPTY = {}
+local SERVICE_ROLES = { i = true, a = true, f = true, b = true } -- the roles Services.lua ships
+-- The shipped data has this line already (E, V, R; the other kinds are compared where the lines are made).
+local function ShippedLine(line)
+  local c = line:sub(1, 1)
+  if c == "E" then
+    local inst, m, x, y = line:match("^E (%d+) (%d+) (%S+) (%S+)$")
+    local list = inst and ns.DUNGEON_ENTRANCES and ns.DUNGEON_ENTRANCES[tonumber(inst)]
+    for _, p in ipairs(type(list) == "table" and list or EMPTY) do
+      if p[1] == tonumber(m) and Near(p[2], p[3], tonumber(x), tonumber(y), NEAR_ATT) then return true end
+    end
+  elseif c == "V" then
+    local role, m, x, y = line:match("^V %d+ (%S+) (%d+) (%S+) (%S+)$")
+    local list = role and SERVICE_ROLES[role] and ns.SERVICES and ns.SERVICES[tonumber(m)]
+    for _, p in ipairs(type(list) == "table" and list or EMPTY) do
+      if p[1] == role and Near(p[2], p[3], tonumber(x), tonumber(y), SAME_SPOT) then return true end
+    end
+  elseif c == "R" then
+    local q, cl, item = line:match("^R (%d+) (%d+) %d (%d+)$")
+    local r = q and ns.LEARNED_REWARDS and ns.LEARNED_REWARDS[tonumber(q)]
+    local byClass = type(r) == "table" and r[tonumber(cl)]
+    return type(byClass) == "table" and byClass[tonumber(item)] ~= nil
+  end
+  return false
+end
+
+function ns.KnownLine(line)
+  if ShippedLine(line) then return true end
+  local a, b = ns.KnownKeys(line)
+  return InKnown(a) or InKnown(b)
+end
+
 -- (23.10., /qd mem round 2) no new table for a missing list: the share send builds all lines every few minutes
 local NOKEYS = {}
 local KINDS = { "c", "o", "i" }
@@ -195,7 +344,7 @@ function ns.ExportRecords(all)
         end
       end
       local map, x, y, npcID = Place(e.finish)
-      if map then
+      if map and (all or not EndKnown(id, map, x, y, npcID)) then
         records[#records + 1] = ("T %d %d %s %s %d"):format(id, map, Fmt(x), Fmt(y), npcID)
       end
       -- (1.0.1) follow-ups
@@ -262,7 +411,8 @@ function ns.ExportRecords(all)
       table.sort(keys)
       for _, key in ipairs(keys) do
         local v = d[key]
-        if type(v) == "table" and Int(v[1]) and v[1] > 0 and Pos(v[2], v[3], v[4]) then
+        if type(v) == "table" and Int(v[1]) and v[1] > 0 and Pos(v[2], v[3], v[4])
+            and (all or not DropKnown(itemID, key:sub(1, 1), tonumber(key:sub(2)))) then
           records[#records + 1] = ("D %d %s %s %d %d %s %s"):format(itemID, key:sub(1, 1), key:sub(2), v[1], v[2], Fmt(v[3]), Fmt(v[4]))
         end
       end
@@ -285,7 +435,7 @@ function ns.ExportRecords(all)
   -- (1.3.6) dungeon entrances (always: they confirm the listed ones too)
   for _, line in ipairs(ns.EntranceRecords and ns.EntranceRecords() or {}) do records[#records + 1] = line end
   -- (1.3.6) where you walked (Paths.lua): ways around mountains for others
-  for _, line in ipairs(ns.WalkRecords and ns.WalkRecords() or {}) do records[#records + 1] = line end
+  for _, line in ipairs(ns.WalkRecords and ns.WalkRecords(all) or {}) do records[#records + 1] = line end
   -- (17.10.) where walking NPCs were seen (Walks.lua): "P npc map x y"
   for _, line in ipairs(ns.WalkSeenRecords and ns.WalkSeenRecords() or {}) do records[#records + 1] = line end
   -- (22.10.) what an NPC is (Services.lua): "V npc role map x y"
@@ -310,6 +460,15 @@ function ns.ExportRecords(all)
     end
   end
 
+  -- (03.11.2026) what the shipped data or the data build has already stays home (ns.KnownLine)
+  if not all then
+    local n = 0
+    for i = 1, #records do
+      local r = records[i]
+      if not ns.KnownLine(r) then n = n + 1 records[n] = r end
+    end
+    for i = #records, n + 1, -1 do records[i] = nil end
+  end
   return records
 end
 
@@ -395,157 +554,19 @@ function ns.ExportSentCount()
 end
 
 ---------------------------------------------------------------------------
--- Window: read-only, multi-line edit box to copy from. Shared by the export,
--- the diagnostics, the dungeon list, the XP sources and the missing quests
--- (ns.ShowText).
---
--- (1.20) A real Style.Panel (kit version 2): wordmark title in the header
--- bar (drag there), the kit's close button, the note as a kit row in the
--- secondary colour and the text area as Style.Content of fixed height (a
--- quiet well with the scroll frame and the edit box inside). Position, lock
--- and size live for the session only, as before.
--- (1.24) No Blizzard template: Forever's client may not have
--- UIPanelScrollFrameTemplate (and its scroll bar runs Blizzard code). The
--- scroll frame is our own: mouse wheel, the text cursor stays in view, and a
--- thin bar on the right shows where you are. The close button is the kit's.
+-- Window: read-only, multi-line text to copy from. Shared by the export, the
+-- diagnostics, the dungeon levels, the XP sources, the journal as text and
+-- the missing quests (ns.ShowText).
+-- (04.11.2026, Era-Test, Daniel: "das scheint noch im alten stil") DonCore's
+-- one copy window of every Don addon (Kit.ShowCopy, like Luredon and
+-- Vitaldon: title, hint, the text marked, "Select all" and "Close", Esc
+-- closes); Questdon's own text window (1.20 Style.Panel, 1.24 own scroll
+-- frame) is gone. Without the kit the text goes to the chat, as before.
 ---------------------------------------------------------------------------
-local frame, edit, content, noteRow, sentRow
 local text
-local winState = { alpha = 0.95 } -- session only (not saved), a bit darker than panels
 ns.windowParts = {} -- what the text window has (for /qd diag)
 
-local W, BOX_H = 560, 340
-local SCROLLBAR = 8 -- room for our thin position bar right of the scroll frame
-local WHEEL_STEP = 3 -- lines per mouse wheel step
-
-local function Num(v) return ns.Num(v) or 0 end
-
--- Scroll to offset (clamped to the scroll range).
-local function ScrollTo(scroll, offset)
-  local range = Num(scroll.GetVerticalScrollRange and scroll:GetVerticalScrollRange())
-  if offset > range then offset = range end
-  if offset < 0 then offset = 0 end
-  scroll:SetVerticalScroll(offset)
-  if scroll.qdUpdateBar then scroll.qdUpdateBar() end
-end
-ns.TextWindowScrollTo = function(offset) if frame and frame.scroll then ScrollTo(frame.scroll, offset) end end
-
-local function Create()
-  local Style, Look = ns.Style, ns.Look
-  frame = Style.Panel("QuestdonExportFrame", UIParent, {
-    title = Style.Wordmark("Quest", "don"),
-    width = W,
-    close = true,
-    closeTooltip = { L["Close"], nil, L["Esc also closes the window."] },
-    strata = "DIALOG",
-    get = function(key) return winState[key] end,
-    set = function(key, value) if key ~= "shown" then winState[key] = value end end,
-    defaultPoint = { "CENTER", "CENTER", 0, 0 },
-    onClose = function(p) p:Hide() end,
-  })
-  frame:EnableMouse(true) -- the window catches clicks instead of the world behind it
-  frame.header = frame._header
-  frame.close = frame:GetButton("close")
-  ns.windowParts.closeButton = frame.close ~= nil
-
-  noteRow = Style.Row(frame)
-
-  -- the well: own frame with a quiet background, scroll frame and edit box inside
-  local well = CreateFrame("Frame", nil, frame)
-  well:EnableMouse(false)
-  local wbg = well:CreateTexture(nil, "BACKGROUND", nil, 2)
-  wbg:SetTexture("Interface\\Buttons\\WHITE8x8")
-  wbg:SetAllPoints(well)
-  Look.Tint(wbg, "barBackground")
-  local pad = Style.SPACING.padX / 2
-
-  local scroll = CreateFrame("ScrollFrame", nil, well) -- (1.24) no template
-  ns.windowParts.scrollFrame = true
-  scroll:SetPoint("TOPLEFT", well, "TOPLEFT", pad, -pad)
-  scroll:SetPoint("BOTTOMRIGHT", well, "BOTTOMRIGHT", -SCROLLBAR - pad, pad)
-  scroll:EnableMouseWheel(true)
-  scroll:SetScript("OnMouseWheel", ns.Guard("text window", function(self, delta)
-    local lineH
-    if ChatFontNormal and ChatFontNormal.GetFont then
-      local ok, _, size = pcall(ChatFontNormal.GetFont, ChatFontNormal)
-      lineH = ok and ns.Num(size) or nil
-    end
-    local step = (lineH or 14) * WHEEL_STEP
-    ScrollTo(self, Num(self:GetVerticalScroll()) - (ns.Num(delta) or 0) * step)
-  end))
-
-  -- thin position bar (our own textures, no slider template)
-  local track = well:CreateTexture(nil, "ARTWORK")
-  track:SetTexture("Interface\\Buttons\\WHITE8x8")
-  track:SetPoint("TOPRIGHT", well, "TOPRIGHT", -pad / 2, -pad)
-  track:SetPoint("BOTTOMRIGHT", well, "BOTTOMRIGHT", -pad / 2, pad)
-  track:SetWidth(SCROLLBAR / 2)
-  if track.SetVertexColor then track:SetVertexColor(1, 1, 1, 0.06) end
-  local thumb = well:CreateTexture(nil, "OVERLAY")
-  thumb:SetTexture("Interface\\Buttons\\WHITE8x8")
-  thumb:SetWidth(SCROLLBAR / 2)
-  local ac = Style.COLORS.accent or { 0.25, 0.66, 0.96 }
-  if thumb.SetVertexColor then thumb:SetVertexColor(ac[1], ac[2], ac[3], 0.6) end
-  scroll.qdUpdateBar = function()
-    local range = Num(scroll:GetVerticalScrollRange())
-    local viewH = Num(scroll:GetHeight())
-    if range <= 0 or viewH <= 0 then thumb:Hide() track:Hide() return end
-    track:Show() thumb:Show()
-    local h = math.max(16, viewH * viewH / (viewH + range))
-    local y = (viewH - h) * Num(scroll:GetVerticalScroll()) / range
-    thumb:SetHeight(h)
-    thumb:ClearAllPoints()
-    thumb:SetPoint("TOPRIGHT", well, "TOPRIGHT", -pad / 2, -pad - y)
-  end
-  scroll:SetScript("OnScrollRangeChanged", ns.Guard("text window", function(self) ScrollTo(self, Num(self:GetVerticalScroll())) end))
-  ns.windowParts.wheel = true
-
-  edit = CreateFrame("EditBox", nil, scroll)
-  edit:SetMultiLine(true)
-  edit:SetAutoFocus(false)
-  edit:SetMaxLetters(0)
-  edit:SetFontObject(ChatFontNormal or "ChatFontNormal")
-  edit:SetWidth(W - 2 * Style.SPACING.padX - 2 * pad - SCROLLBAR)
-  local tc = Style.COLORS.textPrimary
-  if edit.SetTextColor then edit:SetTextColor(tc[1], tc[2], tc[3]) end
-  scroll:SetScrollChild(edit)
-  -- Read-only: typing puts the text back and selects it again.
-  edit:SetScript("OnTextChanged", function(self, userInput)
-    if userInput and text then self:SetText(text) self:HighlightText() end
-  end)
-  edit:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
-  edit:SetScript("OnMouseUp", function(self) self:HighlightText() end)
-  edit:SetScript("OnEscapePressed", function() frame:Hide() end)
-  -- (1.24) keep the text cursor in view (own code instead of Blizzard's
-  -- ScrollingEdit helpers): y is the cursor's offset from the top (negative)
-  edit:SetScript("OnCursorChanged", ns.Guard("text window", function(_, _, y, _, h)
-    local top, height = -(ns.Num(y) or 0), ns.Num(h) or 0
-    local offset, view = Num(scroll:GetVerticalScroll()), Num(scroll:GetHeight())
-    if top < offset then
-      ScrollTo(scroll, top)
-    elseif view > 0 and top + height > offset + view then
-      ScrollTo(scroll, top + height - view)
-    end
-  end))
-  -- own panel: keep the kit's OnHide (stops a drag) and clear the focus too
-  local kitOnHide = frame:GetScript("OnHide")
-  frame:SetScript("OnHide", function(self)
-    if kitOnHide then kitOnHide(self) end
-    edit:ClearFocus()
-  end)
-
-  content = Style.Content(frame, well, BOX_H, { gapBefore = Style.SPACING.section })
-  -- (1.3.3) under the text: mark the export as sent (only for /qd export)
-  sentRow = Style.Row(frame)
-  sentRow:SetGapBefore(Style.SPACING.section)
-  sentRow:Hide()
-  frame.well, frame.scroll, frame.edit, frame.content, frame.thumb = well, scroll, edit, content, thumb
-  ns.windowParts.built = true
-
-  -- Esc closes the window (list of frame names Blizzard hides on Esc).
-  if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "QuestdonExportFrame") end
-  frame:Hide()
-end
+local function Kit() return LibStub("DonCore-1.0"):Get("Kit", 4) end
 
 -- For the tests: the text in the window.
 function ns.ShowTextBody() return text end
@@ -553,23 +574,23 @@ function ns.ShowTextBody() return text end
 -- Shows text to copy: heading, note above the box, the text itself.
 -- If the window cannot be built on this client, the text goes to the chat.
 function ns.ShowText(heading, note, body)
-  if frame == nil and not pcall(Create) then frame = false end
-  if not (frame and edit) then
+  body = body or ""
+  local K = Kit()
+  local ok, d = false, nil
+  if K and K.ShowCopy then
+    ok, d = pcall(K.ShowCopy, ns.Style.Wordmark("Quest", "don") .. ": " .. tostring(heading or ""), note or "", body,
+      { selectAll = L["Select all"], close = L["Close"] })
+  end
+  if not (ok and d) then
+    ns.windowParts.built = false
     ns.Print(heading)
     for line in (body .. "\n"):gmatch("(.-)\n") do print(line) end
     return body
   end
   text = body
-  frame:SetTitle(ns.Style.Wordmark("Quest", "don") .. ": " .. heading)
-  noteRow:SetText(note or "", "textSecondary")
-  if sentRow then sentRow:Hide() end
-  edit:SetText(body)
-  frame:Show()
-  ScrollTo(frame.scroll, 0) -- (1.24) a new text starts at the top
-  ns.Style.Relayout(frame)
-  edit:SetFocus()
-  edit:HighlightText()
-  return body
+  ns.windowParts.built, ns.windowParts.kit = true, true
+  ns.textWindow = d
+  return body, d
 end
 
 function ns.OpenExport(all)
@@ -588,19 +609,23 @@ function ns.OpenExport(all)
   if not all and (skipped or 0) > 0 then
     note = note .. " " .. L["%d entries you already sent are left out (/qd export all shows everything)."]:format(skipped)
   end
-  local shown = ns.ShowText(L["Export learned data"], note, body)
-  if sentRow and count > 0 then
-    sentRow:SetText(L["Mark as sent: the next export only shows new entries"], "accent")
-    sentRow:SetOnClick(ns.Guard("export", function(row)
-      local n = ns.MarkExportSent()
-      row:SetOnClick(nil)
-      row:SetText(L["Marked as sent: %d entries."]:format(n), "textSecondary")
-    end))
-    sentRow:SetTooltip(function()
-      return L["Mark as sent"], { L["Click after you sent the text. Entries that do not change are left out of the next export; anything new or changed comes along. /qd export all still shows everything."] }
-    end)
-    sentRow:Show()
-    ns.Style.Relayout(frame)
+  local shown, d = ns.ShowText(L["Export learned data"], note, body)
+  -- (1.3.3) mark the export as sent (only for /qd export); (04.11.2026) a third button in the copy window
+  if d and d.SetButtons and count > 0 then
+    local function Close(dd) dd:Hide() end
+    local function SelectAll(dd) dd.edit:SetFocus() dd.edit:HighlightText() end
+    local tip = { L["Mark as sent"], L["Click after you sent the text. Entries that do not change are left out of the next export; anything new or changed comes along. /qd export all still shows everything."] }
+    local buttons
+    buttons = {
+      { text = L["Mark as sent"], tooltip = tip, onClick = ns.Guard("export", function(dd)
+        local n = ns.MarkExportSent()
+        buttons[1] = { text = L["Marked as sent: %d entries."]:format(n), disabled = true }
+        dd:SetButtons(buttons)
+      end) },
+      { text = L["Select all"], onClick = SelectAll },
+      { text = L["Close"], kind = "primary", onClick = Close },
+    }
+    d:SetButtons(buttons)
   end
   return shown
 end

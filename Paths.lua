@@ -522,7 +522,9 @@ end)
 ---------------------------------------------------------------------------
 local BLOCK = 10
 local HEX = "0123456789abcdef"
-function ns.WalkRecords()
+-- (03.11.2026) all: false leaves out the cells the data build has (Export.lua ns.KnownWalkCell, Known_Facts.lua) too
+function ns.WalkRecords(all)
+  local known = not all and ns.KnownWalkCell or nil
   local out = {}
   local walked = type(ns.db.walked) == "table" and ns.db.walked or {}
   local maps = {}
@@ -534,7 +536,7 @@ function ns.WalkRecords()
     local seed = Seed(m)
     local blocks = {}
     for c in pairs(walked[m]) do
-      if type(c) == "number" and c >= 0 and c < N * N and not (seed and seed[c]) then
+      if type(c) == "number" and c >= 0 and c < N * N and not (seed and seed[c]) and not (known and known(m, c)) then
         local i, j = c % N, math.floor(c / N)
         local b = math.floor(i / BLOCK) + math.floor(j / BLOCK) * (N / BLOCK)
         local bit = (i % BLOCK) + (j % BLOCK) * BLOCK

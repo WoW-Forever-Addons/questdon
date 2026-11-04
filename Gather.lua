@@ -14,6 +14,8 @@ local _, ns = ...
 --     k  h herb, m mining, s skinning, f fishing
 --     s  o object (node, fishing pool), c creature (skinned), - none (open water: the bobber)
 --     gx gy  a grid of CELL map units (one entry per node place), x y the first place seen there (0..1)
+--            (03.11.2026, docs/PIPELINE_PRUEFUNG_2026-11-03.md 15) the grid rule is ns.GridCell (Exchange.lua): the
+--            position in percent with one decimal, as in the export line, floored to cells of CELL units
 --   export / share line:  H <k> <s> <id> <map> <x> <y> <itemID> <count>
 -- At most MAX_CELLS places are kept; places already full keep counting.
 ---------------------------------------------------------------------------
@@ -44,29 +46,38 @@ local function SpellName(id)
   end
   return nil
 end
+-- (03.11.2026, docs/PIPELINE_PRUEFUNG_2026-11-03.md 13) the names are kept only when all four were readable: a client
+-- that had not loaded one yet kept that kind unknown for the whole session
 local function KindOfSpell(spellID)
   spellID = ns.Num(spellID)
   if not spellID then return nil end
   if SPELLS[spellID] then return SPELLS[spellID] end
-  if not byName then
-    byName = {}
+  local names = byName
+  if not names then
+    names = {}
+    local all = true
     for k, id in pairs(NAME_OF) do
       local n = SpellName(id)
-      if n then byName[n] = k end
+      if n then names[n] = k else all = false end
     end
-    if not next(byName) then byName = nil return nil end
+    if all then byName = names end
+    if not next(names) then return nil end
   end
   local n = SpellName(spellID)
-  return n and byName[n] or nil
+  return n and names[n] or nil
 end
 ns.GatherKindOfSpell = KindOfSpell
 
 local last -- { kind, t }
 local function Clock() return ns.Num(ns.Value(GetTime)) or 0 end
+-- (03.11.2026, docs/PIPELINE_PRUEFUNG_2026-11-03.md 3) LOOT_READY fires more than once for one loot window
+-- (Luredon/Stats.lua): what the open window was counted as; a new window (LOOT_CLOSED, a new gathering cast) or other
+-- loot (another source or other items) counts again
+local noted
 
 function ns.GatherCast(spellID)
   local kind = KindOfSpell(spellID)
-  if kind then last = { kind, Clock() } end
+  if kind then last = { kind, Clock() } noted = nil end
   return kind
 end
 -- called from Learn.lua's frame for the player's own casts (a unit event: other units' casts never reach Questdon)
@@ -91,7 +102,7 @@ local function Places(t)
   end
   return count
 end
-function ns.GatherReset() count = nil last = nil byName = nil end -- (tests, Options reset)
+function ns.GatherReset() count = nil last = nil byName = nil noted = nil end -- (tests, Options reset)
 
 -- note one loot window; returns the key of the place or nil
 function ns.NoteGather()
@@ -99,10 +110,9 @@ function ns.NoteGather()
   local kind = last and Clock() - last[2] <= CAST_SECS and last[1] or nil
   if ns.True(ns.Value(IsFishingLoot)) then kind = "f" end
   if not kind then return nil end
-  last = nil
   local map, x, y = ns.PlayerPosition()
   if not map then return nil end
-  local items, src, srcID = {}, "-", 0
+  local items, src, srcID, guid = {}, "-", 0, ""
   for slot = 1, ns.Num(ns.Value(GetNumLootItems)) or 0 do
     local id = ItemID(ns.Value(GetLootSlotLink, slot))
     if id then
@@ -112,19 +122,33 @@ function ns.NoteGather()
         local info = { pcall(GetLootSourceInfo, slot) }
         if info[1] then
           local k, id2 = ns.GUIDKindID(info[2])
+          if k then guid = info[2] end
           -- the fishing bobber is no place of its own: open water
           if k and not (k == "o" and id2 == 35591) then src, srcID = k, id2 end
         end
       end
     end
   end
-  if not next(items) then return nil end
+  if not next(items) then return nil end -- (fast loot: the window may be empty already; the cast stays for the next)
+  -- (03.11.2026, docs/PIPELINE_PRUEFUNG_2026-11-03.md 14) herbs and ore only from an object (the node), leather only
+  -- from a creature: within CAST_SECS of a cast (one broken off, too) the loot of a killed mob is no find
+  if (kind == "h" or kind == "m") and src ~= "o" or kind == "s" and src ~= "c" then last = nil return nil end
+  -- (3) the same window again: counted already
+  local ids = {}
+  for id in pairs(items) do ids[#ids + 1] = id end
+  table.sort(ids)
+  local sig = kind .. " " .. tostring(guid) .. " " .. table.concat(ids, ",")
+  if noted == sig then return nil end
+  last = nil
   local t = DB()
-  local key = ("%s %s%d %d %d %d"):format(kind, src, srcID, map, math.floor(x * 100 / CELL), math.floor(y * 100 / CELL))
+  local rx, ry = math.floor(x * 1000 + 0.5) / 1000, math.floor(y * 1000 + 0.5) / 1000
+  local cell = ns.GridCell or function(p, size) return math.floor(math.floor(p * 10 + 0.5) / (size * 10)) end
+  local key = ("%s %s%d %d %d %d"):format(kind, src, srcID, map, cell(rx * 100, CELL), cell(ry * 100, CELL))
+  noted = sig
   local e = t[key]
   if not e then
     if Places(t) >= MAX_CELLS then return nil end
-    e = { math.floor(x * 1000 + 0.5) / 1000, math.floor(y * 1000 + 0.5) / 1000, 0, items = {} }
+    e = { rx, ry, 0, items = {} }
     t[key] = e
     count = count + 1
   end
@@ -141,6 +165,9 @@ function ns.NoteGather()
   return key
 end
 ns.On("LOOT_READY", function() ns.NoteGather() end)
+-- (3) the window is gone (LOOT_CLOSED; ns.GatherLootClosed for the tests)
+function ns.GatherLootClosed() noted = nil end
+ns.On("LOOT_CLOSED", ns.GatherLootClosed)
 
 -- export and share lines, sorted
 function ns.GatherRecords()

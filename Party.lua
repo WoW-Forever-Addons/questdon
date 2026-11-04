@@ -319,7 +319,7 @@ function ns.PartyStateText(p)
   if p.failed then return L["failed"] end
   if p.complete then return L["done"] end
   local parts = {}
-  for _, o in ipairs(p.objectives) do parts[#parts + 1] = ("%d/%d"):format(o[1], o[2]) end
+  for _, o in ipairs(p.objectives) do parts[#parts + 1] = ns.Fraction(o[1], o[2]) end
   return #parts > 0 and table.concat(parts, ", ") or L["in log"]
 end
 
@@ -355,7 +355,7 @@ function ns.PartyObjectiveLines(questID, index)
   for _, p in ipairs(ns.PartyProgress(questID)) do
     local o = p.objectives[index]
     if not p.complete and not p.failed and o and o[1] < o[2] then
-      out[#out + 1] = { p.name, ("%d/%d"):format(o[1], o[2]) }
+      out[#out + 1] = { p.name, ns.Fraction(o[1], o[2]) }
     end
   end
   return out

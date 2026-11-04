@@ -176,12 +176,52 @@ end
 
 -- Inside the visible minimap? Round unless an addon says the minimap is square.
 -- (1.23) shape: optional, read once per update by the caller.
-local function MinimapShape()
-  return type(GetMinimapShape) == "function" and ns.Value(GetMinimapShape) or "ROUND"
+-- (02.11.2026) EllesmereUI makes the minimap square without GetMinimapShape. Its own reading counts first
+-- (EllesmereUI._ModuleNS.EllesmereUIMinimap.MinimapShape: "circle", "textured_circle", "square", "rectangular").
+-- A crop (rectangular 4:3, a square frame's title bar) keeps the square canvas and masks a strip off the top and the
+-- bottom; EUI sets the minimap's hit rect to the visible part, so its top inset is that strip: "SQUARE:<px>".
+-- DonMap reads the same strings (MiniPins.lua).
+-- (02.11.2026) GetMinimapShape's mixed shapes (SexyMap and others; the table as in LibDBIcon): per quarter round (true)
+-- or square, quarters 1 right below, 2 left below, 3 right above, 4 left above.
+local QUARTERS = {
+  ["CORNER-TOPLEFT"] = { false, false, false, true }, ["CORNER-TOPRIGHT"] = { false, false, true, false },
+  ["CORNER-BOTTOMLEFT"] = { false, true, false, false }, ["CORNER-BOTTOMRIGHT"] = { true, false, false, false },
+  ["SIDE-LEFT"] = { false, true, false, true }, ["SIDE-RIGHT"] = { true, false, true, false },
+  ["SIDE-TOP"] = { false, false, true, true }, ["SIDE-BOTTOM"] = { true, true, false, false },
+  ["TRICORNER-TOPLEFT"] = { false, true, true, true }, ["TRICORNER-TOPRIGHT"] = { true, false, true, true },
+  ["TRICORNER-BOTTOMLEFT"] = { true, true, false, true }, ["TRICORNER-BOTTOMRIGHT"] = { true, true, true, false },
+}
+local cropOf = { SQUARE = 0 }
+local function Crop(shape)
+  local c = cropOf[shape]
+  if c == nil then
+    c = type(shape) == "string" and tonumber(shape:match("^SQUARE:(%d+)$")) or false
+    cropOf[shape] = c
+  end
+  return c
 end
+local function EllesmereShape()
+  local eui = type(EllesmereUI) == "table" and type(EllesmereUI._ModuleNS) == "table"
+    and EllesmereUI._ModuleNS.EllesmereUIMinimap
+  local s = type(eui) == "table" and ns.Value(eui.MinimapShape)
+  if type(s) ~= "string" then return nil end
+  if s == "circle" or s == "textured_circle" then return "ROUND" end
+  local ok, _, _, top = false
+  if Minimap and type(Minimap.GetHitRectInsets) == "function" then ok, _, _, top = pcall(Minimap.GetHitRectInsets, Minimap) end
+  top = ok and ns.Num(top) and math.floor(top + 0.5) or 0
+  return top > 0 and "SQUARE:" .. top or "SQUARE"
+end
+local function MinimapShape()
+  return EllesmereShape() or type(GetMinimapShape) == "function" and ns.Value(GetMinimapShape) or "ROUND"
+end
+ns.MinimapShape = MinimapShape -- (tests)
 function ns.OnMinimap(x, y, halfSize, margin, shape)
   local r = halfSize - (margin or 0)
-  if (shape or MinimapShape()) == "SQUARE" then return math.abs(x) <= r and math.abs(y) <= r end
+  shape = shape or MinimapShape()
+  local crop = Crop(shape)
+  if crop then return math.abs(x) <= r and math.abs(y) <= r - crop end
+  local q = QUARTERS[shape]
+  if q and not q[(x < 0 and 2 or 1) + (y > 0 and 2 or 0)] then return math.abs(x) <= r and math.abs(y) <= r end
   return x * x + y * y <= r * r
 end
 
@@ -334,7 +374,7 @@ local function Retint(b)
 end
 local function Look(b, pin, scale)
   -- (Daniel 26.10.) the player's own size for all minimap pins, 25 to 200 %
-  local m = math.max(0.25, math.min(2, tonumber(ns.db and ns.db.minimapPinScale) or 1))
+  local m = math.max(0.25, math.min(2, tonumber(ns.db and ns.db.minimapPinScale) or 0.85)) -- (04.11.2026, Era-Test) 85 % by default
   local function R(v) return math.max(3, math.floor(v * m + 0.5)) end
   local DOT_SIZE = R(DOT_SIZE)
   b.pin = pin

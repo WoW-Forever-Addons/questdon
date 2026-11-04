@@ -13,7 +13,6 @@ local Style = ns.Style
 -- Own frames only: one button on the minimap, one menu frame. The minimap
 -- itself is not changed (DESIGN.md).
 ---------------------------------------------------------------------------
-local MEDIA = "Interface\\AddOns\\Questdon\\Media\\"
 
 -- What the old window showed, for the tooltip.
 local function InfoLines()
@@ -32,7 +31,7 @@ local function InfoLines()
   end
   local n, max = ns.QuestLogCount()
   if max then
-    lines[#lines + 1] = { L["Quests in log"], ("%d/%d"):format(n, max), n >= max and "critical" or (n >= max - 3 and "warning") or nil }
+    lines[#lines + 1] = { L["Quests in log"], ns.Fraction(n, max), n >= max and "critical" or (n >= max - 3 and "warning") or nil }
   end
   return lines
 end
@@ -91,16 +90,19 @@ local function MenuItems()
   return items
 end
 
-LibStub("DonCore-1.0"):Get("MinimapButton", 1):Attach(ns, {
+-- (04.11.2026, Era-Test, Daniel: "jeder minimap button sollte doch einen goldenen ring bekommen. Dann sollte der Minimap
+-- knopf so aussehen wie das Bild aus curseforge") DonCore MinimapButton minor 3: the gold ring and Questdon's CurseForge
+-- logo (Media\minimap.tga). The switch stays Questdon's own option "minimapButton" (Options.lua, with its own tip on what
+-- the button does here; PAGES is built before this file loads, so ns.MinimapOption() is not there yet), nil counts as on.
+LibStub("DonCore-1.0"):Get("MinimapButton", 3):Attach(ns, {
   name = "QuestdonMinimapButton",
-  icon = "Interface\\Icons\\INV_Misc_Map_01",
+  icon = "Interface\\AddOns\\Questdon\\Media\\minimap",
+  addon = "Questdon",
   angleKey = "minimapButtonAngle", defaultAngle = 200,
   title = function() return Style.Wordmark("Quest", "don") end,
   lines = InfoLines,
   hint = function() return L["Left click: quest book. Right click: menu. Drag: move."] end,
   onLeft = function() if ns.ToggleQuestBook then ns.ToggleQuestBook() end end,
-  ring = MEDIA .. "BookRing", -- the gold ring of the quest book
-  mask = true,
   menu = { name = "QuestdonMinimapMenu", width = 250, items = MenuItems },
 })
 

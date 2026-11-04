@@ -21,6 +21,17 @@ local function Clamp(v, lo, hi, default)
 end
 Look.Clamp = Clamp
 
+-- (04.11.2026, Era-Test, Daniel: "die zahlen sind sehr eng an dem / geschrieben besonders die 1") Questdon's own counts
+-- as "a / b" through DonCore Kit.Fraction (Kit minor 16); without it "a/b" as before. Whole numbers like "%d" did.
+-- Game texts (objective lines "Wolf: 3/8") and the message formats stay as the game and the protocol write them.
+function ns.Fraction(a, b)
+  a, b = ("%d"):format(tonumber(a) or 0), ("%d"):format(tonumber(b) or 0)
+  local K = LibStub and LibStub("DonCore-1.0", true)
+  K = K and K.Get and K:Get("Kit", 16)
+  if K and K.Fraction then return K.Fraction(a, b) end
+  return a .. "/" .. b
+end
+
 -- One physical pixel in the frame's coordinates (1 if the client cannot tell).
 function Look.Pixel(frame)
   local ok, _, h = pcall(GetPhysicalScreenSize)

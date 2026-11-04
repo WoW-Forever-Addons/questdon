@@ -167,6 +167,12 @@ function API.ShowQuestText(questID) if ns.ShowQuestText then return ns.ShowQuest
 -- key, title, text, pic, icon, main, more, tools), pages() (as Options.lua's: items with key, name, tip, kind,
 -- parent, min/max/step, onClick), tools() ({ name, button, fn, tip }), db() (the saved table), default(key),
 -- changed(key), T(text) (the addon's translation) }. Returns { Open(tab), Toggle(), Render(), Frame() } or nil.
+-- (31.10.2026, Luredon) also: items with kind = "dropdown" and options() -> { { value, label }, ... } (the value goes
+-- into db()[key], then changed(key); labels shown as given), status() and help() for a tab with status = true,
+-- buttonKey(section) for page buttons, and a tab's pic or icon as a file name in media, a full path or a file ID (a
+-- tab without pic shows its icon in the picture's place). API.OptionsWindowFeatures tells what this Questdon knows.
+local OPTIONS_WINDOW_FEATURES = { dropdown = true, tabIcons = true }
+function API.OptionsWindowFeatures() return OPTIONS_WINDOW_FEATURES end
 function API.NewOptionsWindow(spec)
   if type(spec) ~= "table" or not ns.NewOptionsWindow or type(spec.pages) ~= "function" or type(spec.db) ~= "function" then return nil end
   spec.default = spec.default or function() return nil end

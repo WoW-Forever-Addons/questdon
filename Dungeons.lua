@@ -642,7 +642,7 @@ local function Progress(questID)
   for _, o in ipairs(ns.ClientObjectives(questID)) do
     if type(o) == "table" then
       local f, r = ns.Num(o.numFulfilled), ns.Num(o.numRequired)
-      if f and r and r > 0 then parts[#parts + 1] = ("%d/%d"):format(f, r) end
+      if f and r and r > 0 then parts[#parts + 1] = ns.Fraction(f, r) end
     end
   end
   return #parts > 0 and table.concat(parts, ", ") or nil

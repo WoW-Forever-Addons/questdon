@@ -23,6 +23,11 @@ local Style = ns.Style
 -- mouse off, no hooks, never in combat), as Leveldon does it.
 -- Opacity: the window's background up to fully gone with its frame (options, Shift + mouse wheel
 -- over the title bar).
+-- (02.11.2026, StyleKit 2 step 4) in the Don style: Style.Panel look "don" (28 px head with the mark, gold frame), quest
+-- rows as Don rows (level badge in Blizzard's quest colours, the quest's map colour as the mark on the left, a second
+-- line, the yards in gold, one line each, cut), the card and the tabs in the colours of DonCore's Kit. Without
+-- background and frame (the default) the fine lines and marks stay (Daniel 02.11.: variant A). Finished quests go below
+-- the others while others are open (Daniel 02.11.: "das was fertig ist, sollte nach unten wandern").
 ---------------------------------------------------------------------------
 local MEDIA = "Interface\\AddOns\\Questdon\\Media\\"
 local NEEDLE = MEDIA .. "ArrowNeedle"
@@ -37,6 +42,9 @@ local grip
 local MIN_W, MAX_W, ROW, MAX_LINES = 240, 600, 30, 30
 local function TrackerWidth() return math.max(MIN_W, math.min(MAX_W, tonumber((ns.db or {}).trackerWidth) or 300)) end
 local B = Style.BOOK or {}
+local Kit = LibStub("DonCore-1.0"):Get("Kit", 3) -- (02.11.2026) colours, fonts and capitals of the Don style
+local K = Kit and Kit.C or {}
+local LOGO = "Interface\\Icons\\INV_Misc_Map_01" -- the toc's icon
 
 local function DB() return ns.db or {} end
 
@@ -255,22 +263,39 @@ local function Tex(parent, layer, color, alpha)
   return t
 end
 
-local GOLD, GOLD_L, CREAM, HINT = B.gold or { 0.86, 0.71, 0.42 }, B.goldLight or { 0.97, 0.87, 0.60 },
-  B.textPrimary or { 0.96, 0.92, 0.84 }, B.textHint or { 0.58, 0.57, 0.66 }
-local SECOND = B.textSecondary or { 0.80, 0.76, 0.68 }
-local GREEN = { 0.40, 0.85, 0.45 }
+-- (02.11.2026) the Don colours (Kit.C), the book's as a fallback
+local GOLD, GOLD_L, CREAM, HINT = K.txGold or B.gold or { 0.86, 0.71, 0.42 }, K.goldBright or B.goldLight or { 0.97, 0.87, 0.60 },
+  K.hero or B.textPrimary or { 0.96, 0.92, 0.84 }, K.muted or B.textHint or { 0.58, 0.57, 0.66 }
+local SECOND = K.body or B.textSecondary or { 0.80, 0.76, 0.68 }
+local GREEN = K.green or { 0.40, 0.85, 0.45 }
+local YELLOW = K.yellow or { 1, 0.84, 0.31 }
+local CARD = K.card or { 0.09, 0.12, 0.17 }
+
+-- the colour of a quest's level: Blizzard's quest difficulty colours (Kit.QuestDifficulty), as in the quest book
+local function LevelRGB(level)
+  if not (Kit and tonumber(level)) then return HINT end
+  local st = Kit.STATUS[Kit.QuestDifficulty(level)]
+  return st and st.fg or HINT
+end
+ns.TrackerLevelRGB = LevelRGB
 
 local function CreateCard()
   local f = CreateFrame("Button", nil, UIParent)
   f:SetSize(280, 80)
-  f.bg = Tex(f, "BACKGROUND", { 0.96, 0.78, 0.26 }, 0.08)
+  -- (02.11.2026) the Don card: card navy, a 3 px bright gold mark on the left, a muted gold line below; edge[1..4] stay
+  -- (the plain switch hides fill and frame lines, the mark and the line below stay: variant A)
+  f.bg = Tex(f, "BACKGROUND", CARD, 0.92)
   f.bg:SetAllPoints()
   f.edge = {}
-  for i = 1, 4 do f.edge[i] = Tex(f, "BORDER", GOLD, 0.45) end
+  for i = 1, 4 do f.edge[i] = Tex(f, "BORDER", K.goldMuted or GOLD, 0.8) end
   f.edge[1]:SetPoint("TOPLEFT") f.edge[1]:SetPoint("TOPRIGHT") f.edge[1]:SetHeight(1)
   f.edge[2]:SetPoint("BOTTOMLEFT") f.edge[2]:SetPoint("BOTTOMRIGHT") f.edge[2]:SetHeight(1)
   f.edge[3]:SetPoint("TOPLEFT") f.edge[3]:SetPoint("BOTTOMLEFT") f.edge[3]:SetWidth(1)
   f.edge[4]:SetPoint("TOPRIGHT") f.edge[4]:SetPoint("BOTTOMRIGHT") f.edge[4]:SetWidth(1)
+  f.mark = Tex(f, "ARTWORK", GOLD_L, 1)
+  f.mark:SetPoint("TOPLEFT") f.mark:SetPoint("BOTTOMLEFT") f.mark:SetWidth(3)
+  f.under = Tex(f, "ARTWORK", K.goldMuted or GOLD, 1)
+  f.under:SetPoint("BOTTOMLEFT") f.under:SetPoint("BOTTOMRIGHT") f.under:SetHeight(1)
   f.compass = ns.NewCompass(f, COMPASS)
   f.compass:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6)
   f.dist = Font(f, 12, GOLD_L, "CENTER")
@@ -280,7 +305,7 @@ local function CreateCard()
   if f.dist.SetWordWrap then f.dist:SetWordWrap(true) end
   if f.dist.SetMaxLines then f.dist:SetMaxLines(2) end
   f.label = Font(f, 10, GOLD, "LEFT")
-  f.label:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -6)
+  f.label:SetPoint("TOPLEFT", f, "TOPLEFT", 11, -6)
   f.title = Font(f, 13, CREAM, "LEFT")
   f.title:SetPoint("TOPLEFT", f.label, "BOTTOMLEFT", 0, -2)
   f.lines, f.pips = {}, {}
@@ -412,7 +437,7 @@ local function FillCard(e, width)
     local fs = Line(n)
     fs:SetWidth(textW)
     fs:ClearAllPoints()
-    fs:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -y)
+    fs:SetPoint("TOPLEFT", card, "TOPLEFT", 11, -y)
     fs:SetText(o.text)
     Color(fs, o.done and GREEN or SECOND)
     if Style.FitText then Style.FitText(fs, textW) end
@@ -426,18 +451,18 @@ local function FillCard(e, width)
         for k = 1, o.need do
           local t = Pip()
           t:ClearAllPoints()
-          t:SetPoint("TOPLEFT", card, "TOPLEFT", 8 + (k - 1) * (w + gap), -y)
-          t:SetSize(math.max(1, w), 5)
-          if k <= have then t:SetVertexColor(GOLD_L[1], GOLD_L[2], GOLD_L[3], 1) else t:SetVertexColor(1, 1, 1, 0.12) end
+          t:SetPoint("TOPLEFT", card, "TOPLEFT", 11 + (k - 1) * (w + gap), -y)
+          t:SetSize(math.max(1, w), 4)
+          if k <= have then t:SetVertexColor(YELLOW[1], YELLOW[2], YELLOW[3], 1) else t:SetVertexColor(1, 1, 1, 0.10) end
         end
       else
         local back = Pip()
-        back:ClearAllPoints() back:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -y) back:SetSize(textW, 5)
-        back:SetVertexColor(1, 1, 1, 0.12)
+        back:ClearAllPoints() back:SetPoint("TOPLEFT", card, "TOPLEFT", 11, -y) back:SetSize(textW, 4)
+        back:SetVertexColor(1, 1, 1, 0.10)
         if have > 0 then
           local fill = Pip()
-          fill:ClearAllPoints() fill:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -y) fill:SetSize(math.max(1, textW * have / o.need), 5)
-          fill:SetVertexColor(GOLD_L[1], GOLD_L[2], GOLD_L[3], 1)
+          fill:ClearAllPoints() fill:SetPoint("TOPLEFT", card, "TOPLEFT", 11, -y) fill:SetSize(math.max(1, textW * have / o.need), 4)
+          fill:SetVertexColor(YELLOW[1], YELLOW[2], YELLOW[3], 1)
         end
       end
       y = y + 8
@@ -450,17 +475,17 @@ local function FillCard(e, width)
       local fs = Line(n)
       fs:SetWidth(textW)
       fs:ClearAllPoints()
-      fs:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -y)
+      fs:SetPoint("TOPLEFT", card, "TOPLEFT", 11, -y)
       fs:SetText(L["Turn in: %s"]:format(who))
       Color(fs, e.complete and GREEN or HINT)
       y = y + 14
     end
   end
   -- the way around / first to the way in (from the arrow)
-  if not card.way then card.way = Font(card, 10, { 0.96, 0.84, 0.48 }, "LEFT") end
+  if not card.way then card.way = Font(card, 10, GOLD, "LEFT") end
   card.way:SetWidth(textW)
   card.way:ClearAllPoints()
-  card.way:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -y)
+  card.way:SetPoint("TOPLEFT", card, "TOPLEFT", 11, -y)
   y = y + 13
   return math.max(y + 4, withCompass and (COMPASS + 38) or 0)
 end
@@ -632,12 +657,12 @@ local KEYS = { pos = "trackerPos", collapsed = "trackerCollapsed", scale = "trac
 local function Get(key) local k = KEYS[key] return k and DB()[k] end
 local function Set(key, value) local k = KEYS[key] if k and ns.db then ns.db[k] = value end end
 
-Style.ICONS.qdRead = Style.ICONS.qdRead or {
-  atlas = { "Campaign-QuestLog-LoreBook", "questlog-questtypeicon-lore" }, file = "Interface\\Icons\\INV_Misc_Book_09" }
+-- (02.11.2026, Daniel: "eindeutige symbole für questbuch und questanzeigen") two plain symbols of the game, in both
+-- clients, in the gold of the other head buttons: a scroll for the quest's whole text, a book for the quest book
+Style.ICONS.qdRead = { atlas = {}, file = "Interface\\GossipFrame\\PetitionGossipIcon" }
 -- (29.10., Daniel: the quest book button showed an X) defined in Panel.lua until round 7; without it the kit falls
 -- back to the close icon
-Style.ICONS.qdZoneList = Style.ICONS.qdZoneList or {
-  atlas = {}, file = "Interface\\QuestFrame\\UI-QuestLog-BookIcon", color = true }
+Style.ICONS.qdZoneList = { atlas = {}, file = "Interface\\GossipFrame\\TrainerGossipIcon" }
 
 local function Mode() return ns.db.trackerMode == "zones" and "zones" or "near" end
 
@@ -770,7 +795,9 @@ end
 ns.TrackerQuestMenu = ShowQuestMenu -- (tests)
 
 local scrollSkip, scrollMode, scrollMore = 0, nil, 0 -- (20.10.) quests scrolled off the top, the mode they belong to, quests below
-local QUEST_GAP = 8 -- (18.10., Daniel: "very tight between the quests") pixels above every quest row (the style's default is 2)
+-- (18.10., Daniel: "very tight between the quests") pixels above every quest row; (02.11.2026) 0: Don rows are 34 px with
+-- a fine line below, the room is in the row now
+local QUEST_GAP = 0
 -- (20.10.) the quest's map colour as a dot in front of a name
 local function ColorDot(questID)
   if not ns.QuestColor then return "" end
@@ -778,19 +805,34 @@ local function ColorDot(questID)
   return ("|cff%02x%02x%02x\226\128\162|r "):format(math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
 end
 local COMPLETE_TEXT = { 0.62, 0.92, 0.62 }
+-- (02.11.2026) a Don row: title (with the group tag), the second line, its colour
 local function QuestRowText(e)
-  local title = (ns.QuestLevelTag(e.questID) or "") .. (e.title or "") .. ns.GroupTag(e.questID)
-  title = ColorDot(e.questID) .. title
-  local sub
-  if e.failed then sub = Style.Colorize(L["Failed"], "critical")
+  local title = (e.title or "") .. ns.GroupTag(e.questID)
+  local sub, subColor
+  if e.failed then sub, subColor = L["Failed"], "critical"
   elseif e.complete then
     local who = TurnInName(e.questID)
-    sub = Style.Colorize(who and L["Turn in: %s"]:format(who) or L["Ready to turn in"], "good")
-  elseif e.open then sub = Style.Colorize(Short(e.open), B.textHint or "textHint") end
+    sub, subColor = who and L["Turn in: %s"]:format(who) or L["Ready to turn in"], GREEN
+  elseif e.open then sub, subColor = Short(e.open), HINT end
   -- (Questdon review 1) a timed quest: the time left in front (the game's tracker that shows it is hidden)
   local clock = Clock(e)
   if clock then sub = sub and (clock .. "  " .. sub) or clock end
-  return sub and (title .. "\n" .. sub) or title, e.complete and COMPLETE_TEXT or (B.textPrimary or "textPrimary")
+  return title, e.complete and COMPLETE_TEXT or CREAM, sub, subColor
+end
+-- the quest's map colour (its pins on the maps) as the mark on the left, the level as a badge
+local function MarkRGB(questID)
+  if not ns.QuestColor then return nil end
+  local r, g, b = ns.QuestColor(questID)
+  return r and { r, g, b } or nil
+end
+local function DonRow(row, e)
+  local title, tc, sub, sc = QuestRowText(e)
+  row:SetText(title, tc)
+  row:SetSub(sub, sc)
+  local lv = e.level and e.level > 0 and e.level or nil
+  row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", LevelRGB(lv), true) -- (Daniel 02.11.2026) the level in its colour, no box, as on the card
+  row:SetMark(MarkRGB(e.questID))
+  return row
 end
 -- (23.10., Daniel's /qd mem 20.10.: the list made anew about every 10 s while questing, some 250 KB each time) a kill
 -- (XP) or an objective counting up rebuilt every row, card and closure; now the rows that show progress are kept
@@ -804,7 +846,7 @@ local function KeepProgress(row, e, kind, i)
 end
 local function RowFor(e, focusID)
   local row = Style.Row(panel):SetGapBefore(QUEST_GAP)
-  row:SetText(QuestRowText(e))
+  DonRow(row, e)
   KeepProgress(row, e, "quest")
   if e.questID == focusID then row:SetActive(true) end
   row:SetOnClick(function(_, button)
@@ -825,7 +867,7 @@ local function RowFor(e, focusID)
 end
 
 local function NeedleRow(row, e)
-  row:SetValue(Yards(e.dist), B.goldLight or "accent")
+  row:SetValue(Yards(e.dist), GOLD)
   -- (18.10., Daniel: "the small arrows beside the quests can go") no needle icon on the rows any more
   -- (17.10.) kept with its entry: the yards are written again without a rebuild when they change by 10
   rows[#rows + 1] = { row = row, target = e.target, e = e, b = e.dist and math.floor(e.dist / 10) }
@@ -976,7 +1018,7 @@ local function Extras()
   local n, max if ns.QuestLogCount then n, max = ns.QuestLogCount() end
   if max then
     Style.Row(panel):SetText(L["Quests in log"], hint):SetGapBefore(6)
-      :SetValue(("%d/%d"):format(n, max), n >= max and "critical" or (n >= max - 3 and "warning") or hint)
+      :SetValue(ns.Fraction(n, max), n >= max and "critical" or (n >= max - 3 and "warning") or hint)
   end
   local orphans = ns.OrphanQuestItems and ns.OrphanQuestItems() or {}
   if #orphans > 0 then
@@ -1049,7 +1091,7 @@ end
 -- (Daniel 12.10.: "the choice up top is not very clear": two small icons, one of them a dark square) three
 -- tabs in words under the title: Nearby, By zone, By level. The one you are in is gold and underlined.
 local tabs
-local TAB_H = 18
+local TAB_H = 24
 local function TabActive(key)
   if key == "near" then return Mode() == "near" end
   if key == "zones" then return Mode() == "zones" and not ns.db.trackerSortLevel end
@@ -1072,17 +1114,23 @@ local function Tabs()
     for i, d in ipairs(defs) do
       local b = CreateFrame("Button", nil, tabs)
       b.key = d[1]
-      b.fs = Font(b, 11, HINT, "CENTER")
-      b.fs:SetPoint("CENTER", b, "CENTER", 0, 1)
-      b.fs:SetText(d[2])
+      -- (02.11.2026) Don tabs: the head font in capitals, three equal parts of the width, the active one gold with a
+      -- 2 px bright gold line under its text; (Daniel 02.11.: "den hintergrund komplett weglassen ... der strich darf nicht
+      -- auf den rahmen laufen") no background, the line only as wide as the text
+      b.fs = Kit and Kit.Text(b, "tab", HINT, "CENTER") or Font(b, 11, HINT, "CENTER")
+      b.fs:SetPoint("CENTER", b, "CENTER", 0, 0)
+      b.fs:SetText(Kit and Kit.Upper(d[2]) or d[2])
+      b.full = d[2]
       b._w = math.floor((ns.Num(ns.Value(b.fs.GetStringWidth, b.fs)) or 60) + 14)
       b:SetSize(b._w, TAB_H)
-      b.line = Tex(b, "ARTWORK", GOLD, 0.9)
-      b.line:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 4, 0)
-      b.line:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -4, 0)
-      b.line:SetHeight(1)
-      b:SetScript("OnEnter", function(self) self.hover = true TabColors() end)
-      b:SetScript("OnLeave", function(self) self.hover = nil TabColors() end)
+      b.line = Tex(b, "ARTWORK", GOLD_L, 1)
+      b.line:SetPoint("BOTTOM", b, "BOTTOM", 0, 1)
+      b.line:SetHeight(2)
+      b:SetScript("OnEnter", function(self)
+        self.hover = true TabColors()
+        if Style.FullText and Style.FullText(self.fs) then Style.Tooltip(self, self.full) end
+      end)
+      b:SetScript("OnLeave", function(self) self.hover = nil TabColors() Style.HideTooltip(self) end)
       b:SetScript("OnClick", function(self)
         if self.key == "near" then ns.db.trackerMode = "near"
         else ns.db.trackerMode, ns.db.trackerSortLevel = "zones", self.key == "level" end
@@ -1091,16 +1139,24 @@ local function Tabs()
       tabs.b[i] = b
     end
   end
-  -- (Daniel 12.10.: "the tabs in the middle of the window, also when the width changes") centred on each build
-  local width = (panel and panel._width or 300) - 16
+  -- (Daniel 12.10.: "the tabs in the middle of the window, also when the width changes"; 02.11.2026) three equal parts
+  -- of the width, a text that does not fit is cut (whole text in the tooltip)
+  -- (02.11.2026) 3 px inside the window's frame on both sides; the text set anew each time, so a cut from a narrower
+  -- moment does not stay (Daniel's picture: "NEAR..." without background)
+  local width = (panel and panel._width or 300)
   tabs:SetWidth(width)
-  local total, gap = 0, 6
-  for i, b in ipairs(tabs.b) do total = total + b._w + (i > 1 and gap or 0) end
-  local x = math.max(0, math.floor((width - total) / 2))
-  for _, b in ipairs(tabs.b) do
+  local inset = 3
+  local each = math.floor((width - 2 * inset) / #tabs.b)
+  for i, b in ipairs(tabs.b) do
     b:ClearAllPoints()
-    b:SetPoint("LEFT", tabs, "LEFT", x, 0)
-    x = x + b._w + gap
+    b:SetPoint("LEFT", tabs, "LEFT", inset + (i - 1) * each, 0)
+    b._w = each
+    b:SetSize(each, TAB_H)
+    b.fs:SetText(Kit and Kit.Upper(b.full) or b.full)
+    if Style.FitText then Style.FitText(b.fs, each - 12, "cut") end
+    local tw = math.floor(ns.Num(ns.Value(b.fs.GetStringWidth, b.fs)) or (each - 24))
+    b.lineW = math.max(12, math.min(each - 12, tw + 8))
+    b.line:SetWidth(b.lineW)
   end
   TabColors()
   return tabs
@@ -1116,7 +1172,7 @@ local function UpdateProgress(focus)
   for i = 1, progN do
     local r = progRows[i]
     local e = r.e
-    if r.kind == "quest" then r.row:SetText(QuestRowText(e))
+    if r.kind == "quest" then DonRow(r.row, e)
     elseif r.kind == "clock" then r.row:SetText(Clock(e) or "")
     else
       local o = e.objs[r.i]
@@ -1188,7 +1244,7 @@ local function Build()
   if not changed and not orderNew and lastSig and (not progNew or ns.MemPart("tracker progress", UpdateProgress, focus)) then
     ns.MemPart("tracker yards", UpdateYards)
     local b = best and math.floor(best / 10)
-    if nearbyRow and b ~= nearbyB then nearbyB = b nearbyRow:SetValue(Yards(best), B.goldLight or "accent") end
+    if nearbyRow and b ~= nearbyB then nearbyB = b nearbyRow:SetValue(Yards(best), GOLD) end
     return
   end
   lastSig = true
@@ -1214,7 +1270,7 @@ local function Build()
     more = more + 1
     return false
   end
-  Style.Content(panel, Tabs(), TAB_H)
+  Style.Content(panel, Tabs(), TAB_H, { inset = false }) -- (02.11.2026) the tabs over the whole width
   -- (1.3.6) with a guide's compass (Leveldon) the guide shows the way: no card of our own, all quests listed
   if not ns.GuideActive() then
     local h = FillCard(focus, width)
@@ -1285,7 +1341,7 @@ local function Build()
     ns.UpdateTracker(true)
   end
   local function Head(text, key, count, open)
-    local h = Style.Header(panel, text)
+    local h = Style.Header(panel, Kit and Kit.Upper(text) or text)
     if h and h.SetFold then h:SetFold(open, count, function() Fold(key) end) end
     return h
   end
@@ -1317,8 +1373,9 @@ local function Build()
         end
       end
     end
-    Group(L["Ready to turn in"], done, "done")
+    -- (02.11.2026, Daniel: "das was fertig ist, sollte nach unten wandern, wenn noch andere quests aktiv sind")
     Group(L["Nearby"], others, "near")
+    Group(L["Ready to turn in"], done, "done")
     if more > 0 then Style.Row(panel):SetText(L["+%d more quests"]:format(more), B.textHint or "textHint") end
     if skipped > 0 then Style.Row(panel):SetText(L["%d quests above (scroll up)"]:format(skipped), B.textHint or "textHint") end
     scrollMore = more
@@ -1361,7 +1418,11 @@ local function Build()
         Head(z, "z:" .. z, inZone[z], true)
       end
       local row = Style.Row(panel):SetGapBefore(QUEST_GAP) -- (18.10.) the zone and level tabs too
-      row:SetText(ColorDot(e.questID) .. (ns.QuestLevelTag(e.questID) or "") .. (e.title or "") .. ns.GroupTag(e.questID), e.complete and { 0.62, 0.92, 0.62 } or (B.textPrimary or "textPrimary"))
+      -- (02.11.2026) a Don row without the second line: badge, map colour, title; the objectives follow below
+      row:SetText((e.title or "") .. ns.GroupTag(e.questID), e.complete and COMPLETE_TEXT or CREAM)
+      local lv = e.level and e.level > 0 and e.level or nil
+      row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", LevelRGB(lv), true) -- (Daniel 02.11.2026) the level in its colour, no box, as on the card
+      row:SetMark(MarkRGB(e.questID))
       row:SetTooltip(function() if ns.HoverQuestRow then ns.HoverQuestRow(row, e.questID) end end) -- (20.10.) marks stand out on the maps
       row:SetOnClick(function(_, button)
         if button == "RightButton" then ShowQuestMenu(e) return end
@@ -1615,13 +1676,15 @@ end
 local function Create()
   card = CreateCard()
   panel = Style.Panel("QuestdonTracker", UIParent, {
-    look = "book", media = MEDIA,
-    title = Style.Wordmark("Quest", "don"), width = TrackerWidth(),
+    -- (02.11.2026, StyleKit 2) the Don look: 28 px head with the mark, gold frame
+    look = "don", logo = LOGO,
+    title = "QUESTDON", width = TrackerWidth(),
     close = true, collapse = true,
     closeTooltip = L["Hide the quest list (/qd list brings it back)"],
     buttons = {
       -- (Daniel 12.10.: "a button up top for the options too")
-      { key = "options", kind = "options", tooltip = { L["Options"] }, onClick = function() if ns.OpenOptions then ns.OpenOptions() end end },
+      -- (01.11.2026) the cog of every Don addon (DonCore Options, Style.Panel donOptions)
+      { key = "options", donOptions = "Questdon", hint = L["/qd opens them too."] },
       { key = "read", kind = "qdRead", tooltip = { L["Read the whole quest"] },
         onClick = function() local id = card and card.questID if id then ns.ShowQuestText(id) end end },
       -- (1.3.8) the quest book button of the old window

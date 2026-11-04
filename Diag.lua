@@ -254,8 +254,9 @@ function ns.BuildDiag()
       local ok, info = pcall(get, name)
       return ok and info ~= nil and "yes" or "no"
     end
-    return ("none needed; text window %s, scroll own, close %s; client has UIPanelScrollFrameTemplate %s, UIPanelCloseButton %s"):format(
-      p.built and "built" or "not built yet", p.built and YesNo(p.closeButton) or "kit",
+    -- (04.11.2026, Era-Test) the text window is DonCore's copy window (Kit.ShowCopy)
+    return ("none needed; text window %s (DonCore copy window); client has UIPanelScrollFrameTemplate %s, UIPanelCloseButton %s"):format(
+      p.built and "built" or p.built == false and "chat" or "not built yet",
       Template("UIPanelScrollFrameTemplate"), Template("UIPanelCloseButton"))
   end)
   Probe(out, "style kit", function()

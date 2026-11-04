@@ -234,9 +234,10 @@ local TOOLS = {
       end
     end, "Questdon hides a quest when its quest giver did not offer it at 3 different levels, or when you reported it (Alt-click on the !, or /qd nothere with the NPC targeted). This shows them all again. /qd nothere list shows them, /qd nothere undo takes back the last report." },
   -- (25.10., Daniel: "can players only collect and share data?") Setup.lua ns.SetDataOnly
+  -- (02.11.2026, Daniel: no visual confirmation of the state) a switch in DonCore's window (state), on means data only
   { "Only collect and share data", "On / off", function()
       if ns.SetDataOnly then ns.SetDataOnly() end
-    end, "Switches off everything Questdon shows and does by itself (map pins, quest list, arrow, XP bar, tooltips, automation and merchant helpers) and keeps only learning and sharing on. Click again and your settings are back as they were. Also /qd collect." },
+    end, state = function() return ns.DataOnly and ns.DataOnly() or false end, "Switches off everything Questdon shows and does by itself (map pins, quest list, arrow, XP bar, tooltips, automation and merchant helpers) and keeps only learning and sharing on. Click again and your settings are back as they were. Also /qd collect." },
   { "Export learned data", "Export", function()
       if ns.OpenExport then ns.OpenExport(false) end
     end, "Shows what Questdon learned and the bundled data does not have yet, as text to copy into a GitHub issue. Helps to improve the quest data for everyone. Numbers, plus the names of NPCs as your game shows them; no names of characters, guilds or players. /qd export (or /qd export all for everything)." },
@@ -244,8 +245,9 @@ local TOOLS = {
       if ns.OpenDiag then ns.OpenDiag() end
     end, "Report for bug reports: client version, which game functions exist, a few live checks and errors Questdon caught. Only numbers, no names. /qd diag" },
   { "Dungeon quests", "Show", function()
-      if ns.OpenDungeons then ns.OpenDungeons() end
-    end, "All dungeon quests in your log and the ones you can pick up now, per dungeon, as text. /qd dungeons" },
+      -- (04.11.2026, Era-Test) the quest book's "dungeons" tab instead of the old text window
+      if ns.OpenQuestBook then ns.OpenQuestBook("dungeons") elseif ns.OpenDungeons then ns.OpenDungeons() end
+    end, "All dungeon quests in your log and the ones you can pick up now, per dungeon, in the quest book. /qd dungeons" },
   { "Delete learned quest data", "Delete", function()
       if ns.Confirm("learned", L["Click again within 5 seconds to delete all learned quest data."]) then
         wipe(ns.db.learned)
@@ -271,15 +273,13 @@ local TOOLS = {
 -- Tool buttons run protected (Blizzard's settings code calls them).
 for _, t in ipairs(TOOLS) do t[3] = ns.Guard("tool", t[3]) end
 
--- (17.10., Daniel: "Blizzard's settings page is not needed any more") The options live in Questdon's own window
+-- (17.10., Daniel: "Blizzard's settings page is not needed any more") The options live in the window
 -- (OptionsWindow.lua); Blizzard's AddOn list keeps one page with the status and a button that opens it.
+-- (01.11.2026, STYLEKIT_PLAN.md "Schritt 3") that page is DonCore's (Settings minor 2): status plus "Options / Open",
+-- the same for every Don addon. ownWindow: Questdon registers its tabs itself (OptionsWindow.lua), Settings adds none.
 ns.OPTION_PAGES, ns.OPTION_TOOLS, ns.OptionStatus = PAGES, TOOLS, Status
 local function Build()
-  category = ns.BuildSettings({ name = "Questdon", status = Status, pages = {}, tools = {
-    { "Questdon's options", "Open", ns.Guard("tool", function()
-        if SettingsPanel and SettingsPanel.Hide then pcall(SettingsPanel.Hide, SettingsPanel) end
-        if ns.OpenOptionsWindow then ns.OpenOptionsWindow() end
-      end), "All options in Questdon's own window, sorted in tabs with a picture of what they change. Also /qd or the cog." } } })
+  category = ns.BuildSettings({ name = "Questdon", status = Status, pages = {}, ownWindow = true })
   ns.settingsCategory = category ~= nil
 end
 

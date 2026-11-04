@@ -1,15 +1,10 @@
 local _, ns = ...
 local L = ns.L
 local Style = ns.Style
-local C = Style.COLORS
 
 ---------------------------------------------------------------------------
--- (1.3) The quest book: one large window with three tabs.
+-- (1.3) The quest book: one large window with four tabs.
 --
---   Journal  the personal diary (Journal.lua): today's numbers at the top
---            (quests, XP, money, progress of the level), filters, then a
---            time line, newest first, with a mark per event; level-ups as a
---            golden band; at the end the quests done before the journal.
 --   Zones    every zone of Kalimdor, the Eastern Kingdoms and the new Forever zones (Zephras Isle) on the left
 --            (level range, your progress, a filter box); the picked zone on
 --            the right with a picture of its map, "23 / 72 done", its
@@ -18,27 +13,30 @@ local C = Style.COLORS
 --   Dungeons (1.3.3, Daniel 08.10.) every dungeon with its quests for you,
 --            sorted by level; under each open quest the quests still to do
 --            before it ("First: ..."), with quest giver and zone.
+--   Journal  the personal diary (Journal.lua): today's numbers at the top
+--            (quests, XP, money, progress of the level), filters, then a
+--            time line, newest first, with a mark per event; level-ups as a
+--            golden band; at the end the quests done before the journal.
 --   Search   journal, all quests and zones by name, level or quest ID.
 --
 -- Long lists are drawn as a window onto the list (mouse wheel), only the
 -- visible lines exist as frames. Our own frames only; nothing of Blizzard's
 -- is hooked. Escape closes the book.
 ---------------------------------------------------------------------------
--- (1.3.4) Daniel 08.10.: a richer look in the direction of his drafts:
--- navy to violet background, a gold frame with ornaments in the corners,
--- gold-framed tabs, every line as a card, the zone map round in a gold ring,
--- statistic cards. Plus: a detail card for the clicked quest, dungeons as
--- "ready" cards with a route to the quest givers, zone filters and sorting
--- by distance, and a shorter journal (accepted and turned in in one line,
--- day totals, the last seven days).
-local W, H = 980, 640
-local HEADER_H = 42
-local GEAR_SIZE, GEAR_GAP = 18, 8 -- (round 8b) the options gear in the title bar, next to the X (14 px)
-local SIDE_W = 232
-local HERO_H = 116
-local JHERO_H = 188 -- journal: round map and four statistic cards
-local DETAIL_W = 320
-local ROW_H, HEAD_H, SMALL_H = 46, 30, 32
+-- (1.3.4) Daniel 08.10.: a detail card for the clicked quest, dungeons as "ready" cards with a route to the quest givers,
+-- zone filters and sorting by distance, and a shorter journal (accepted and turned in in one line, day totals, the last
+-- seven days).
+-- (02.11.2026, StyleKit 2 step 4, Daniel: the book follows draft 4, docs/layout_2026-11-01/questdon_mockup_v4.html) built
+-- from the shared blocks of the Don style (DonCore Kit): Kit.Window (720x420 to 1300x900, place and size in
+-- ns.db.questBook), the zones as a Sidebar of ZoneRows, a Hero with the zone's map, ChipBars, Lists, four Tiles on the
+-- journal, the dungeons as index cards (Kit.Card) with their prerequisites a click away, the focus card (Kit.Detail) on the
+-- right with the chain as a path from left to right (Chain.lua). Every text one line, cut with "..." and the whole text
+-- in the tooltip; under 960 px the focus card goes over the list, under 800 px the zone list becomes an icon rail. What
+-- only Questdon draws (the zone map, the round map of the journal, the dungeon pictures) uses the kit's colours and helpers.
+local Kit = LibStub("DonCore-1.0"):Get("Kit", 3)
+local KC, KS = Kit.C, Kit.SIZE
+local ROW_H, HEAD_H, SMALL_H = 36, 28, 28 -- (draft 4) quest and journal lines, group heads, small lines
+local HERO_H = 76
 local MEDIA = "Interface\\AddOns\\Questdon\\Media\\"
 local MAX_QUESTS = 100
 
@@ -78,7 +76,7 @@ local TAB_ICON = {
   search = "Interface\\Icons\\INV_Misc_Spyglass_03",
   dungeons = "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01",
 }
-local TABS = { "journal", "zone", "dungeons", "search" }
+local TABS = { "zone", "dungeons", "journal", "search" } -- (draft 4) the order of the tabs
 local TAB_TITLE = { journal = "Journal", zone = "Zones", dungeons = "Dungeons", search = "Search" }
 
 -- Zones of the book: uiMapID, continent, level range (cities without), faction
@@ -123,7 +121,7 @@ local MAPFILE = {
 local CONT_FALLBACK = { [KALIMDOR] = "Kalimdor", [EASTERN] = "Eastern Kingdoms", [FOREVER] = "New in Forever" }
 
 local book
-local tab = "journal"
+local tab = "zone" -- (02.11.2026, Daniel) the book starts on Zones, the first tab of draft 4
 local selZone           -- picked zone; nil: yours (or the one of the open world map)
 local zoneSeg = "quests" -- "quests" or "journal"
 local jfilter = "all"
@@ -141,6 +139,7 @@ local Fmt = ns.JournalFmt
 local MOMENT = Fmt.MOMENT or {} -- (1.3.11) the journal's moments (screenshots, deaths, dungeons ...)
 local Pic = {} -- (1.3.11) pictures of the album: photo buttons, tiles, the big view (below)
 local J3 = {} -- (1.3.11 Stufe 3) chapters, the review, the journal as text (below)
+local UI = { w = 976, h = 566, cw = 976, mode = "full", dunView = "grid" } -- (02.11.2026) state of the window and its parts
 
 ---------------------------------------------------------------------------
 -- Small helpers
@@ -165,7 +164,7 @@ end
 ns.QUESTBOOK_THEME = THEME -- (tests)
 
 local function RGB(c)
-  if type(c) == "string" then c = THEME[c] or C[c] end
+  if type(c) == "string" then c = THEME[c] or Style.COLORS[c] end
   return c or THEME.textPrimary
 end
 
@@ -176,180 +175,7 @@ local function Colorize(text, color)
   return "|c" .. hex .. tostring(text or "") .. "|r"
 end
 
-local function Fill(tex, color, alpha)
-  local c = RGB(color)
-  if tex.SetColorTexture then
-    tex:SetColorTexture(c[1], c[2], c[3], alpha or c[4] or 1)
-  else
-    tex:SetTexture(WHITE)
-    tex:SetVertexColor(c[1], c[2], c[3], alpha or c[4] or 1)
-  end
-end
-
-local function Tex(parent, layer, color, alpha, sub)
-  local t = parent:CreateTexture(nil, layer or "BACKGROUND", nil, sub)
-  if color then Fill(t, color, alpha) end
-  return t
-end
-
--- A colour gradient on a texture (vertical: c1 at the bottom, c2 at the top); plain fill if the client cannot.
-local function Gradient(tex, orientation, c1, a1, c2, a2)
-  local x, y = RGB(c1), RGB(c2)
-  if tex.SetGradient and CreateColor then
-    if not tex:GetTexture() then Fill(tex, { 1, 1, 1 }, 1) end
-    local ok = pcall(tex.SetGradient, tex, orientation, CreateColor(x[1], x[2], x[3], a1 or 1), CreateColor(y[1], y[2], y[3], a2 or 1))
-    if ok then return end
-  end
-  Fill(tex, c2, a2)
-end
-
--- (1.3.4) Rounded cards: the client cuts our 64 px texture into nine parts
--- (SetTextureSliceMargins); an older client gets a plain card with thin edges.
-local SLICE
-local function CanSlice(tex)
-  if SLICE == nil then SLICE = type(tex.SetTextureSliceMargins) == "function" end
-  return SLICE
-end
-local function CardTex(parent, layer, file, sub)
-  local t = parent:CreateTexture(nil, layer, nil, sub)
-  if CanSlice(t) and t:SetTexture(MEDIA .. file) ~= false then
-    if not pcall(t.SetTextureSliceMargins, t, 12, 12, 12, 12) then SLICE = false end
-    if SLICE and t.SetTextureSliceMode then pcall(t.SetTextureSliceMode, t, 0) end
-  end
-  return t
-end
--- A card behind a line or tile: f.cardFill, f.cardEdge (or four lines), inset from the frame's edges.
-local function Card(f, inset, insetY)
-  inset, insetY = inset or 0, insetY or 0
-  f.cardFill = CardTex(f, "BACKGROUND", "CardFill", 1)
-  f.cardFill:SetPoint("TOPLEFT", f, "TOPLEFT", inset, -insetY)
-  f.cardFill:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -inset, insetY)
-  if SLICE then
-    f.cardEdge = CardTex(f, "BORDER", "CardBorder", 1)
-    f.cardEdge:SetAllPoints(f.cardFill)
-  else
-    f.cardFill:SetTexture(WHITE)
-    f.cardLines = {}
-    local fl = f.cardFill
-    local function Line(a, b, horiz)
-      local t = f:CreateTexture(nil, "BORDER")
-      t:SetTexture(WHITE)
-      t:SetPoint(a, fl, a) t:SetPoint(b, fl, b)
-      if horiz then t:SetHeight(1) else t:SetWidth(1) end
-      f.cardLines[#f.cardLines + 1] = t
-    end
-    Line("TOPLEFT", "TOPRIGHT", true) Line("BOTTOMLEFT", "BOTTOMRIGHT", true)
-    Line("TOPLEFT", "BOTTOMLEFT") Line("TOPRIGHT", "BOTTOMRIGHT")
-  end
-  local function Edge(self, edge, edgeAlpha)
-    local e = RGB(edge or "cardEdge")
-    local ea = edgeAlpha or e[4] or 1
-    if self.cardEdge then self.cardEdge:SetVertexColor(e[1], e[2], e[3], ea) end
-    for _, t in ipairs(self.cardLines or {}) do t:SetVertexColor(e[1], e[2], e[3], ea) end
-  end
-  function f:SetCardLook(fillTop, fillBottom, fillAlpha, edge, edgeAlpha)
-    self._look = { fillTop, fillBottom, fillAlpha, edge, edgeAlpha }
-    Gradient(self.cardFill, "VERTICAL", fillBottom or "cardLow", fillAlpha or 0.92, fillTop or "card", fillAlpha or 0.92)
-    Edge(self, edge, edgeAlpha)
-  end
-  -- mouse over: a brighter gold edge
-  function f:SetCardHover(on)
-    local l = self._look or {}
-    if on then Edge(self, "goldLight", 0.85) else Edge(self, l[4], l[5]) end
-  end
-  f:SetCardLook()
-  return f
-end
-
-local fontPath
-local function FontPath()
-  if fontPath then return fontPath end
-  local obj = _G.GameFontHighlightSmall
-  local ok, path = false, nil
-  if type(obj) == "table" and type(obj.GetFont) == "function" then ok, path = pcall(obj.GetFont, obj) end
-  fontPath = (ok and type(path) == "string" and path) or _G.STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
-  return fontPath
-end
-
-local function SetColor(fs, color, alpha)
-  local c = RGB(color)
-  fs:SetTextColor(c[1], c[2], c[3], alpha or 1)
-end
-
-local function Text(parent, size, color, justify, layer)
-  local fs = parent:CreateFontString(nil, layer or "OVERLAY", "GameFontHighlightSmall")
-  if size and fs.SetFont then pcall(fs.SetFont, fs, FontPath(), size, "") end
-  SetColor(fs, color or "textPrimary")
-  if justify then fs:SetJustifyH(justify) end
-  fs:SetWordWrap(false)
-  return fs
-end
-
-local function Icon(parent, size, file, layer)
-  local t = parent:CreateTexture(nil, layer or "ARTWORK")
-  t:SetSize(size, size)
-  -- a texture the client does not have: a plain square instead of nothing
-  if file and t:SetTexture(file) == false then t:SetTexture(WHITE) end
-  return t
-end
-
 local function Plain(s) return (tostring(s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
-
-local function TextWidth(fs)
-  local w = ns.Num(fs.GetStringWidth and fs:GetStringWidth())
-  if w and w > 0 then return w end
-  return #Plain(fs:GetText()) * 6
-end
-
--- (i18n) A text in a fixed space (Style.FitText): first a little smaller, then
--- cut with "..."; the whole text then shows in the tooltip of its line or tile.
-local function Fit(fs, budget, owner)
-  local ok = Style.FitText(fs, budget)
-  if owner then
-    owner._cut = owner._cut or {}
-    owner._cut[fs] = (not ok) and Style.FullText(fs) or nil
-  end
-  return ok
-end
-
-local function CutLines(owner)
-  if type(owner._cut) ~= "table" then return nil end
-  local out = {}
-  for _, t in pairs(owner._cut) do out[#out + 1] = t end
-  if #out == 0 then return nil end
-  table.sort(out)
-  return out
-end
-
-local function ShowCut(owner)
-  local cut = CutLines(owner)
-  if not cut then return false end
-  local rest = {}
-  for i = 2, #cut do rest[#rest + 1] = cut[i] end
-  Style.Tooltip(owner, cut[1], rest, nil, "ANCHOR_RIGHT")
-  return true
-end
-
--- A plain frame that shows its cut texts on mouse over.
-local function CutTip(f)
-  f:EnableMouse(true)
-  f:SetScript("OnEnter", function(self) ShowCut(self) end)
-  f:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
-end
-
--- Width of a list line: its real width in the game, else what the layout gives it.
-local function RowW(f)
-  local w = ns.Num(f.GetWidth and f:GetWidth())
-  if w and w > 50 then return w end
-  return (f._list and f._list.rowW) or (W - 20)
-end
-
-local function LevelRGB(level)
-  local hex = level and level > 0 and ns.LevelColor and ns.LevelColor(level)
-  local r, g, b = tostring(hex or ""):match("|cff(%x%x)(%x%x)(%x%x)")
-  if not r then return C.textHint end
-  return { tonumber(r, 16) / 255, tonumber(g, 16) / 255, tonumber(b, 16) / 255 }
-end
 
 local function Shift() return ns.True(ns.Value(IsShiftKeyDown)) end
 
@@ -380,286 +206,68 @@ local function Coins(copper, size)
   return table.concat(out, " ")
 end
 
--- Mouse behaviour of a clickable line: hover, tooltip (fn returns title, lines, hint), click.
-local function Clickable(f)
-  f:EnableMouse(true)
-  f.hover = Tex(f, "BACKGROUND", "rowHover", nil, 1)
-  f.hover:SetAllPoints(f)
-  f.hover:Hide()
-  if f.RegisterForClicks then f:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
-  f:SetScript("OnEnter", function(self)
-    if self.onClick or self.tooltip then
-      if self.SetCardHover and self.cardFill:IsShown() then self:SetCardHover(true) else self.hover:Show() end
+-- (02.11.2026) the book's colour names (THEME, Style.COLORS) as the kit's: status marks, texts, heads
+UI.TONE = { good = "green", warning = "yellow", accent = "blue", critical = "red", textHint = "quiet",
+  textSecondary = "muted", textPrimary = "txGold", gold = "txGold", goldLight = "txGold" }
+UI.MARK = { log = "yellow", available = "blue", later = "grey", done = "green" } -- a quest's mark by its group
+UI.FIT = { good = "green", critical = "red", textHint = "grey" } -- a dungeon's fit (Dungeons.lua) as a status
+UI.WHOLE, UI.CUT = { 0, 1, 0, 1 }, { 0.08, 0.92, 0.08, 0.92 }
+-- (02.11.2026, Daniel: "ein zweiter click auf die quest in der liste, sollte das geöffnete fenster rechts wieder
+-- schließen") a click on the quest whose card is open closes the card; Shift-click always shows it (with arrow and map)
+function UI.ToggleQuest(id)
+  if not Shift() and UI.detailID == id and UI.detailEntry == nil then ns.QuestBookShowQuest(nil) return end
+  ns.QuestBookShowQuest(id, Shift() and "map" or nil)
+end
+function UI.ToggleEntry(src)
+  if UI.detailEntry ~= nil and UI.detailEntry == src then ns.QuestBookShowQuest(nil) return end
+  ns.QuestBookShowEntry(src)
+end
+UI.TREE_STEP, UI.TREE_MAX = 24, 3 -- (02.11.2026) a follow-up quest under its prerequisite: 24 px per level, at most 3 levels
+function UI.Tone(c) if c == nil then return nil end return UI.TONE[c] or c end
+function UI.Shown(f, on) if on then f:Show() else f:Hide() end end
+
+-- A tooltip of a line: its item's tooltip function, the book's colour names as the kit's. (1.3.4) The detail card is
+-- open: it says all of it, no second tooltip for a quest line.
+function UI.TipOf(row)
+  local it = row.item
+  local fn = it and it.tooltip
+  if type(fn) ~= "function" then return nil end
+  if row.questTip and UI.detailID ~= nil then return nil end
+  local title, lines, hint = fn(row)
+  if type(lines) == "table" then
+    local out = {}
+    for i, l in ipairs(lines) do
+      if type(l) == "table" and type(l[3]) == "string" then out[i] = { l[1], l[2], UI.Tone(l[3]) } else out[i] = l end
     end
-    -- (1.3.4) the detail card is open: it says all of it, no second tooltip for a quest line
-    local card = self.questTip and ns.QuestBookDetailID and ns.QuestBookDetailID() ~= nil
-    if self.tooltip and not card then
-      local ok, title, lines, hint = pcall(self.tooltip, self)
-      if ok and title then Style.Tooltip(self, title, lines, hint, "ANCHOR_RIGHT") end
-    else
-      ShowCut(self)
-    end
-  end)
-  f:SetScript("OnLeave", function(self)
-    self.hover:Hide()
-    if self.SetCardHover then self:SetCardHover(false) end
-    Style.HideTooltip(self)
-  end)
-  f:SetScript("OnClick", function(self, button)
-    if self.onClick then ns.SafeCall("quest book", self.onClick, self, button) end
-  end)
+    lines = out
+  end
+  return title, lines, hint
 end
 
--- A text button with a soft background (chips, segments).
-local function Chip(parent, onClick)
-  local b = CreateFrame("Button", nil, parent)
-  b:SetHeight(22)
-  b.bg = Tex(b, "BACKGROUND", "textPrimary", 0.05)
-  b.bg:SetAllPoints(b)
-  b.text = Text(b, 11, "textSecondary", "CENTER")
-  b.text:SetPoint("CENTER", b, "CENTER", 0, 0)
-  b:SetScript("OnEnter", function(self) if not self.on then Fill(self.bg, "textPrimary", 0.10) end ShowCut(self) end)
-  b:SetScript("OnLeave", function(self) if not self.on then Fill(self.bg, "textPrimary", 0.05) end Style.HideTooltip(self) end)
-  b:SetScript("OnClick", function(self) if onClick then ns.SafeCall("quest book", onClick, self) end end)
-  function b:Set(text, on)
-    self.text:SetText(text)
-    Style.FitText(self.text, 1e6) -- back to the normal size (Layout may make it smaller)
-    if self._cut then self._cut[self.text] = nil end
-    self.on = on and true or false
-    Fill(self.bg, on and "accent" or "textPrimary", on and 0.20 or 0.05)
-    SetColor(self.text, on and "textPrimary" or "textSecondary")
-    self:SetWidth(TextWidth(self.text) + 20)
+-- Two letters for a zone in the icon rail: the first letters of its words ("Westfall" WE, "Dun Morogh" DM)
+function UI.Short(name)
+  local out = {}
+  for w in tostring(name or ""):gmatch("[^%s%-']+") do
+    local ch = w:match("^[%z\1-\127\194-\244][\128-\191]*")
+    if ch and #out < 2 and not ch:match("^%l") then out[#out + 1] = ch end
   end
-  return b
+  if #out < 2 then
+    local w = tostring(name or ""):match("^[^%s]+") or ""
+    local a, b = w:match("^([%z\1-\127\194-\244][\128-\191]*)([%z\1-\127\194-\244][\128-\191]*)")
+    out = { a or "", b or "" }
+  end
+  return Kit.Upper(table.concat(out))
 end
 
----------------------------------------------------------------------------
--- Virtual list: items { kind, h, ... }; one pool of frames per kind
----------------------------------------------------------------------------
-local function NewList(parent, factories, rowW)
-  local list = CreateFrame("Frame", nil, parent)
-  list.rowW = rowW -- width of a line when the game cannot tell yet (layout constants)
-  list.items, list.offset, list.pools, list.used, list.factories = {}, 1, {}, {}, factories
-  list:EnableMouseWheel(true)
-  list:SetScript("OnMouseWheel", function(self, delta) self:Scroll(-(tonumber(delta) or 0) * 3) end)
-  list.track = Tex(list, "ARTWORK", "barBackground")
-  list.track:SetPoint("TOPRIGHT", list, "TOPRIGHT", -1, 0)
-  list.track:SetPoint("BOTTOMRIGHT", list, "BOTTOMRIGHT", -1, 0)
-  list.track:SetWidth(3)
-  list.thumb = Tex(list, "OVERLAY", "textHint", 0.9)
-  list.thumb:SetWidth(3)
-  list:SetScript("OnSizeChanged", function(self) self:Render() end)
-
-  function list:Height()
-    local h = ns.Num(self:GetHeight()) or 0
-    if h <= 1 then h = 420 end
-    return h
-  end
-  function list:SetItems(items, keep)
-    self.items = items or {}
-    if not keep then self.offset = 1 end
-    self:Render()
-  end
-  function list:MaxOffset()
-    local h, sum = self:Height(), 0
-    for i = #self.items, 1, -1 do
-      sum = sum + (self.items[i].h or ROW_H)
-      if sum > h then return math.min(#self.items, i + 1) end
-    end
-    return 1
-  end
-  function list:Scroll(d)
-    local o = math.max(1, math.min(self:MaxOffset(), self.offset + d))
-    if o ~= self.offset then self.offset = o self:Render() end
-  end
-  function list:ScrollTo(i)
-    self.offset = math.max(1, math.min(self:MaxOffset(), i or 1))
-    self:Render()
-  end
-  function list:Acquire(kind)
-    local pool = self.pools[kind]
-    if not pool then pool = {} self.pools[kind] = pool end
-    for _, r in ipairs(pool) do if not r.inUse then r.inUse = true return r end end
-    local r = self.factories[kind].create(self)
-    r._list = self
-    r.inUse = true
-    pool[#pool + 1] = r
-    return r
-  end
-  function list:Render()
-    for _, r in ipairs(self.used) do r:Hide() r.inUse = false end
-    self.used = {}
-    local h, y = self:Height(), 0
-    if self.offset > self:MaxOffset() then self.offset = self:MaxOffset() end
-    for i = self.offset, #self.items do
-      local it = self.items[i]
-      local ih = it.h or ROW_H
-      if y > 0 and y + ih > h + 0.5 then break end
-      local row = self:Acquire(it.kind)
-      row:ClearAllPoints()
-      row:SetPoint("TOPLEFT", self, "TOPLEFT", 0, -y)
-      row:SetPoint("TOPRIGHT", self, "TOPRIGHT", -8, -y)
-      row:SetHeight(ih)
-      row.item = it
-      row:Show()
-      ns.SafeCall("quest book row", self.factories[it.kind].render, row, it)
-      self.used[#self.used + 1] = row
-      y = y + ih
-    end
-    local total, before = 0, 0
-    for i, it in ipairs(self.items) do
-      total = total + (it.h or ROW_H)
-      if i < self.offset then before = before + (it.h or ROW_H) end
-    end
-    if total <= h then
-      self.thumb:Hide() self.track:Hide()
-    else
-      local th = math.max(18, h * h / total)
-      local pos = (h - th) * math.min(1, before / math.max(1, total - h))
-      self.thumb:ClearAllPoints()
-      self.thumb:SetPoint("TOPRIGHT", self, "TOPRIGHT", -1, -pos)
-      self.thumb:SetHeight(th)
-      self.thumb:Show() self.track:Show()
-    end
-  end
-  return list
+-- Something typed: once it rests for 0.2 s
+UI.typing = {}
+function UI.Later(key, fn)
+  local n = (UI.typing[key] or 0) + 1
+  UI.typing[key] = n
+  ns.After(0.2, function() if UI.typing[key] == n then ns.SafeCall("quest book", fn) end end)
 end
 
 local ZoneStats -- below (zones)
-
----------------------------------------------------------------------------
--- Line kinds
----------------------------------------------------------------------------
--- Section heading: text, count, a thin line, optional right text; clickable.
-local HeadKind = {
-  create = function(list)
-    local f = CreateFrame("Button", nil, list)
-    Clickable(f)
-    f.text = Text(f, 12, "gold", "LEFT")
-    f.text:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 10, 7)
-    f.count = Text(f, 11, "textHint", "LEFT")
-    f.count:SetPoint("LEFT", f.text, "RIGHT", 6, 0)
-    f.right = Text(f, 11, "textHint", "RIGHT")
-    f.right:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 7)
-    f.line = Tex(f, "ARTWORK", "divider")
-    f.line:SetHeight(1)
-    return f
-  end,
-  render = function(f, it)
-    f.text:SetText(it.text or "")
-    SetColor(f.text, (it.color == nil or it.color == "textPrimary") and "gold" or it.color)
-    f.count:SetText(it.count and tostring(it.count) or "")
-    f.right:SetText(it.right or "")
-    local rw = RowW(f)
-    local rightW = 0
-    if it.right and it.right ~= "" then Fit(f.right, rw * 0.45, f) rightW = TextWidth(f.right) + 16 end
-    local countW = it.count and (TextWidth(f.count) + 6) or 0
-    Fit(f.text, rw - 40 - countW - rightW, f)
-    f.line:ClearAllPoints()
-    f.line:SetPoint("LEFT", f.count, "RIGHT", 8, 0)
-    if it.right and it.right ~= "" then
-      f.line:SetPoint("RIGHT", f.right, "LEFT", -8, 0)
-    else
-      f.line:SetPoint("RIGHT", f, "RIGHT", -10, 0)
-    end
-    f.onClick, f.tooltip = it.onClick, it.tooltip
-    f:EnableMouse(it.onClick ~= nil or it.tooltip ~= nil)
-  end,
-}
-
-local EmptyKind = {
-  create = function(list)
-    local f = CreateFrame("Frame", nil, list)
-    f.text = Text(f, 12, "textHint", "CENTER")
-    f.text:SetPoint("CENTER", f, "CENTER", 0, 0)
-    f.text:SetWordWrap(true) -- (i18n) a long note wraps instead of running out of the list
-    return f
-  end,
-  render = function(f, it)
-    f.text:SetWidth(math.max(100, RowW(f) - 40))
-    f.text:SetText(it.text or "")
-  end,
-}
-
--- (1.3.4) Thin edges around a region (pills, level boxes).
-local function Edges(f, region, color, alpha, layer)
-  local c = RGB(color)
-  local out = {}
-  local function Line(p1, p2, horiz)
-    local t = f:CreateTexture(nil, layer or "BORDER")
-    t:SetTexture(WHITE)
-    t:SetVertexColor(c[1], c[2], c[3], alpha or 1)
-    t:SetPoint(p1, region, p1) t:SetPoint(p2, region, p2)
-    if horiz then t:SetHeight(1) else t:SetWidth(1) end
-    out[#out + 1] = t
-  end
-  Line("TOPLEFT", "TOPRIGHT", true) Line("BOTTOMLEFT", "BOTTOMRIGHT", true)
-  Line("TOPLEFT", "BOTTOMLEFT") Line("TOPRIGHT", "BOTTOMRIGHT")
-  function out:SetColor(col, a)
-    local cc = RGB(col)
-    for _, t in ipairs(self) do t:SetVertexColor(cc[1], cc[2], cc[3], a or 1) end
-  end
-  return out
-end
-
--- A status pill on the right of a line: filled, framed, short text.
-local function NewPill(f)
-  f.pillText = Text(f, 11, "textPrimary", "RIGHT", "OVERLAY")
-  f.pillText:SetPoint("RIGHT", f, "RIGHT", -18, 0)
-  f.pill = Tex(f, "ARTWORK", "accent", 0.30)
-  f.pill:SetPoint("TOPLEFT", f.pillText, "TOPLEFT", -9, 5)
-  f.pill:SetPoint("BOTTOMRIGHT", f.pillText, "BOTTOMRIGHT", 9, -5)
-  f.pillEdge = Edges(f, f.pill, "accent", 0.8, "ARTWORK")
-end
-local function SetPill(f, text, color, room)
-  if text and text ~= "" then
-    f.pillText:SetText(text)
-    Fit(f.pillText, room or 130, f)
-    local c = color or "textSecondary"
-    SetColor(f.pillText, c == "textHint" and "textSecondary" or "textPrimary")
-    Fill(f.pill, c, c == "textHint" and 0.14 or 0.34)
-    f.pillEdge:SetColor(c, c == "textHint" and 0.35 or 0.85)
-    f.pillText:Show() f.pill:Show()
-    for _, t in ipairs(f.pillEdge) do t:Show() end
-    return TextWidth(f.pillText) + 36
-  end
-  f.pillText:Hide() f.pill:Hide()
-  for _, t in ipairs(f.pillEdge) do t:Hide() end
-  return 0
-end
-
--- (1.3.11) A picture of the album (Questdon-Album) in a thin gold frame; a
--- click opens the big view, which pages through this character's pictures.
-function Pic.Button(parent, alpha)
-  local b = CreateFrame("Button", nil, parent)
-  b.pic = b:CreateTexture(nil, "ARTWORK")
-  b.pic:SetAllPoints(b)
-  b.alpha = alpha or 0.55
-  b.edge = Edges(b, b.pic, "gold", b.alpha, "OVERLAY")
-  b:SetScript("OnEnter", function(self)
-    self.edge:SetColor("goldLight", 0.95)
-    Style.Tooltip(self, L["Picture"], { { L["Click: open the picture."] } }, nil, "ANCHOR_RIGHT")
-  end)
-  b:SetScript("OnLeave", function(self) self.edge:SetColor("gold", self.alpha) Style.HideTooltip(self) end)
-  b:SetScript("OnClick", function(self)
-    if self.shot then ns.SafeCall("quest book", Pic.Open, ns.AlbumMine(), self.shot) end
-  end)
-  b:Hide()
-  return b
-end
-function Pic.Set(b, shot, w, h)
-  b.shot = shot
-  if not shot then b:Hide() return end
-  b:SetSize(w, h)
-  b.pic:SetTexture(ns.AlbumTexture(shot, w <= 256))
-  b.pic:SetTexCoord(ns.AlbumCover(shot, w, h))
-  b:Show()
-end
-
--- Journal line (1.3.4: a card): a status mark in a round disc, "[6] Title",
--- what happened, zone, time and how long the quest took; XP and money or a
--- status pill on the right. Level-ups as a golden card.
-local PILL_KIND = { a = { "accepted", "warning" }, x = { "abandoned", "textHint" }, f = { "failed", "critical" } }
 
 -- (1.3.11) a moment's line: what, where, when; a dungeon visit's time and bosses on the right
 local function NoteTail(e) return e.note and Colorize("  ·  " .. e.note, "goldLight") or "" end
@@ -698,412 +306,252 @@ local function EntryToMap(e, openMap)
 end
 ns.QuestBookEntryToMap = EntryToMap -- (tests)
 
-local EntryKind = {
-  create = function(list)
-    local f = CreateFrame("Button", nil, list)
-    Card(f, 4, 3)
-    Clickable(f)
-    f.active = Tex(f, "BACKGROUND", "rowActive", nil, 2)
-    f.active:SetAllPoints(f.cardFill)
-    f.disc = Icon(f, 24, CIRCLE, "ARTWORK")
-    f.disc:SetPoint("CENTER", f, "LEFT", 28, 0)
-    local d = THEME.cardLow
-    f.disc:SetVertexColor(d[1] * 0.7, d[2] * 0.7, d[3] * 0.7, 1)
-    f.ring = Icon(f, 30, MEDIA .. "BookRing", "ARTWORK")
-    f.ring:SetPoint("CENTER", f.disc, "CENTER", 0, 0)
-    f.icon = Icon(f, 15, nil, "OVERLAY")
-    f.icon:SetPoint("CENTER", f.disc, "CENTER", 0, 0)
-    f.title = Text(f, 14, "textPrimary", "LEFT")
-    f.sub = Text(f, 11, "textHint", "LEFT")
-    f.r1 = Text(f, 14, "warning", "RIGHT")
-    f.r1:SetPoint("TOPRIGHT", f, "TOPRIGHT", -18, -9)
-    f.r2 = Text(f, 11, "textSecondary", "RIGHT")
-    f.r2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -18, 9)
-    NewPill(f)
-    f.photo = Pic.Button(f) -- (1.3.11) a screenshot's picture on the right
-    return f
-  end,
-  render = function(f, it)
-    local e = it.e
-    local level = e.k == "l"
-    local small = e.k == "o"
-    local full = FULL_ICON[e.k]
-    f.icon:SetTexture(EntryIcon(e))
-    if full then f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) else f.icon:SetTexCoord(0, 1, 0, 1) end
-    if f.icon.SetDesaturated then f.icon:SetDesaturated(e.k == "o" or e.k == "x") end
-    f.icon:SetAlpha((e.k == "o" or e.k == "x") and 0.6 or 1)
-    local disc = small and 18 or 24
-    local isz = small and 11 or (full and 19 or 15)
-    f.disc:SetSize(disc, disc) f.ring:SetSize(disc + 6, disc + 6) f.icon:SetSize(isz, isz)
-    if level then
-      f:SetCardLook("goldDark", "cardLow", 0.92, "gold", 0.75)
-    elseif small then
-      f:SetCardLook("cardLow", "cardLow", 0.55, "cardEdge", 0.14)
-    else
-      f:SetCardLook()
+---------------------------------------------------------------------------
+-- Line kinds: Kit.List kinds built from the kit's blocks. A line's item is its data (the builders below); a kind's row
+-- writes what the kit's row shows (status, colours, the right column) into it and keeps the click, tooltip and "active"
+-- logic of the line.
+---------------------------------------------------------------------------
+UI.KINDS = {}
+
+-- Section heading (a group): gold capitals, count and a short text on the right; clickable ones fold (+/-)
+UI.KINDS.head = { h = HEAD_H, make = function(list)
+  local r = Kit.GroupHeader(list)
+  local base = r.SetItem
+  function r:SetItem(it, index, l)
+    it.static = it.onClick == nil
+    it.tooltipFn = it.tooltip and UI.TipOf or nil
+    base(self, it, index, l)
+    Kit.TextColor(self.text, UI.Tone(it.color) or KC.txGold)
+    if l and l.rail then self.text:SetText("") self.arrow:SetText("") self.count:SetText("") end -- the icon rail: a divider
+    self.onClick = it.onClick
+  end
+  return r
+end }
+
+-- A quiet line in the middle (nothing found, nothing yet)
+UI.KINDS.empty = { h = 60, make = function(list)
+  local f = CreateFrame("Frame", nil, list)
+  f.text = Kit.Text(f, "row", KC.quiet, "CENTER")
+  f.text:SetPoint("CENTER", f, "CENTER", 0, 0)
+  function f:SetItem(it) self.item = it self.text:SetText(it.text or "") self:Layout(self._w or self:GetWidth()) end
+  function f:Layout(w) Kit.Fit(self.text, math.max(40, (tonumber(w) or 0) - 2 * KS.pad)) end
+  f._cutTexts = { f.text }
+  Kit.Stateful(f)
+  return f
+end }
+
+-- Quest line: level badge in Blizzard's quest colours, title, a line below, the 3 px mark in the colour of its group
+-- (yellow in the log, blue available, grey later, green done); a pill only when it is ready to turn in. A chain: its
+-- parts as dots and "3/6" on the right, a click opens the parts (indented, a mark "1", "2" ...); a step before a dungeon
+-- quest: its number as the mark.
+function UI.QuestView(it)
+  local lv = tonumber(it.level)
+  if not (lv and lv > 0) then it.level, it.levelStatus = "?", "trivial" end
+  it.status = UI.MARK[it.group] or "grey"
+  it.done = it.group == "done" or nil
+  it.pill = (it.group == "log" and it.stateColor == "good" and it.stateText) and { it.stateText, "ready" } or nil
+  if it.step then it.chain = tostring(it.step) end
+  it.tooltipFn = UI.TipOf
+end
+UI.KINDS.quest = { h = ROW_H, make = function(list)
+  local r = Kit.ListRow(list)
+  local base = r.SetItem
+  function r:SetItem(it, index, l)
+    UI.QuestView(it)
+    self.questTip = it.questID ~= nil and not it.isChain
+    self.tooltip = it.tooltip
+    base(self, it, index, l)
+    self.onClick = it.onClick
+  end
+  return r
+end }
+
+-- Journal line: the event's icon, "[6] Title", what happened, zone, time and how long the quest took; XP and money on
+-- the right; level-ups with a gold mark; a screenshot's picture on the right when the album has it.
+function UI.EntryView(it)
+  local e = it.e
+  local level, small = e.k == "l", e.k == "o"
+  it.icon = EntryIcon(e)
+  it.iconCoords = FULL_ICON[e.k] and UI.CUT or UI.WHOLE
+  local title, sub, r1, r2
+  if level then
+    title = Colorize(Fmt.EntryTitle(e), "goldLight")
+    local parts = { e.t and Fmt.Clock(e.t) or nil }
+    if e.since then parts[#parts + 1] = L["after %s"]:format(Fmt.Span(e.since) or "?") end
+    if it.quests and it.quests > 0 then parts[#parts + 1] = L["%d quests on the way"]:format(it.quests) end
+    sub = table.concat(parts, "  ·  ") .. NoteTail(e)
+  elseif MOMENT[e.k] then
+    title, sub, r1, r2 = MomentRow(e)
+  else
+    local quiet = e.k == "x" or e.k == "o"
+    local tag = ns.QuestLevelTag(e.q)
+    if quiet then tag = Plain(tag) end
+    local name = Fmt.EntryTitle(e)
+    if it.part then name = name .. Colorize(("  (%s)"):format(it.part), "textHint") end
+    title = tag .. name
+    local what = Colorize(L[Fmt.KIND_TEXT[e.k] or "done earlier"], Fmt.KIND_COLOR[e.k] or "textHint")
+    local parts = { what }
+    local zone = e.m and MapName(e.m)
+    if zone then parts[#parts + 1] = zone end
+    if e.t then parts[#parts + 1] = Fmt.Clock(e.t) end
+    if it.took and it.took > 0 then parts[#parts + 1] = L["took %s"]:format(Fmt.Span(it.took) or "?") end
+    sub = #parts == 1 and what or (parts[1] .. Colorize("  ·  " .. table.concat(parts, "  ·  ", 2), "textHint"))
+    sub = sub .. NoteTail(e)
+    if e.x then r1 = "+" .. Style.Number(e.x) .. " " .. L["XP"] end
+    r2 = Coins(e.g)
+    if small then
+      local m = ns.QuestStart(e.q)
+      sub, r2 = nil, nil
+      r1 = m and MapName(m) or nil
     end
-    local title, sub, r1, r2, pill, pillColor
-    if level then
-      title = Colorize(Fmt.EntryTitle(e), "goldLight")
-      local parts = { e.t and Fmt.Clock(e.t) or nil }
-      if e.since then parts[#parts + 1] = L["after %s"]:format(Fmt.Span(e.since) or "?") end
-      if it.quests and it.quests > 0 then parts[#parts + 1] = L["%d quests on the way"]:format(it.quests) end
-      sub = table.concat(parts, "  ·  ") .. NoteTail(e)
-    elseif MOMENT[e.k] then
-      title, sub, r1, r2 = MomentRow(e)
-    else
-      local quiet = e.k == "x" or e.k == "o"
-      local tag = ns.QuestLevelTag(e.q)
-      if quiet then tag = Plain(tag) end
-      local name = Fmt.EntryTitle(e)
-      if it.part then name = name .. Colorize(("  (%s)"):format(it.part), "textHint") end
-      title = quiet and Colorize(tag .. name, "textHint") or (tag .. name)
-      local what = Colorize(L[Fmt.KIND_TEXT[e.k] or "done earlier"], Fmt.KIND_COLOR[e.k] or "textHint")
-      local parts = { what }
-      local zone = e.m and MapName(e.m)
-      if zone then parts[#parts + 1] = zone end
-      if e.t then parts[#parts + 1] = Fmt.Clock(e.t) end
-      if it.took and it.took > 0 then parts[#parts + 1] = L["took %s"]:format(Fmt.Span(it.took) or "?") end
-      sub = parts[1] .. Colorize("  ·  " .. table.concat(parts, "  ·  ", 2), "textHint")
-      if #parts == 1 then sub = what end
-      sub = sub .. NoteTail(e)
-      if e.x then r1 = "+" .. Style.Number(e.x) .. " " .. L["XP"] end
-      r2 = Coins(e.g)
-      if not r1 and not r2 and PILL_KIND[e.k] then pill, pillColor = L[PILL_KIND[e.k][1]], PILL_KIND[e.k][2] end
-      if small then
-        local m = ns.QuestStart(e.q)
-        sub, r2 = nil, nil
-        r1 = m and MapName(m) and Colorize(MapName(m), "textHint") or nil
-      end
+  end
+  if r2 and not r1 then r1, r2 = r2, nil end
+  it.title, it.sub, it.right, it.right2 = title, sub, r1, r2
+  it.rightColor = e.x and "txGold" or "muted"
+  it.markColor = level and KC.goldBright or UI.Tone(Fmt.KIND_COLOR[e.k] or "textHint")
+  it.done = (e.k == "x" or e.k == "o") or nil
+  it.shot = e.k == "s" and ns.AlbumShotFor and ns.AlbumShotFor(e) or nil
+  -- the line of the card's entry, else the quest of the card or the focus
+  local focus = ns.zoneFocus and ns.zoneFocus.questID
+  local src = type(e.src) == "table" and e.src or e
+  local shown = UI.detailEntry
+  it.active = ((shown ~= nil and shown == src) or (e.q and not MOMENT[e.k] and not shown and (focus == e.q or UI.detailID == e.q))) or nil
+  -- (1.3.5) click: the detail card; Shift-click: also arrow and world map
+  -- (1.3.11) moments: their own card with the note, Shift-click arrow and world map;
+  -- right-click on a quest or a level-up: the card with your note
+  if MOMENT[e.k] then
+    it.onClick = function()
+      if Shift() then EntryToMap(src, true) end
+      UI.ToggleEntry(src)
     end
-    f.title:SetText(title)
-    f.sub:SetText(sub or "")
-    f.r1:ClearAllPoints()
-    if small or not r2 then f.r1:SetPoint("RIGHT", f, "RIGHT", -18, 0) else f.r1:SetPoint("TOPRIGHT", f, "TOPRIGHT", -18, -9) end
-    if small then f.r1:SetFontObject("GameFontHighlightSmall") end
-    f.r1:SetText(r1 or "")
-    f.r2:SetText(r2 or "")
-    Fit(f.r1, 120, f) Fit(f.r2, 120, f)
-    -- (1.3.11) the screenshot's picture, when the album has it
-    local shot = e.k == "s" and ns.AlbumShotFor and ns.AlbumShotFor(e) or nil
-    local photoW = 0
-    if shot then
-      local ph = math.max(20, (ns.Num(f:GetHeight()) or it.h or ROW_H) - 14)
+  elseif e.q then
+    it.onClick = function(_, button)
+      if button == "RightButton" and e.k ~= "o" then UI.ToggleEntry(src) return end
+      UI.ToggleQuest(e.q)
+    end
+  elseif level then
+    it.onClick = function() UI.ToggleEntry(src) end
+  else
+    it.onClick = nil
+  end
+  it.tooltip = Fmt.EntryTooltip(e)
+  it.tooltipFn = UI.TipOf
+end
+UI.KINDS.entry = { h = ROW_H, make = function(list)
+  local r = Kit.ListRow(list)
+  r.photo = Pic.Button(r) -- (1.3.11) a screenshot's picture on the right
+  local base = r.SetItem
+  function r:SetItem(it, index, l)
+    UI.EntryView(it)
+    self.tooltip, self.questTip = it.tooltip, it.e.q ~= nil
+    if it.shot then
+      local ph = math.max(16, (it.h or ROW_H) - 8)
       local pw = math.floor(ph * 16 / 9 + 0.5)
-      Pic.Set(f.photo, shot, pw, ph)
-      f.photo:ClearAllPoints()
-      f.photo:SetPoint("RIGHT", f, "RIGHT", -16, 0)
-      photoW = pw + 26
+      it.rightWidth = pw + (it.right and 48 or 0)
+      Pic.Set(self.photo, it.shot, pw, ph)
+      self.photo:ClearAllPoints()
+      self.photo:SetPoint("RIGHT", self, "RIGHT", -KS.pad - (it.right and 48 or 0), 0)
     else
-      Pic.Set(f.photo, nil)
+      it.rightWidth = nil
+      Pic.Set(self.photo, nil)
     end
-    local rightW = math.max(SetPill(f, pill, pillColor), (r1 or r2) and 130 or 0, photoW)
-    f.title:ClearAllPoints()
-    f.sub:ClearAllPoints()
-    local left = small and 48 or 54
-    Fit(f.title, RowW(f) - left - rightW - 10, f) Fit(f.sub, RowW(f) - left - rightW - 10, f)
-    local h = ns.Num(f:GetHeight()) or it.h or ROW_H
-    if sub and sub ~= "" then
-      local top = math.floor((h - 32) / 2)
-      f.title:SetPoint("TOPLEFT", f, "TOPLEFT", left, -top - 1)
-      f.title:SetPoint("TOPRIGHT", f, "TOPRIGHT", -rightW, -top - 1)
-      f.sub:SetPoint("TOPLEFT", f, "TOPLEFT", left, -top - 18)
-      f.sub:SetPoint("TOPRIGHT", f, "TOPRIGHT", -rightW, -top - 18)
-    else
-      f.title:SetPoint("LEFT", f, "LEFT", left, 0)
-      f.title:SetPoint("RIGHT", f, "RIGHT", -rightW, 0)
-    end
-    local focus = ns.zoneFocus and ns.zoneFocus.questID
-    local src = type(e.src) == "table" and e.src or e
-    local shown = ns.QuestBookDetailEntry and ns.QuestBookDetailEntry()
-    if (shown ~= nil and shown == src) or (e.q and not MOMENT[e.k] and not shown and (focus == e.q or ns.QuestBookDetailID() == e.q)) then
-      f.active:Show() else f.active:Hide() end
-    -- (1.3.5) click: the detail card; Shift-click: also arrow and world map
-    -- (1.3.11) moments: their own card with the note, Shift-click arrow and world map;
-    -- right-click on a quest or a level-up: the card with your note
-    if MOMENT[e.k] then
-      f.onClick = function()
-        if Shift() then EntryToMap(src, true) end
-        ns.QuestBookShowEntry(src)
-      end
-    elseif e.q then
-      f.onClick = function(_, button)
-        if button == "RightButton" and e.k ~= "o" then ns.QuestBookShowEntry(src) return end
-        ns.QuestBookShowQuest(e.q, Shift() and "map" or nil)
-      end
-    elseif level then
-      f.onClick = function() ns.QuestBookShowEntry(src) end
-    else
-      f.onClick = nil
-    end
-    f.tooltip = Fmt.EntryTooltip(e)
-    f.questTip = e.q ~= nil
-  end,
-}
+    base(self, it, index, l)
+    self.onClick = it.onClick
+  end
+  return r
+end }
 
--- Quest line (1.3.4: a card): level in a framed box, title (with the dots of
--- a chain), what it is about, a framed status pill on the right. Chain parts
--- and the steps before a dungeon quest are indented.
-local MAX_DOTS = 12
-local QuestKind = {
-  create = function(list)
-    local f = CreateFrame("Button", nil, list)
-    Card(f, 4, 3)
-    Clickable(f)
-    f.active = Tex(f, "BACKGROUND", "rowActive", nil, 2)
-    f.active:SetAllPoints(f.cardFill)
-    f.bar = Tex(f, "ARTWORK", "gold")
-    f.bar:SetPoint("TOPLEFT", f.cardFill, "TOPLEFT", 0, -4)
-    f.bar:SetPoint("BOTTOMLEFT", f.cardFill, "BOTTOMLEFT", 0, 4)
-    f.bar:SetWidth(3)
-    f.badge = Tex(f, "ARTWORK", "cardLow", 0.95)
-    f.badge:SetSize(28, 24)
-    f.badgeEdge = Edges(f, f.badge, "gold", 0.55, "ARTWORK")
-    f.level = Text(f, 12, "textPrimary", "CENTER")
-    f.level:SetPoint("CENTER", f.badge, "CENTER", 0, 0)
-    f.title = Text(f, 14, "textPrimary", "LEFT")
-    f.sub = Text(f, 11, "textHint", "LEFT")
-    NewPill(f)
-    f.toggle = Style.IconButton(f, "expand")
-    f.toggle:SetSize(18, 18)
-    f.toggle:SetOnClick(function() if f.onClick then ns.SafeCall("quest book", f.onClick, f) end end)
-    f.dots = {}
-    for i = 1, MAX_DOTS do
-      local d = Icon(f, 7, CIRCLE, "OVERLAY")
-      f.dots[i] = d
-    end
-    -- (1.3.4) steps before a dungeon quest: a numbered circle on a gold line
-    f.vline = Tex(f, "BORDER", "gold", 0.45)
-    f.vline:SetWidth(2)
-    f.stepDisc = Icon(f, 22, CIRCLE, "ARTWORK")
-    local cl = THEME.cardLow
-    f.stepDisc:SetVertexColor(cl[1], cl[2], cl[3], 1)
-    f.stepRing = Icon(f, 28, MEDIA .. "BookRing", "OVERLAY")
-    f.stepRing:SetPoint("CENTER", f.stepDisc, "CENTER", 0, 0)
-    f.stepNum = Text(f, 11, "goldLight", "CENTER", "OVERLAY")
-    f.stepNum:SetPoint("CENTER", f.stepDisc, "CENTER", 0, 0)
-    -- (1.3.4) the dungeon quest itself: a small "Dungeon quest" label over the title
-    f.goalLabel = Text(f, 10, "gold", "LEFT")
-    return f
-  end,
-  render = function(f, it)
-    local indent = it.indent or 0
-    local step = it.step
-    f.cardFill:ClearAllPoints()
-    f.cardFill:SetPoint("TOPLEFT", f, "TOPLEFT", 4 + indent + (step and 30 or 0), -3)
-    f.cardFill:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -4, 3)
-    if it.goal then f:SetCardLook("card", "cardLow", 0.98, "gold", 0.85)
-    elseif indent > 0 or step then f:SetCardLook("cardLow", "cardLow", 0.85, "cardEdge", 0.22)
-    else f:SetCardLook() end
-    if step then
-      f.vline:ClearAllPoints()
-      f.vline:SetPoint("TOP", f, "TOPLEFT", 4 + indent + 13, it.firstStep and -math.floor((ns.Num(f:GetHeight()) or ROW_H) / 2) or 0)
-      f.vline:SetPoint("BOTTOM", f, "BOTTOMLEFT", 4 + indent + 13, it.lastStep and math.floor((ns.Num(f:GetHeight()) or ROW_H) / 2) or 0)
-      f.stepDisc:ClearAllPoints()
-      f.stepDisc:SetPoint("CENTER", f, "LEFT", 4 + indent + 14, 0)
-      f.stepNum:SetText(tostring(step))
-      f.vline:Show() f.stepDisc:Show() f.stepRing:Show() f.stepNum:Show()
-      indent = indent + 30
-    else
-      f.vline:Hide() f.stepDisc:Hide() f.stepRing:Hide() f.stepNum:Hide()
-    end
-    f.badge:ClearAllPoints()
-    f.badge:SetPoint("LEFT", f, "LEFT", 14 + indent, 0)
-    local lv = it.level and it.level > 0 and it.level or nil
-    f.level:SetText(lv and tostring(lv) or "?")
-    local lc = it.quiet and THEME.textHint or LevelRGB(lv)
-    f.level:SetTextColor(lc[1], lc[2], lc[3], 1)
-    local title = it.title or ""
-    if it.goal then title = Colorize(Plain(title), it.quiet and "gold" or "goldLight") elseif it.quiet then title = Colorize(title, "textSecondary") end
-    f.title:SetText(title)
-    if f.title.SetFont then pcall(f.title.SetFont, f.title, FontPath(), it.goal and 15 or 14, "") end
-    f.sub:SetText(it.sub or "")
-    f.title:ClearAllPoints()
-    f.sub:ClearAllPoints()
-    local left = 52 + indent
-    if it.goal then
-      f.goalLabel:SetText(L["Dungeon quest"])
-      f.goalLabel:ClearAllPoints()
-      f.goalLabel:SetPoint("TOPLEFT", f, "TOPLEFT", left, -7)
-      f.goalLabel:Show()
-    else
-      f.goalLabel:Hide()
-    end
-    local h = ns.Num(f:GetHeight()) or it.h or ROW_H
-    local pillW = SetPill(f, it.pill, it.pillColor)
-    local rightW = math.max(pillW, 40)
-    if it.goal then
-      f.title:SetPoint("TOPLEFT", f, "TOPLEFT", left, -20)
-      f.sub:SetPoint("TOPLEFT", f, "TOPLEFT", left, -39)
-      f.sub:SetPoint("TOPRIGHT", f, "TOPRIGHT", -rightW, -39)
-    elseif it.sub and it.sub ~= "" then
-      local top = math.floor((h - 32) / 2)
-      f.title:SetPoint("TOPLEFT", f, "TOPLEFT", left, -top - 1)
-      f.sub:SetPoint("TOPLEFT", f, "TOPLEFT", left, -top - 18)
-      f.sub:SetPoint("TOPRIGHT", f, "TOPRIGHT", -rightW, -top - 18)
-    else
-      f.title:SetPoint("LEFT", f, "LEFT", left, 0)
-    end
-    -- the dots of a chain right after the title
-    local n = it.dots and #it.dots or 0
-    local room = math.min(380, RowW(f) - left - rightW - n * 10 - (it.chain and 26 or 0))
-    Fit(f.title, room, f)
-    if it.sub and it.sub ~= "" then Fit(f.sub, RowW(f) - left - rightW, f) end
-    local tw = math.min(TextWidth(f.title), room)
-    for i, d in ipairs(f.dots) do
-      local c = it.dots and it.dots[i]
-      if c and i <= n then
-        d:ClearAllPoints()
-        d:SetPoint("LEFT", f.title, "LEFT", tw + 8 + (i - 1) * 10, 0)
-        local rgb = RGB(c)
-        d:SetVertexColor(rgb[1], rgb[2], rgb[3], c == "textHint" and 0.45 or 1)
-        d:Show()
-      else
-        d:Hide()
-      end
-    end
-    f.title:SetWidth(tw + 2)
-    if it.chain then
-      f.toggle:SetKind(it.open and "collapse" or "expand")
-      f.toggle:ClearAllPoints()
-      f.toggle:SetPoint("LEFT", f.title, "LEFT", tw + 8 + n * 10 + 4, 0)
-      f.toggle:Show()
-    else
-      f.toggle:Hide()
-    end
-    if it.active then f.active:Show() f.bar:Show() else f.active:Hide() f.bar:Hide() end
-    f.onClick, f.tooltip = it.onClick, it.tooltip
-    f.questTip = it.questID ~= nil and not it.chain
-  end,
-}
-
--- Zone in the list on the left: name, level range, progress bar.
-local ZoneKind = {
-  create = function(list)
-    local f = CreateFrame("Button", nil, list)
-    Clickable(f)
-    f.sel = Tex(f, "BACKGROUND", "accent", 0.14, 2)
-    f.sel:SetAllPoints(f)
-    f.selBar = Tex(f, "ARTWORK", "accent")
-    f.selBar:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
-    f.selBar:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
-    f.selBar:SetWidth(2)
-    f.here = Icon(f, 7, CIRCLE, "OVERLAY")
-    f.here:SetVertexColor(C.accent[1], C.accent[2], C.accent[3], 1)
-    f.here:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -10)
-    f.name = Text(f, 12, "textPrimary", "LEFT")
-    f.range = Text(f, 10, "textHint", "RIGHT")
-    f.range:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -8)
-    f.track = Tex(f, "ARTWORK", "barBackground")
-    f.track:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, 7)
-    f.track:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -52, 7)
-    f.track:SetHeight(3)
-    f.fill = Tex(f, "OVERLAY", "gold")
-    f.fill:SetPoint("TOPLEFT", f.track, "TOPLEFT", 0, 0)
-    f.fill:SetPoint("BOTTOMLEFT", f.track, "BOTTOMLEFT", 0, 0)
-    Gradient(f.fill, "HORIZONTAL", "goldDark", 1, "goldLight", 1)
-    -- (1.3.4) "12/48" next to the bar
-    f.num = Text(f, 10, "textHint", "RIGHT") -- (29.10.2026) not below GameFontHighlightSmall
-    f.num:SetPoint("RIGHT", f, "BOTTOMRIGHT", -10, 8)
-    return f
-  end,
-  render = function(f, it)
-    f.name:ClearAllPoints()
-    f.name:SetPoint("TOPLEFT", f, "TOPLEFT", it.here and 24 or 12, -7)
-    f.name:SetPoint("RIGHT", f.range, "LEFT", -6, 0)
-    f.name:SetText(it.name or "?")
-    -- counted only for the zones in sight (cached until a quest is accepted or turned in)
+-- Zone in the list on the left: name, level range, progress bar and "12/48", a blue dot where you are; in the icon rail
+-- two letters. (Counted only for the zones in sight, cached until a quest is accepted or turned in.)
+UI.KINDS.zone = { h = 36, make = function(list)
+  local r = Kit.ZoneRow(list)
+  local base = r.SetItem
+  function r:SetItem(it, index, l)
     local s = it.map and ZoneStats(it.map)
-    SetColor(f.name, (s and s.total == 0) and "textHint" or (it.selected and "textPrimary" or "textSecondary"))
-    f.range:SetText(it.range or "")
-    Fit(f.range, 70, f)
-    Fit(f.name, RowW(f) - (it.here and 24 or 12) - 16 - TextWidth(f.range), f)
-    if it.here then f.here:Show() else f.here:Hide() end
-    if it.selected then f.sel:Show() f.selBar:Show() else f.sel:Hide() f.selBar:Hide() end
-    if s and s.total > 0 then
-      f.track:Show()
-      f.num:SetText(("%d/%d"):format(s.done, s.total)) f.num:Show()
-      local w = math.max(1, (ns.Num(f:GetWidth()) or (SIDE_W - 30)) - 64)
-      local frac = s.done / s.total
-      if frac > 0 then f.fill:SetWidth(math.max(1, w * frac)) f.fill:Show() else f.fill:Hide() end
-    else
-      f.track:Hide() f.fill:Hide() f.num:Hide()
-    end
-    f.onClick, f.tooltip = it.onClick, it.tooltip
-  end,
-}
+    it.text = it.name or "?"
+    it.progress = (s and s.total > 0) and { s.done, s.total } or nil
+    it.quiet = (s and s.total == 0) or nil
+    it.short = UI.Short(it.text)
+    it.tooltipFn = UI.TipOf
+    base(self, it, index, l)
+    self._selected = it.selected or nil
+    Kit.Refresh(self)
+    self.onClick = it.onClick
+  end
+  return r
+end }
 
--- (1.3.5) The chosen dungeon in plain words: "3 / 6 ready" large on the left with a gold bar, the sentences
--- (what is ready, what needs quests first, what opens later) on the right.
-local DunSumKind = {
-  create = function(list)
-    local f = CreateFrame("Frame", nil, list)
-    Card(f, 4, 4)
-    f.big = Text(f, 26, "goldLight", "CENTER")
-    f.big:SetPoint("TOP", f, "TOPLEFT", 74, -12)
-    f.bigLabel = Text(f, 11, "textSecondary", "CENTER")
-    f.bigLabel:SetPoint("TOP", f.big, "BOTTOM", 0, -3)
-    f.track = Tex(f, "ARTWORK", "barBackground")
-    f.track:SetSize(110, 4)
-    f.track:SetPoint("TOP", f.bigLabel, "BOTTOM", 0, -6)
-    f.fill = Tex(f, "OVERLAY", "gold")
-    f.fill:SetPoint("TOPLEFT", f.track, "TOPLEFT", 0, 0)
-    f.fill:SetPoint("BOTTOMLEFT", f.track, "BOTTOMLEFT", 0, 0)
-    f.sep = Tex(f, "ARTWORK", "gold", 0.35)
-    f.sep:SetWidth(1)
-    f.sep:SetPoint("TOPLEFT", f, "TOPLEFT", 146, -12)
-    f.sep:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 146, 12)
-    f.fit = Text(f, 12, "good", "LEFT")
-    f.fit:SetPoint("TOPLEFT", f, "TOPLEFT", 162, -12)
-    f.lines = {}
-    for i = 1, 4 do
-      local t = Text(f, 13, "textPrimary", "LEFT")
-      t:SetPoint("TOPLEFT", f, "TOPLEFT", 162, -12 - 17 * i)
-      f.lines[i] = t
-    end
-    return f
-  end,
-  render = function(f, it)
-    f:SetCardLook("card", "cardLow", 0.97, "gold", 0.7)
-    f.big:SetText(("%d / %d"):format(it.ready or 0, math.max(it.open or 0, it.ready or 0)))
-    f.bigLabel:SetText((it.open or 0) == 0 and L["all done"] or L["ready"])
+-- (1.3.5) The chosen dungeon in plain words: "3 / 6" large on the left with "ready" and a bar, the sentences (what is
+-- ready, what needs quests first, what opens later) on the right.
+UI.KINDS.dsum = { h = 84, make = function(list)
+  local f = CreateFrame("Frame", nil, list)
+  f.bg = Kit.Fill(f, KC.card)
+  f.bd = Kit.Border(f, KC.divider)
+  f.big = Kit.Text(f, "hero", KC.txGold, "CENTER")
+  f.big:SetPoint("TOP", f, "TOPLEFT", 70, -12)
+  f.label = Kit.Text(f, "sub", KC.muted, "CENTER")
+  f.label:SetPoint("TOP", f, "TOPLEFT", 70, -38)
+  f.bar = Kit.ProgressBar(f)
+  f.bar:SetHeight(4)
+  f.bar:SetPoint("TOPLEFT", f, "TOPLEFT", 20, -56)
+  f.sep = Kit.Tex(f, "ARTWORK", KC.divider)
+  f.sep:SetWidth(1)
+  f.sep:SetPoint("TOPLEFT", f, "TOPLEFT", 140, -10)
+  f.sep:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 140, 10)
+  f.fit = Kit.Text(f, "sub", KC.green)
+  f.fit:SetPoint("TOPLEFT", f, "TOPLEFT", 154, -10)
+  f.lines = {}
+  for i = 1, 4 do
+    local t = Kit.Text(f, "row", KC.body)
+    t:SetPoint("TOPLEFT", f, "TOPLEFT", 154, -10 - 18 * i)
+    f.lines[i] = t
+  end
+  function f:SetItem(it)
+    self.item = it
+    self.big:SetText(ns.Fraction(it.ready or 0, math.max(it.open or 0, it.ready or 0)))
+    self.label:SetText((it.open or 0) == 0 and L["all done"] or L["ready"])
     local frac = (it.total or 0) > 0 and ((it.ready or 0) + (it.done or 0)) / it.total or 0
-    if frac > 0 then f.fill:SetWidth(math.max(1, 110 * math.min(1, frac))) f.fill:Show() else f.fill:Hide() end
-    local room = RowW(f) - 162 - 16
-    f.fit:SetText((it.fitText or "") .. ((it.done or 0) > 0 and Colorize("  ·  " .. L["%d of %d done"]:format(it.done, it.total), "textHint") or ""))
-    SetColor(f.fit, it.fitColor or "textHint")
-    Fit(f.fit, room, f)
-    for i, t in ipairs(f.lines) do
-      t:SetText(it.lines and it.lines[i] or "")
-      Fit(t, room, f)
-    end
-  end,
-}
+    self.bar:Layout(100)
+    self.bar:SetValue(math.min(1, frac))
+    self.fit:SetText((it.fitText or "") .. ((it.done or 0) > 0 and Colorize("  ·  " .. L["%d of %d done"]:format(it.done, it.total), "textHint") or ""))
+    Kit.TextColor(self.fit, UI.FIT[it.fitColor] or "quiet")
+    for i, t in ipairs(self.lines) do t:SetText(it.lines and it.lines[i] or "") end
+    self:Layout(self._w or self:GetWidth())
+  end
+  function f:Layout(w)
+    local room = math.max(20, (tonumber(w) or 0) - 154 - KS.pad)
+    Kit.Fit(self.fit, room)
+    for _, t in ipairs(self.lines) do Kit.Fit(t, room) end
+  end
+  f._cutTexts = { f.fit, f.lines[1], f.lines[2], f.lines[3], f.lines[4] }
+  Kit.Stateful(f)
+  return f
+end }
 
 -- (1.3.5) One line of text under a quest: the way to it in colours, or the colour legend.
-local DunPathKind = {
-  create = function(list)
-    local f = CreateFrame("Frame", nil, list)
-    f.text = Text(f, 11, "textSecondary", "LEFT")
-    return f
-  end,
-  render = function(f, it)
-    f.text:ClearAllPoints()
-    if it.legend then
-      f.text:SetPoint("LEFT", f, "LEFT", 14, 0)
-      SetColor(f.text, "textHint")
-    else
-      f.text:SetPoint("LEFT", f, "LEFT", (it.indent or 0) + 4, 2)
-      SetColor(f.text, "textSecondary")
-    end
-    f.text:SetText(it.text or "")
-    Fit(f.text, RowW(f) - (it.indent or 0) - 20, f)
-  end,
-}
+UI.KINDS.dpath = { h = 24, make = function(list)
+  local f = CreateFrame("Frame", nil, list)
+  f.text = Kit.Text(f, "sub", KC.muted)
+  function f:SetItem(it)
+    self.item = it
+    self.text:ClearAllPoints()
+    self.text:SetPoint("LEFT", self, "LEFT", it.legend and KS.pad or (KS.markBar + 8 + KS.indent), 0)
+    Kit.TextColor(self.text, it.legend and KC.quiet or KC.muted)
+    self.text:SetText(it.text or "")
+    self:Layout(self._w or self:GetWidth())
+  end
+  function f:Layout(w)
+    local it = self.item or {}
+    Kit.Fit(self.text, math.max(20, (tonumber(w) or 0) - (it.legend and KS.pad or (KS.markBar + 8 + KS.indent)) - KS.pad))
+  end
+  f._cutTexts = { f.text }
+  Kit.Stateful(f)
+  return f
+end }
 
 -- (1.3.5, Daniel 10.10.: "a small fitting picture of the instance"; "the number is completely off-centre")
 -- The round badge of a dungeon: its picture (Dungeons.lua: the game client's own art, nothing shipped),
--- masked round inside the gold ring. Without a picture the level, in a box as large as the circle and
+-- masked round inside its disc. Without a picture the level, in a box as large as the circle and
 -- centred in it both ways (before, the text only had its CENTER point on the circle).
 local function BadgeParts(f, disc, size)
   f.pic = f:CreateTexture(nil, "ARTWORK", nil, 1)
@@ -1154,50 +602,51 @@ local function SetBadge(f, inst, levelText, quiet)
 end
 ns.QuestBookSetBadge = SetBadge -- (tests)
 ns.QuestBookBadgeParts = BadgeParts -- (tests)
+-- (02.11.2026) the badge in a frame of its own (the head of the prerequisites, an index card): a disc, the level, the picture
+function UI.Badge(f, size)
+  if f.disc then return f end
+  f.disc = f:CreateTexture(nil, "ARTWORK")
+  f.disc:SetSize(size, size)
+  f.disc:SetPoint("CENTER", f, "CENTER", 0, 0)
+  if f.disc:SetTexture(CIRCLE) == false then f.disc:SetTexture(WHITE) end
+  f.level = Kit.Text(f, "badge", KC.title, "CENTER")
+  BadgeParts(f, f.disc, size)
+  return f
+end
+-- Picture of inst, else the level, the disc in the colour of its fit
+function UI.SetBadge(f, inst, levelText, fitColor, quiet)
+  SetBadge(f, inst, levelText, quiet)
+  local c = Kit.Color(UI.FIT[fitColor] or "grey")
+  f.disc:SetVertexColor(c[1] * 0.45, c[2] * 0.45, c[3] * 0.45, 1)
+  f.level:SetTextColor(c[1], c[2], c[3], 1)
+end
 
--- (1.3.5) A line of the dungeon dropdown: picture (or level) in a gold ring, name, fit, what is ready.
-local DunPickKind = {
-  create = function(list)
-    local f = CreateFrame("Button", nil, list)
-    Clickable(f)
-    f.sel = Tex(f, "BACKGROUND", "rowActive", nil, 2)
-    f.sel:SetAllPoints(f)
-    f.disc = Icon(f, 26, CIRCLE, "ARTWORK")
-    f.disc:SetPoint("CENTER", f, "LEFT", 22, 0)
-    f.ring = Icon(f, 32, MEDIA .. "BookRing", "OVERLAY")
-    f.ring:SetPoint("CENTER", f.disc, "CENTER", 0, 0)
-    f.level = Text(f, 11, "textPrimary", "CENTER", "OVERLAY")
-    BadgeParts(f, f.disc, 26)
-    f.name = Text(f, 13, "goldLight", "LEFT")
-    f.name:SetPoint("TOPLEFT", f, "TOPLEFT", 44, -5)
-    f.fit = Text(f, 11, "good", "LEFT")
-    f.fit:SetPoint("LEFT", f.name, "RIGHT", 8, 0)
-    f.sub = Text(f, 11, "textHint", "LEFT")
-    f.sub:SetPoint("TOPLEFT", f, "TOPLEFT", 44, -22)
-    -- (1.3.5) a tick when all your quests of the dungeon are done
-    f.tick = Icon(f, 16, "Interface\\RAIDFRAME\\ReadyCheck-Ready", "ARTWORK")
-    f.tick:SetPoint("RIGHT", f, "RIGHT", -10, 0)
-    return f
-  end,
-  render = function(f, it)
-    if it.selected then f.sel:Show() else f.sel:Hide() end
-    if it.done then f.tick:Show() else f.tick:Hide() end
-    f.name:SetAlpha(it.quiet and 0.6 or 1)
-    SetBadge(f, it.inst, it.minL and tostring(it.minL) or "?", it.quiet)
-    local c = RGB(it.fitColor or "textHint")
-    f.disc:SetVertexColor(c[1] * 0.45, c[2] * 0.45, c[3] * 0.45, 1)
-    f.level:SetTextColor(c[1], c[2], c[3], 1)
-    f.name:SetText(it.text or "")
-    f.fit:SetText(it.fitText or "")
-    SetColor(f.fit, it.fitColor or "textHint")
-    f.sub:SetText(it.sub or "")
-    local room = RowW(f) - 44 - 12 - (it.done and 22 or 0)
-    Fit(f.name, room * 0.65, f)
-    Fit(f.fit, room - TextWidth(f.name) - 8, f)
-    Fit(f.sub, room, f)
-    f.onClick, f.tooltip = it.onClick, it.tooltip
-  end,
-}
+-- (1.3.11) A picture of the album (Questdon-Album) in a thin gold frame; a
+-- click opens the big view, which pages through this character's pictures.
+function Pic.Button(parent)
+  local b = CreateFrame("Button", nil, parent)
+  b.pic = b:CreateTexture(nil, "ARTWORK")
+  b.pic:SetAllPoints(b)
+  b.edge = Kit.Border(b, KC.goldMuted, 0, "OVERLAY")
+  b:SetScript("OnEnter", function(self)
+    self.edge:SetColor(KC.goldBright)
+    Kit.Tooltip(self, L["Picture"], { L["Click: open the picture."] })
+  end)
+  b:SetScript("OnLeave", function(self) self.edge:SetColor(KC.goldMuted) Kit.HideTooltip(self) end)
+  b:SetScript("OnClick", function(self)
+    if self.shot then ns.SafeCall("quest book", Pic.Open, ns.AlbumMine(), self.shot) end
+  end)
+  b:Hide()
+  return b
+end
+function Pic.Set(b, shot, w, h)
+  b.shot = shot
+  if not shot then b:Hide() return end
+  b:SetSize(w, h)
+  b.pic:SetTexture(ns.AlbumTexture(shot, w <= 256))
+  b.pic:SetTexCoord(ns.AlbumCover(shot, w, h))
+  b:Show()
+end
 
 -- (1.3.11) A row of the album: pictures as tiles, the time and zone on the
 -- picture, the tooltip of its journal entry; a click opens the big view (it
@@ -1216,50 +665,56 @@ function Pic.NewTile(row)
   local t = CreateFrame("Button", nil, row)
   t.pic = t:CreateTexture(nil, "BORDER")
   t.pic:SetAllPoints(t)
-  t.cardFill = t.pic
-  t.shade = Tex(t, "ARTWORK", "cardLow", 0.8)
+  t.shade = Kit.Tex(t, "ARTWORK", KC.window)
+  t.shade:SetAlpha(0.75)
   t.shade:SetPoint("BOTTOMLEFT", t, "BOTTOMLEFT", 0, 0)
   t.shade:SetPoint("BOTTOMRIGHT", t, "BOTTOMRIGHT", 0, 0)
-  t.shade:SetHeight(24)
-  Gradient(t.shade, "VERTICAL", "cardLow", 0.9, "cardLow", 0)
-  t.caption = Text(t, 10, "textPrimary", "LEFT")
+  t.shade:SetHeight(22)
+  t.caption = Kit.Text(t, "sub", KC.title)
   t.caption:SetPoint("BOTTOMLEFT", t, "BOTTOMLEFT", 6, 5)
-  t.edge = Edges(t, t.pic, "gold", 0.45, "OVERLAY")
-  Clickable(t)
-  function t:SetCardHover(on)
-    if on then self.edge:SetColor("goldLight", 0.95) else self.edge:SetColor(self.mine and "gold" or "cardEdge", self.mine and 0.5 or 0.35) end
-  end
+  t.edge = Kit.Border(t, KC.goldMuted, 0, "OVERLAY")
+  if t.RegisterForClicks then t:RegisterForClicks("LeftButtonUp") end
+  t:SetScript("OnEnter", function(self)
+    self.edge:SetColor(KC.goldBright)
+    if self.tooltip then
+      local title, lines, hint = UI.TipOf({ item = { tooltip = self.tooltip } })
+      if title then Kit.Tooltip(self, title, lines, hint) end
+    end
+  end)
+  t:SetScript("OnLeave", function(self) self.edge:SetColor(self.mine and KC.goldMuted or KC.divider) Kit.HideTooltip(self) end)
+  t:SetScript("OnClick", function(self) if self.onClick then ns.SafeCall("quest book", self.onClick, self) end end)
   return t
 end
-Pic.Kind = {
-  create = function(list)
-    local f = CreateFrame("Frame", nil, list)
-    f.tiles = {}
-    return f
-  end,
-  render = function(f, it)
+UI.KINDS.shots = { make = function(list)
+  local f = CreateFrame("Frame", nil, list)
+  f.tiles = {}
+  function f:SetItem(it) self.item = it self:Layout(self._w or self:GetWidth()) end
+  function f:Layout(w)
+    local it = self.item
+    if not it then return end
+    w = tonumber(w) or 0
     local n = it.cols or 4
-    local tw = math.floor((RowW(f) - 10 - (n - 1) * Pic.GAP) / n)
-    local th = math.max(20, (ns.Num(f:GetHeight()) or it.h or 100) - Pic.GAP)
-    for i = 1, math.max(n, #f.tiles) do
+    local tw = math.max(20, math.floor((w - 2 * KS.gap - (n - 1) * Pic.GAP) / n))
+    local th = math.max(20, (it.h or 100) - Pic.GAP)
+    for i = 1, math.max(n, #self.tiles) do
       local shot = it.shots[i]
-      local t = f.tiles[i]
-      if shot and not t then t = Pic.NewTile(f) f.tiles[i] = t end
+      local t = self.tiles[i]
+      if shot and not t then t = Pic.NewTile(self) self.tiles[i] = t end
       if t and shot then
         t:ClearAllPoints()
-        t:SetPoint("TOPLEFT", f, "TOPLEFT", 10 + (i - 1) * (tw + Pic.GAP), 0)
+        t:SetPoint("TOPLEFT", self, "TOPLEFT", KS.gap + (i - 1) * (tw + Pic.GAP), 0)
         t:SetSize(tw, th)
         t.pic:SetTexture(ns.AlbumTexture(shot, tw <= 256))
         t.pic:SetTexCoord(ns.AlbumCover(shot, tw, th))
         local e = ns.AlbumEntryFor(shot)
         t.mine = e ~= nil
         t.pic:SetAlpha(t.mine and 1 or 0.8)
+        t.edge:SetColor(t.mine and KC.goldMuted or KC.divider)
         local parts = { Fmt.Clock(shot.t) }
         local zone = e and e.m and MapName(e.m)
         if e and e.note then parts[#parts + 1] = Colorize(e.note, "goldLight") elseif zone then parts[#parts + 1] = zone end
         t.caption:SetText(table.concat(parts, "  ·  "))
-        Fit(t.caption, tw - 12, t)
-        t:SetCardHover(false)
+        Kit.Fit(t.caption, tw - 12)
         t.onClick = function() Pic.Open(it.set, shot) end
         t.tooltip = function() return Pic.Tip(shot) end
         t:Show()
@@ -1267,43 +722,9 @@ Pic.Kind = {
         t:Hide()
       end
     end
-  end,
-}
-
--- (30.10.2026, Daniel: the card had no room for it, "unter die Quest in der Liste") the chain of the quest whose card is
--- open, as a line of the zone list right under its row (Chain.lua draws it); a click on a box that sums up parts shows
--- the whole chain
-local CH = { full = false, fullFor = nil } -- (one local: the file is at Lua's limit of 200)
-function CH.Height(id, w)
-  if not ns.ChainDraw then return 0 end
-  if not CH.measure then
-    local f = CreateFrame("Frame", nil, UIParent)
-    f:Hide()
-    CH.measure = ns.ChainDiagram(f)
   end
-  local used = ns.ChainDraw(CH.measure, id, 0, 0, w, { full = CH.fullFor == id and CH.full })
-  ns.ChainClear(CH.measure)
-  return used
-end
-CH.Kind = {
-  create = function(list)
-    local f = CreateFrame("Frame", nil, list)
-    f.diagram = ns.ChainDiagram(f)
-    f.diagram.summaryHint = L["Click: show the whole chain."]
-    f.diagram.onSummary = function()
-      local id = f.item and f.item.questID
-      CH.full, CH.fullFor = not (CH.fullFor == id and CH.full), id
-      if ns.UpdateZoneQuests then ns.UpdateZoneQuests() end -- (Refresh is declared further down)
-    end
-    return f
-  end,
-  render = function(f, it)
-    ns.ChainDraw(f.diagram, it.questID, 12, 6, it.w or (RowW(f) - 24), { full = CH.fullFor == it.questID and CH.full })
-  end,
-}
-
-local KINDS = { head = HeadKind, empty = EmptyKind, entry = EntryKind, quest = QuestKind, zone = ZoneKind,
-  dsum = DunSumKind, dpath = DunPathKind, dpick = DunPickKind, shots = Pic.Kind, chain = CH.Kind }
+  return f
+end }
 
 ---------------------------------------------------------------------------
 -- Zones
@@ -1393,7 +814,7 @@ function Pic.Items()
   local items = {}
   local l = lists.journal
   local rw = (l and ns.Num(l:GetWidth()) or 0) - 18
-  if rw < 200 then rw = W - 38 end
+  if rw < 200 then rw = 940 end
   local cols = rw >= 860 and 5 or (rw >= 560 and 4 or 3)
   local tw = (rw - (cols - 1) * Pic.GAP) / cols
   local h = math.floor(tw * 9 / 16 + 0.5) + Pic.GAP
@@ -1450,6 +871,7 @@ end
 -- date, place, level and target, the quest you followed below, the note as
 -- its title. A picture without a journal entry can be added to this
 -- character's journal; one with an entry opens its card. Escape closes it.
+-- (02.11.2026) in the Don style: the kit's colours, texts and buttons.
 ---------------------------------------------------------------------------
 Pic.W, Pic.H = 980, 640
 function Pic.Create()
@@ -1459,8 +881,9 @@ function Pic.Create()
   if v.SetFrameStrata then v:SetFrameStrata("DIALOG") end
   if v.SetToplevel then v:SetToplevel(true) end
   if v.SetClampedToScreen then v:SetClampedToScreen(true) end
-  Card(v, 0, 0)
-  v:SetCardLook("card", "cardLow", 0.98, "gold", 0.6)
+  Kit.Fill(v, KC.window)
+  Kit.Border(v, KC.outer, 0)
+  Kit.Border(v, KC.gold, 1)
   v:EnableMouse(true)
   v:SetMovable(true)
   v:RegisterForDrag("LeftButton")
@@ -1471,49 +894,43 @@ function Pic.Create()
     local i = self.i - (ns.Num(delta) or 0)
     if self.set[i] then self.i = i Pic.Show() end
   end)
-  v.title = Text(v, 15, "goldLight", "LEFT")
+  v.title = Kit.Text(v, "title", KC.hero)
   v.title:SetPoint("TOPLEFT", v, "TOPLEFT", 20, -16)
-  v.count = Text(v, 11, "textHint", "RIGHT")
+  v.count = Kit.Text(v, "sub", KC.muted, "RIGHT")
   v.count:SetPoint("TOPRIGHT", v, "TOPRIGHT", -46, -19)
-  v.close = Style.IconButton(v, "close")
+  v.close = Kit.IconButton(v, "close", { tooltip = L["Close"], onClick = function() v:Hide() end })
   v.close:SetPoint("TOPRIGHT", v, "TOPRIGHT", -12, -12)
-  v.close:SetTooltip(L["Close"])
-  v.close:SetOnClick(function() v:Hide() end)
-  v.stage = Tex(v, "BORDER", "cardLow", 1)
+  v.stage = Kit.Tex(v, "BORDER", KC.input)
   v.stage:SetPoint("TOPLEFT", v, "TOPLEFT", 16, -44)
   v.stage:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -16, 76)
   v.pic = v:CreateTexture(nil, "ARTWORK")
   v.pic:SetPoint("CENTER", v.stage, "CENTER", 0, 0)
-  v.prev = Style.IconButton(v, "back")
+  v.prev = Kit.IconButton(v, "back", { tooltip = L["Newer picture"], onClick = function() if v.set[v.i - 1] then v.i = v.i - 1 Pic.Show() end end })
   v.prev:SetPoint("LEFT", v.stage, "LEFT", 10, 0)
-  v.prev:SetTooltip(L["Newer picture"])
-  v.prev:SetOnClick(function() if v.set[v.i - 1] then v.i = v.i - 1 Pic.Show() end end)
-  v.next = Style.IconButton(v, "forward")
+  v.next = Kit.IconButton(v, "forward", { tooltip = L["Older picture"], onClick = function() if v.set[v.i + 1] then v.i = v.i + 1 Pic.Show() end end })
   v.next:SetPoint("RIGHT", v.stage, "RIGHT", -10, 0)
-  v.next:SetTooltip(L["Older picture"])
-  v.next:SetOnClick(function() if v.set[v.i + 1] then v.i = v.i + 1 Pic.Show() end end)
-  v.info = Text(v, 12, "textPrimary", "LEFT")
+  v.info = Kit.Text(v, "row", KC.body)
   v.info:SetPoint("BOTTOMLEFT", v, "BOTTOMLEFT", 20, 50)
-  v.quest = Text(v, 12, "textSecondary", "LEFT")
+  v.quest = Kit.Text(v, "sub", KC.muted)
   v.quest:SetPoint("BOTTOMLEFT", v, "BOTTOMLEFT", 20, 30)
-  v.entry = Chip(v, function()
+  v.entry = Kit.Button(v, L["Show in the journal"], { small = true, onClick = function()
     local e = v.shot and ns.AlbumEntryFor(v.shot)
     if not e then return end
     if ns.OpenQuestBook then ns.OpenQuestBook("journal") end
     ns.QuestBookShowEntry(e)
-  end)
+  end })
   v.entry:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -16, 14)
-  v.map = Chip(v, function()
+  v.map = Kit.Button(v, L["World map"], { small = true, onClick = function()
     local e = v.shot and ns.AlbumEntryFor(v.shot)
     if e then EntryToMap(e, true) end
-  end)
-  v.map:SetPoint("RIGHT", v.entry, "LEFT", -8, 0)
-  v.adopt = Chip(v, function()
+  end })
+  v.map:SetPoint("RIGHT", v.entry, "LEFT", -KS.gap, 0)
+  v.adopt = Kit.Button(v, L["Add to this journal"], { small = true, kind = "primary", onClick = function()
     if not v.shot then return end
     ns.AlbumAdopt(v.shot)
     if Refresh then Refresh(true) end
     Pic.Show()
-  end)
+  end })
   v.adopt:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -16, 14)
   if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "QuestdonAlbumView") end
   v:Hide()
@@ -1533,8 +950,8 @@ function Pic.Show()
   v.pic:SetTexCoord(0, 1, 0, 1)
   local e = ns.AlbumEntryFor(shot)
   v.title:SetText(e and e.note or L["Picture"])
-  Fit(v.title, Pic.W - 160, v)
-  v.count:SetText(("%d / %d"):format(v.i, #v.set))
+  Kit.Fit(v.title, Pic.W - 160)
+  v.count:SetText(ns.Fraction(v.i, #v.set))
   local parts = { Fmt.DayTitle(shot.t) .. "  " .. Fmt.Clock(shot.t) }
   if e then
     local zone = e.m and MapName(e.m)
@@ -1547,19 +964,19 @@ function Pic.Show()
     parts[#parts + 1] = Colorize(L["Not in this journal"], "textHint")
   end
   v.info:SetText(table.concat(parts, "  ·  "))
-  Fit(v.info, Pic.W - 40, v)
+  Kit.Fit(v.info, Pic.W - 40)
   local rq = e and e.rq
   v.quest:SetText(rq and (L["Quest"] .. ": " .. (ns.QuestTitle(rq) or ("#" .. tostring(rq)))) or "")
-  Fit(v.quest, Pic.W - 360, v)
+  Kit.Fit(v.quest, Pic.W - 360)
   if v.set[v.i - 1] then v.prev:Show() else v.prev:Hide() end
   if v.set[v.i + 1] then v.next:Show() else v.next:Hide() end
   if e then
     v.adopt:Hide()
-    v.entry:Set(L["Show in the journal"], false) v.entry:Show()
-    if (e.pm or e.m) and e.px and e.py then v.map:Set(L["World map"], false) v.map:Show() else v.map:Hide() end
+    v.entry:Show()
+    if (e.pm or e.m) and e.px and e.py then v.map:Show() else v.map:Hide() end
   else
     v.entry:Hide() v.map:Hide()
-    v.adopt:Set(L["Add to this journal"], false) v.adopt:Show()
+    v.adopt:Show()
   end
 end
 
@@ -1583,7 +1000,7 @@ function ns.QuestBookViewer() return Pic.viewer end -- (tests)
 -- "nums" (numbers in a row).
 ---------------------------------------------------------------------------
 J3.open = {} -- chapter key -> true/false (nil: only the newest chapter is open)
-J3.CHAPTER_H, J3.FACT_H, J3.BAR_H, J3.NUMS_H = 56, 46, 24, 58
+J3.CHAPTER_H, J3.FACT_H, J3.BAR_H, J3.NUMS_H = 44, 36, 24, 52 -- (draft 4)
 J3.MAX_TEXT = 600 -- lines of the text to copy
 J3.PLUS, J3.MINUS = "Interface\\Buttons\\UI-PlusButton-Up", "Interface\\Buttons\\UI-MinusButton-Up"
 
@@ -1625,134 +1042,90 @@ function J3.Played(s, exact)
   return exact and t or ("~" .. t)
 end
 
--- A card line: icon, title, a line below, two values on the right; chapters with a gold band.
-J3.CardKind = {
-  create = function(list)
-    local f = CreateFrame("Button", nil, list)
-    Card(f, 4, 3)
-    Clickable(f)
-    f.band = Tex(f, "ARTWORK", "gold", 0.85)
-    f.band:SetWidth(3)
-    f.band:SetPoint("TOPLEFT", f.cardFill, "TOPLEFT", 1, -1)
-    f.band:SetPoint("BOTTOMLEFT", f.cardFill, "BOTTOMLEFT", 1, 1)
-    f.icon = Icon(f, 20, nil, "OVERLAY")
-    f.icon:SetPoint("CENTER", f, "LEFT", 28, 0)
-    f.title = Text(f, 14, "textPrimary", "LEFT")
-    f.sub = Text(f, 11, "textHint", "LEFT")
-    f.r1 = Text(f, 13, "goldLight", "RIGHT")
-    f.r2 = Text(f, 11, "textSecondary", "RIGHT")
-    return f
-  end,
-  render = function(f, it)
-    if it.chap then f:SetCardLook("card", "cardLow", 0.95, "gold", 0.6) f.band:Show() else f:SetCardLook() f.band:Hide() end
-    local left = 18
-    if it.icon then
-      f.icon:SetTexture(it.icon)
-      local c = it.coords or { 0, 1, 0, 1 }
-      f.icon:SetTexCoord(c[1], c[2], c[3], c[4])
-      f.icon:SetSize(it.iconSize or 20, it.iconSize or 20)
-      f.icon:Show()
-      left = 50
-    else
-      f.icon:Hide()
-    end
-    f.title:SetText(it.title or "")
-    f.sub:SetText(it.sub or "")
-    f.r1:SetText(it.r1 or "")
-    f.r2:SetText(it.r2 or "")
-    f.r1:ClearAllPoints() f.r2:ClearAllPoints()
-    local two = it.r2 and it.r2 ~= ""
-    if two then
-      f.r1:SetPoint("TOPRIGHT", f, "TOPRIGHT", -18, -10)
-      f.r2:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -18, 10)
-    else
-      f.r1:SetPoint("RIGHT", f, "RIGHT", -18, 0)
-    end
-    local rw = RowW(f)
-    Fit(f.r1, rw * 0.34, f) Fit(f.r2, rw * 0.34, f)
-    local rightW = 18
-    if (it.r1 and it.r1 ~= "") or two then rightW = math.max(TextWidth(f.r1), two and TextWidth(f.r2) or 0) + 30 end
-    Fit(f.title, rw - left - rightW - 6, f) Fit(f.sub, rw - left - rightW - 6, f)
-    f.title:ClearAllPoints() f.sub:ClearAllPoints()
-    local h = ns.Num(f:GetHeight()) or it.h or J3.FACT_H
-    if it.sub and it.sub ~= "" then
-      local top = math.floor((h - 32) / 2)
-      f.title:SetPoint("TOPLEFT", f, "TOPLEFT", left, -top - 1)
-      f.sub:SetPoint("TOPLEFT", f, "TOPLEFT", left, -top - 18)
-    else
-      f.title:SetPoint("LEFT", f, "LEFT", left, 0)
-    end
-    f.onClick, f.tooltip, f.questTip = it.onClick, it.tooltip, nil
-  end,
-}
+-- A card line (a chapter, a record, a character): icon, title, a line below, two values on the right; chapters with a
+-- gold mark.
+UI.KINDS.card = { h = 36, make = function(list)
+  local r = Kit.ListRow(list)
+  local base = r.SetItem
+  function r:SetItem(it, index, l)
+    it.iconCoords = it.coords or UI.WHOLE
+    it.right, it.right2 = it.r1, it.r2
+    it.rightColor = "txGold"
+    it.rightWidth = math.max(KS.colRight, math.floor((tonumber(self._w) or 400) * 0.3))
+    it.markColor = it.chap and KC.goldBright or nil
+    it.tooltipFn = it.tooltip and UI.TipOf or nil
+    base(self, it, index, l)
+    self.onClick = it.onClick
+  end
+  return r
+end }
 
 -- Played time of a level as a bar: "Level 12", the bar, "1:12 h".
-J3.BarKind = {
-  create = function(list)
-    local f = CreateFrame("Button", nil, list)
-    Clickable(f)
-    f.label = Text(f, 11, "textSecondary", "LEFT")
-    f.label:SetPoint("LEFT", f, "LEFT", 22, 0)
-    f.track = Tex(f, "ARTWORK", "barBackground")
-    f.track:SetHeight(8)
-    f.fill = Tex(f, "OVERLAY", "gold")
-    f.fill:SetHeight(8)
-    f.value = Text(f, 11, "textPrimary", "RIGHT")
-    f.value:SetPoint("RIGHT", f, "RIGHT", -18, 0)
-    return f
-  end,
-  render = function(f, it)
-    f.label:SetText(it.label or "")
-    f.value:SetText(it.value or "")
-    SetColor(f.label, it.now and "accent" or "textSecondary")
-    local rw = RowW(f)
-    local left, right = 22 + 120, 18 + 80
-    Fit(f.label, 116, f) Fit(f.value, 76, f)
-    f.track:ClearAllPoints()
-    f.track:SetPoint("LEFT", f, "LEFT", left, 0)
-    f.track:SetPoint("RIGHT", f, "RIGHT", -right, 0)
-    local tw = math.max(10, rw - left - right)
-    local frac = math.max(0, math.min(1, ns.Num(it.frac) or 0))
-    f.fill:ClearAllPoints()
-    f.fill:SetPoint("LEFT", f.track, "LEFT", 0, 0)
-    if frac > 0 then f.fill:SetWidth(math.max(1, tw * frac)) f.fill:Show() else f.fill:Hide() end
-    if it.now then Gradient(f.fill, "HORIZONTAL", "violet", 1, "cyan", 1) else Gradient(f.fill, "HORIZONTAL", "goldDark", 1, it.exact and "gold" or "goldDark", 1) end
-    f.onClick, f.tooltip, f.questTip = it.onClick, it.tooltip, nil
-  end,
-}
+UI.KINDS.bar = { h = 24, make = function(list)
+  local f = CreateFrame("Button", nil, list)
+  f.label = Kit.Text(f, "sub", KC.muted)
+  f.label:SetPoint("LEFT", f, "LEFT", KS.pad + 8, 0)
+  f.bar = Kit.ProgressBar(f)
+  f.value = Kit.Text(f, "sub", KC.body, "RIGHT")
+  f.value:SetPoint("RIGHT", f, "RIGHT", -KS.pad, 0)
+  function f:SetItem(it)
+    self.item = it
+    self.label:SetText(it.label or "")
+    self.value:SetText(it.value or "")
+    Kit.TextColor(self.label, it.now and KC.blue or KC.muted)
+    self.bar:SetColor(it.now and "blue" or (it.exact and KC.goldBright or KC.gold))
+    self._tipFn = it.tooltip and UI.TipOf or nil
+    self:Layout(self._w or self:GetWidth())
+  end
+  function f:Layout(w)
+    w = tonumber(w) or 0
+    Kit.Fit(self.label, 112) Kit.Fit(self.value, 76)
+    self.bar:ClearAllPoints()
+    self.bar:SetPoint("LEFT", self, "LEFT", KS.pad + 8 + 120, 0)
+    self.bar:Layout(math.max(10, w - (KS.pad + 8 + 120) - 80 - KS.pad))
+    self.bar:SetValue(ns.Num(self.item and self.item.frac) or 0)
+  end
+  f._cutTexts = { f.label, f.value }
+  Kit.Stateful(f, function(self, st) self.label:SetAlpha(st == "hover" and 1 or 0.9) end)
+  return f
+end }
 
 -- Numbers in a row: big value, small label below.
-J3.NumsKind = {
-  create = function(list)
-    local f = CreateFrame("Frame", nil, list)
-    Card(f, 4, 3)
-    f:SetCardLook("card", "cardLow", 0.92, "gold", 0.45)
-    f.cells = {}
-    for i = 1, 6 do f.cells[i] = { value = Text(f, 18, "textPrimary", "CENTER"), label = Text(f, 11, "textHint", "CENTER") } end
-    CutTip(f)
-    return f
-  end,
-  render = function(f, it)
+UI.KINDS.nums = { h = 52, make = function(list)
+  local f = CreateFrame("Frame", nil, list)
+  f.bg = Kit.Fill(f, KC.card)
+  f.bd = Kit.Border(f, KC.divider)
+  f.cells = {}
+  for i = 1, 6 do f.cells[i] = { value = Kit.Text(f, "hero", KC.hero, "CENTER"), label = Kit.Text(f, "sub", KC.muted, "CENTER") } end
+  function f:SetItem(it) self.item = it self:Layout(self._w or self:GetWidth()) end
+  function f:Layout(w)
+    local it = self.item
+    if not it then return end
     local n = math.max(1, #it.cells)
-    local each = (RowW(f) - 16) / n
-    for i, c in ipairs(f.cells) do
+    local each = ((tonumber(w) or 0) - 16) / n
+    local cut = {}
+    for i, c in ipairs(self.cells) do
       local d = it.cells[i]
       if d then
         c.value:ClearAllPoints()
-        c.value:SetPoint("TOP", f, "TOPLEFT", 8 + each * (i - 0.5), -11)
+        c.value:SetPoint("TOP", self, "TOPLEFT", 8 + each * (i - 0.5), -8)
         c.label:ClearAllPoints()
-        c.label:SetPoint("TOP", c.value, "BOTTOM", 0, -4)
+        c.label:SetPoint("TOP", self, "TOPLEFT", 8 + each * (i - 0.5), -32)
         c.value:SetText(tostring(d[1] or ""))
         c.label:SetText(d[2] or "")
-        SetColor(c.value, d[3] or "textPrimary")
-        Fit(c.value, each - 10, f) Fit(c.label, each - 10, f)
+        Kit.TextColor(c.value, UI.Tone(d[3]) or KC.hero)
+        Kit.Fit(c.value, math.max(10, each - 10)) Kit.Fit(c.label, math.max(10, each - 10))
         c.value:Show() c.label:Show()
+        cut[#cut + 1] = c.value cut[#cut + 1] = c.label
       else
         c.value:Hide() c.label:Hide()
       end
     end
-  end,
-}
+    self._cutTexts = cut
+  end
+  Kit.Stateful(f)
+  return f
+end }
 
 -- Chapters (filter "Chapters"): a card per chapter, newest first; the open ones list their lines.
 function J3.ChapterTip(ch)
@@ -1832,7 +1205,7 @@ function J3.QuestFact(rec, what)
   sub[#sub + 1] = J3.ShortDate(e.t)
   return { kind = "card", h = J3.FACT_H, icon = ICON.c, title = ns.QuestLevelTag(e.q) .. (Fmt.EntryTitle(e) or "?"),
     sub = table.concat(sub, "  ·  "), r1 = Fmt.Span(rec.s) or "?", r2 = rec.played and L["played"] or L["on the clock"],
-    onClick = function() ns.QuestBookShowQuest(e.q, Shift() and "map" or nil) end, tooltip = Fmt.EntryTooltip(e) }
+    onClick = function() UI.ToggleQuest(e.q) end, tooltip = Fmt.EntryTooltip(e) }
 end
 
 function J3.CharCard(c)
@@ -2044,7 +1417,6 @@ function J3.Export()
   return ns.ShowText(L["Journal as text"], L["Ctrl+C copies it. The text follows the list as it is now (filter, open chapters)."], J3.Text())
 end
 ns.QuestBookJournalText = function() return J3.Text() end -- (tests)
-KINDS.card, KINDS.bar, KINDS.nums = J3.CardKind, J3.BarKind, J3.NumsKind
 
 local function JournalItems()
   if jfilter == "p" then return Pic.Items() end
@@ -2135,18 +1507,18 @@ local function QuestSub(e)
   return sub
 end
 
-local DOT = { done = "good", log = "warning", available = "accent", later = "textHint" }
+local DOT = { done = "green", log = "yellow", available = "blue", later = "grey" } -- (draft 4) the kit's status colours
 
 local function FocusID() return ns.zoneFocus and ns.zoneFocus.questID end
 
 local function QuestItem(e, extra)
-  local pill, color = Pill(e)
+  local stateText, stateColor = Pill(e)
   local it = { kind = "quest", h = ROW_H, questID = e.questID, level = e.level, title = e.title or ns.QuestTitle(e.questID),
-    sub = QuestSub(e), pill = pill, pillColor = color, quiet = e.group == "done" or e.group == "later",
+    sub = QuestSub(e), group = e.group, stateText = stateText, stateColor = stateColor, quiet = e.group == "done" or e.group == "later",
     active = FocusID() == e.questID or ns.QuestBookDetailID() == e.questID, tooltip = ns.ZoneQuestTooltip(e) }
   -- (1.3.5, Daniel 08.10. Merkliste) a click shows the detail card only, the arrow stays where it
   -- was; the card's buttons point the arrow and open the map. Shift-click: all at once.
-  it.onClick = function() ns.QuestBookShowQuest(e.questID, Shift() and "map" or nil) end
+  it.onClick = function() UI.ToggleQuest(e.questID) end
   if extra then for k, v in pairs(extra) do it[k] = v end end
   return it
 end
@@ -2212,73 +1584,101 @@ local function ZoneQuestItems(m)
       return rank[a] < rank[b]
     end)
   end
+  -- (02.11.2026, Daniel: "quests eingerückt unter den vorquests") a quest whose prerequisite stands in the list too goes
+  -- right under it, indented (one step per level, at most UI.TREE_MAX), with a mark "2", "3" ("2a", "2b" when one quest
+  -- opens several). Its own status keeps its colour; the section is the one of the first quest of the line. Only a shown
+  -- prerequisite counts: under a folded "done" section or outside the filter the quest stands on its own.
+  local function Shown(g) return g.rep.group ~= "done" or showDone or zFilter == "done" end
+  local byID = {}
+  for _, g in ipairs(order) do for _, p in ipairs(g.parts) do byID[p.questID] = g end end
+  local parentOf, kids = {}, {}
+  for _, g in ipairs(order) do
+    if Shown(g) then
+      local first = #g.parts > 1 and ChainOrder(g.parts)[1] or g.rep
+      for _, pre in ipairs(ns.QuestPrereqs and ns.QuestPrereqs(first.questID) or {}) do
+        local pg = byID[pre]
+        if pg and pg ~= g and Shown(pg) then
+          -- no circle: the prerequisite must not hang below this quest already
+          local up, loop = pg, false
+          for _ = 1, 50 do up = parentOf[up] if not up then break end if up == g then loop = true break end end
+          if not loop then parentOf[g] = pg kids[pg] = kids[pg] or {} table.insert(kids[pg], g) break end
+        end
+      end
+    end
+  end
   local counts = {}
-  for _, g in ipairs(order) do counts[g.rep.group] = (counts[g.rep.group] or 0) + 1 end
+  local function CountIn(g, grp) counts[grp] = (counts[grp] or 0) + 1 for _, k in ipairs(kids[g] or {}) do CountIn(k, grp) end end
+  for _, g in ipairs(order) do if not parentOf[g] then CountIn(g, g.rep.group) end end
+  local function Emit(g, depth, mark)
+    local e = g.rep
+    local indent = depth > 0 and math.min(depth, UI.TREE_MAX) * UI.TREE_STEP or nil
+    if #g.parts == 1 then
+      local it = QuestItem(e, { indent = indent, mark = mark })
+      if zNear and g.dist and depth == 0 then
+        local yd = L["%d yards"]:format(math.floor(g.dist + 0.5))
+        it.sub = it.sub and (it.sub .. "  ·  " .. yd) or yd
+      end
+      items[#items + 1] = it
+    else
+      local parts = ChainOrder(g.parts)
+      local done, dots, active = 0, {}, false
+      for i, p in ipairs(parts) do
+        if p.group == "done" then done = done + 1 end
+        dots[i] = DOT[p.group] or "grey"
+        if FocusID() == p.questID then active = true end
+      end
+      local open = expanded[g.key] and true or false
+      local sub = QuestSub(e)
+      sub = L["Chain of %d"]:format(#parts) .. (sub and ("  ·  " .. sub) or "")
+      -- (draft 4) one line: the parts as dots and "3/6" on the right
+      local it = QuestItem(e, { title = e.title, sub = sub, dots = dots, isChain = true, open = open, active = active and not open,
+        right = ns.Fraction(done, #parts), indent = indent, mark = mark })
+      it.onClick = function() expanded[g.key] = not expanded[g.key] or nil Refresh() end
+      it.tooltip = function()
+        local lines = {}
+        for i, p in ipairs(parts) do
+          lines[#lines + 1] = { L["Part %d"]:format(i), p.text, p.color }
+        end
+        return e.title, lines, L["Click: show or hide the parts."]
+      end
+      items[#items + 1] = it
+      if open then
+        -- (02.11.2026, Daniel: "part 1 und 2 sind ja schon erledigt, kann man das besser kennzeichnen?") a done part: a
+        -- green tick in its mark and "Completed" in green beside the title ("vielleicht auch einfach daneben?")
+        for i, p in ipairs(parts) do
+          local done = p.group == "done"
+          local title = L["Part %d of %d"]:format(i, #parts)
+          if done then title = title .. "  " .. Colorize(L["Completed"], "good") end
+          items[#items + 1] = QuestItem(p, { indent = (indent or 0) + KS.indent, chain = tostring(i), title = title,
+            level = p.level, part = true, chainDone = done or nil })
+        end
+      end
+    end
+    local list2 = kids[g] or {}
+    for i, k in ipairs(list2) do
+      local n = tostring(depth + 2)
+      Emit(k, depth + 1, #list2 > 1 and (n .. string.char(96 + math.min(i, 26))) or n)
+    end
+  end
   local group
   for _, g in ipairs(order) do
-    local e = g.rep
-    if e.group ~= group then
-      group = e.group
-      local head = { kind = "head", h = HEAD_H, text = L[ns.ZONE_GROUP_TITLE[group]], count = counts[group] }
-      if group == "done" and zFilter ~= "done" then
-        head.right = showDone and L["hide"] or L["show"]
-        head.onClick = function() showDone = not showDone Refresh() end
+    if not parentOf[g] then
+      local e = g.rep
+      if e.group ~= group then
+        group = e.group
+        local head = { kind = "head", h = HEAD_H, text = L[ns.ZONE_GROUP_TITLE[group]], count = counts[group] }
+        if group == "done" and zFilter ~= "done" then
+          head.right = showDone and L["hide"] or L["show"]
+          head.collapsed = not showDone
+          head.onClick = function() showDone = not showDone Refresh() end
+        end
+        items[#items + 1] = head
       end
-      items[#items + 1] = head
-    end
-    if group ~= "done" or showDone or zFilter == "done" then
-      if #g.parts == 1 then
-        local it = QuestItem(e)
-        if zNear and g.dist then
-          local yd = L["%d yards"]:format(math.floor(g.dist + 0.5))
-          it.sub = it.sub and (it.sub .. "  ·  " .. yd) or yd
-        end
-        items[#items + 1] = it
-      else
-        local parts = ChainOrder(g.parts)
-        local done, dots, active = 0, {}, false
-        for i, p in ipairs(parts) do
-          if p.group == "done" then done = done + 1 end
-          dots[i] = DOT[p.group] or "textHint"
-          if FocusID() == p.questID then active = true end
-        end
-        local open = expanded[g.key] and true or false
-        local sub = QuestSub(e)
-        sub = L["Chain of %d"]:format(#parts) .. (sub and ("  ·  " .. sub) or "")
-        local it = QuestItem(e, { title = e.title, sub = sub, dots = dots, chain = true, open = open, active = active and not open })
-        it.title = (e.title or "") .. Colorize(("  %d/%d"):format(done, #parts), "textHint")
-        it.onClick = function() expanded[g.key] = not expanded[g.key] or nil Refresh() end
-        it.tooltip = function()
-          local lines = {}
-          for i, p in ipairs(parts) do
-            lines[#lines + 1] = { L["Part %d"]:format(i), p.text, p.color }
-          end
-          return e.title, lines, L["Click: show or hide the parts."]
-        end
-        items[#items + 1] = it
-        if open then
-          for i, p in ipairs(parts) do
-            items[#items + 1] = QuestItem(p, { indent = 22, h = ROW_H, title = L["Part %d of %d"]:format(i, #parts),
-              level = p.level })
-          end
-        end
-      end
+      if Shown(g) then Emit(g, 0, kids[g] and "1" or nil) end
     end
   end
   if #items == 0 then items[1] = { kind = "empty", h = 60, text = L["No quests known for this zone."] } end
-  -- (30.10.2026) the open card's quest: its chain right under its row
-  local open = ns.QuestBookDetailID and ns.QuestBookDetailID()
-  if open and ns.ChainGraph and ns.ChainGraph(open) then
-    for i, it in ipairs(items) do
-      if it.kind == "quest" and it.questID == open then
-        local lw = lists.zone and ns.Num(lists.zone.GetWidth and lists.zone:GetWidth())
-        local w = ((lw and lw > 100) and lw or (lists.zone and lists.zone.rowW) or (W - 20)) - 8 - 24
-        local h = CH.Height(open, w)
-        if h > 0 then table.insert(items, i + 1, { kind = "chain", h = h + 14, questID = open, w = w }) end
-        break
-      end
-    end
-  end
+  -- (02.11.2026, draft 4) the chain of the open card's quest is a path in the card now, no line under its row
   return items, s
 end
 
@@ -2302,14 +1702,16 @@ end
 local function SelectZone(m)
   selZone = m
   zoneSeg = "quests"
-  if lists.zone then lists.zone.offset = 1 end
-  if tab ~= "zone" then ns.OpenQuestBook("zone") else Refresh() end
+  if lists.zone then lists.zone.offset = 0 end
+  -- (02.11.2026, Daniel: "shift+klick auf eine quest in der liste öffnet das questbuch nicht") the book starts on Zones now:
+  -- a closed book is opened here too, not only drawn again
+  if tab ~= "zone" or not (book and book:IsShown()) then ns.OpenQuestBook("zone") else Refresh() end
 end
 ns.QuestBookSelectZone = SelectZone
 
 local function ZoneRow(z, shown, here)
   local m = z.map
-  return { kind = "zone", h = 34, map = m, name = MapName(m) or L["Map %d"]:format(m), range = RangeText(z),
+  return { kind = "zone", h = 36, map = m, name = MapName(m) or L["Map %d"]:format(m), range = RangeText(z),
     here = m == here, selected = m == shown,
     onClick = function() SelectZone(m) end,
     tooltip = function()
@@ -2351,7 +1753,7 @@ local function ZoneListItems()
       local open = contOpen[cont]
       if open == nil then open = (hereInfo and hereInfo.cont == cont) or (not hereInfo and cont == KALIMDOR) end
       if q ~= "" then open = true end
-      items[#items + 1] = { kind = "head", h = HEAD_H, text = ContinentName(cont), right = open and "-" or "+",
+      items[#items + 1] = { kind = "head", h = HEAD_H, text = ContinentName(cont), collapsed = not open,
         onClick = function() contOpen[cont] = not open Refresh() end }
       if open then
         table.sort(rows, function(a, b)
@@ -2414,7 +1816,7 @@ local function SearchItems()
       local it = QuestItem(e)
       local zone = r.m and MapName(r.m)
       it.sub = zone and ((group == "later" and text) and (zone .. "  ·  " .. text) or zone) or it.sub
-      if not group then it.pill, it.pillColor = L["not for you"], "textHint" end
+      if not group then it.stateText, it.stateColor, it.right = L["not for you"], "textHint", L["not for you"] end
       items[#items + 1] = it
     end
   end
@@ -2569,7 +1971,8 @@ local function SelectedDungeon(insts)
   return nextUp or insts[1]
 end
 ns.QuestBookSelectedDungeon = function() return SelectedDungeon() end -- (tests)
-function ns.QuestBookSelectDungeon(inst) dunSel = inst if Refresh then Refresh(true) end end
+-- (02.11.2026, draft 4) a dungeon chosen: its prerequisites; nil: back to the index cards
+function ns.QuestBookSelectDungeon(inst) dunSel = inst UI.dunView = inst and "pre" or "grid" if Refresh then Refresh(true) end end
 
 -- A title without what it shares with the one before ("The Defias Brotherhood (2/7)" after (1/7): "(2/7)").
 local function ShortAfter(prev, title)
@@ -2677,15 +2080,15 @@ local function DungeonItems()
     elseif laterLevel > 1 then lines[#lines + 1] = L["%d open later (the first from level %d)."]:format(laterLevel, firstLevel or 0) end
   end
   local fitText, fitColor = FitOf(inst)
-  items[#items + 1] = { kind = "dsum", h = 34 + 17 * #lines, inst = inst, ready = ready, open = open, done = done,
+  items[#items + 1] = { kind = "dsum", h = math.max(78, 30 + 18 * #lines), inst = inst, ready = ready, open = open, done = done,
     total = #entries, lines = lines, fitText = fitText, fitColor = fitColor }
   -- take now: in the log first, then to pick up
   local now = {}
   for _, e in ipairs(entries) do if e.group == "log" or e.group == "available" then now[#now + 1] = e end end
   if #now > 0 then
-    items[#items + 1] = { kind = "head", h = 30, text = L["Take now"], color = "good", count = #now }
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Take now"], color = "good", count = #now }
     for _, e in ipairs(now) do
-      local it = QuestItem(e, { goal = true, h = 62 })
+      local it = QuestItem(e, { goal = true })
       local todo = ns.QuestTodo(e.questID)
       if e.group == "log" then
         it.sub = Colorize(L["In your log"], "warning") .. (todo and ("  ·  " .. todo) or "")
@@ -2697,9 +2100,9 @@ local function DungeonItems()
   end
   -- do these first: numbered, each with what it unlocks
   if #steps > 0 then
-    items[#items + 1] = { kind = "head", h = 30, text = L["Do these first"], color = "warning", count = #steps }
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Do these first"], color = "warning", count = #steps }
     for i, p in ipairs(steps) do
-      local c = QuestItem(p, { indent = 4, step = stepOf[p.questID], firstStep = i == 1, lastStep = i == #steps })
+      local c = QuestItem(p, { step = stepOf[p.questID], firstStep = i == 1, lastStep = i == #steps })
       local what = L["Unlocks: %s"]:format(table.concat(unlocks[p.questID], ", "))
       if p.group == "later" then
         c.sub = Colorize(p.text or L["not yet"], "textHint") .. "  ·  " .. what
@@ -2713,9 +2116,9 @@ local function DungeonItems()
   local later = {}
   for _, e in ipairs(entries) do if e.group == "later" then later[#later + 1] = e end end
   if #later > 0 then
-    items[#items + 1] = { kind = "head", h = 30, text = L["Not yet"], color = "textSecondary", count = #later }
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Not yet"], color = "textSecondary", count = #later }
     for _, e in ipairs(later) do
-      local it = QuestItem(e, { goal = true, h = 62 })
+      local it = QuestItem(e, { goal = true })
       local chain = ns.DungeonQuestChain(e.questID, own)
       if #chain > 0 then
         local first = chain[1]
@@ -2729,18 +2132,18 @@ local function DungeonItems()
     end
   end
   if done > 0 then
-    items[#items + 1] = { kind = "head", h = 30, text = L["Done"], color = "good", count = done }
+    items[#items + 1] = { kind = "head", h = HEAD_H, text = L["Done"], color = "good", count = done }
     for _, e in ipairs(entries) do
-      if e.group == "done" then items[#items + 1] = QuestItem(e, { h = 40 }) end
+      if e.group == "done" then items[#items + 1] = QuestItem(e) end
     end
   end
-  items[#items + 1] = { kind = "dpath", h = 30, legend = true,
+  items[#items + 1] = { kind = "dpath", h = 24, legend = true,
     text = L["Colours: %s done, %s in your log, %s to take, %s not yet."]:format(Colorize(L["green"], "good"),
       Colorize(L["yellow"], "warning"), Colorize(L["blue"], "accent"), Colorize(L["grey"], "textHint")) }
   return items
 end
 
--- The dropdown's lines, (1.3.5, Daniel 10.10.) in groups by your level: "Your level (n)" (inside the
+-- The dungeons to choose, (1.3.5, Daniel 10.10.) in groups by your level: "Your level (n)" (inside the
 -- dungeon's range), "Coming up" (each "in n levels" in red), then "Below your level" and "All quests done"
 -- in grey. Each line: name, its level range, how many of its quests are done, a tick when all are done.
 local DUN_GROUPS = { "fits", "later", "below", "done" }
@@ -2761,10 +2164,10 @@ function ns.QuestBookDungeonChoices()
     if fit == "later" and not allDone then sub = Colorize(LevelsToGo(n), "critical") .. "  ·  " .. sub
     elseif ready > 0 then sub = sub .. "  ·  " .. L["%d ready"]:format(ready) end
     local quiet = key == "below" or key == "done"
-    table.insert(groups[key], { kind = "dpick", h = 40, inst = inst, text = ns.DungeonName(inst), minL = lo,
+    table.insert(groups[key], { kind = "dpick", h = 40, inst = inst, text = ns.DungeonName(inst), minL = lo, ready = ready,
       fitText = RangeOf(inst), fitColor = quiet and "textHint" or (fit == "later" and "critical" or "good"), selected = inst == sel,
       quiet = quiet, done = allDone, sub = sub, group = key, fit = fit, toGo = n, total = #entries, doneCount = done,
-      onClick = function() dunSel = inst if P.dunDrop then P.dunDrop:Hide() end Refresh(true) end })
+      onClick = function() dunSel = inst UI.dunView = "pre" Refresh(true) end }) -- (draft 4) its card: the prerequisites
   end
   local titles = { fits = L["Your level (%d)"]:format(player), later = L["Coming up"], below = L["Below your level"], done = L["All quests done"] }
   for _, key in ipairs(DUN_GROUPS) do
@@ -2814,7 +2217,7 @@ local function RouteNext()
   end
   local id = route.ids[route.i]
   ns.QuestBookShowQuest(id, "arrow") -- the route leads the arrow
-  ns.Print(L["Route %d/%d: %s"]:format(route.i, #route.ids, ns.QuestTitle(id)))
+  ns.Print(L["Route %s: %s"]:format(ns.Fraction(route.i, #route.ids), ns.QuestTitle(id)))
 end
 function ns.QuestBookRoute(ids)
   if type(ids) ~= "table" or #ids == 0 then route = nil return end
@@ -2831,410 +2234,85 @@ ns.On("QUEST_ACCEPTED", function(_, a, b)
 end)
 
 ---------------------------------------------------------------------------
--- Frames
+-- Frames (02.11.2026, draft 4): the window, its pages and the focus card
 ---------------------------------------------------------------------------
-local function SavePos()
-  local p, _, rp, x, y = book:GetPoint()
-  if type(p) == "string" then ns.db.questBookPos = { p, rp or p, ns.Num(x) or 0, ns.Num(y) or 0 } end
+UI.DETAIL_MIN, UI.DETAIL_MAX = 320, 380
+UI.JMAP = 52 -- the journal's round map in the first tile
+UI.DUN_BAR_H = 48
+
+-- (02.11.2026) the window's place and size in ns.db.questBook; the old place (ns.db.questBookPos) moves over once
+function UI.Store()
+  local st = type(ns.db.questBook) == "table" and ns.db.questBook or {}
+  ns.db.questBook = st
+  local old = ns.db.questBookPos
+  if type(old) == "table" and type(old[1]) == "string" and not st.point then
+    st.point, st.relPoint, st.x, st.y = old[1], old[2] or old[1], tonumber(old[3]) or 0, tonumber(old[4]) or 0
+  end
+  ns.db.questBookPos = nil
+  return st
 end
 
-local function ApplyPos()
-  book:ClearAllPoints()
-  local pos = ns.db.questBookPos
-  if type(pos) == "table" and type(pos[1]) == "string" and pcall(book.SetPoint, book, pos[1], UIParent, pos[2] or pos[1], tonumber(pos[3]) or 0, tonumber(pos[4]) or 0) then return end
-  book:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
+function UI.DetailOpen() return UI.detailID ~= nil or UI.detailEntry ~= nil end
+
+-- Zones: the zone list on the left (an icon rail under 800 px), the hero with the zone's map, the chips, the quests.
+function UI.CreateZonePage(page)
+  P.side = Kit.Sidebar(page, { search = L["Find a zone"], kinds = UI.KINDS,
+    onSearch = function(text) zoneQuery = text Refresh() end })
+  P.side:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+  P.zoneBox = P.side.search
+  lists.zones = P.side.list
+  P.zoneMain = CreateFrame("Frame", nil, page)
+  P.hero = Kit.Hero(P.zoneMain, { height = HERO_H, column = 150 })
+  P.hero:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", 0, 0)
+  P.hero.art.tiles = {}
+  -- the segments (quests of the zone or your journal there, back to your zone) and the filters with their counts
+  P.seg = Kit.ChipBar(P.zoneMain, { onChange = function(key)
+    if key == "here" then SelectZone(nil) return end
+    zoneSeg = key
+    Refresh(true)
+  end })
+  P.seg:Add("quests", L["Quests"])
+  P.seg:Add("journal", L["Your journal here"])
+  P.seg:Add("here", L["Back to my zone"])
+  P.zChips = Kit.ChipBar(P.zoneMain, { onChange = function(key)
+    if key == "near" then zNear = not zNear else zFilter = key end
+    Refresh(true)
+  end })
+  for _, key in ipairs({ "all", "log", "available", "later", "done" }) do
+    P.zChips:Add(key, L[key == "all" and "All" or ns.ZONE_GROUP_TITLE[key]])
+  end
+  P.zChips:Add("near", L["Nearest first"])
+  lists.zone = Kit.List(P.zoneMain, { kinds = UI.KINDS })
 end
 
-local function Border(f, color, alpha)
-  local t = Tex(f, "BORDER", color, alpha); t:SetPoint("TOPLEFT") t:SetPoint("TOPRIGHT") t:SetHeight(1)
-  local b = Tex(f, "BORDER", color, alpha); b:SetPoint("BOTTOMLEFT") b:SetPoint("BOTTOMRIGHT") b:SetHeight(1)
-  local l = Tex(f, "BORDER", color, alpha); l:SetPoint("TOPLEFT") l:SetPoint("BOTTOMLEFT") l:SetWidth(1)
-  local r = Tex(f, "BORDER", color, alpha); r:SetPoint("TOPRIGHT") r:SetPoint("BOTTOMRIGHT") r:SetWidth(1)
+-- the two chip bars on one line: the segments as wide as they need (at most half), the filters scroll in the rest
+function UI.ZoneChips()
+  local mw = UI.zoneW or 600
+  local y = HERO_H + KS.gap
+  local segW = math.min(P.seg:ContentWidth(), math.floor(mw * 0.5))
+  P.seg:ClearAllPoints()
+  P.seg:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", KS.gap, -y)
+  P.seg:Layout(math.max(1, segW))
+  P.zChips:ClearAllPoints()
+  P.zChips:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", segW + 3 * KS.gap, -y)
+  P.zChips:Layout(math.max(1, mw - segW - 4 * KS.gap))
 end
 
--- (i18n) avail: room for the whole row; too long texts get smaller, then cut.
-local function Layout(chips, gap, avail)
-  gap = gap or 6
-  if avail then
-    local total, n = 0, 0
-    for _, c in ipairs(chips) do
-      if c:IsShown() then total = total + (ns.Num(c:GetWidth()) or TextWidth(c.text) + 20) n = n + 1 end
-    end
-    if n > 0 and total + gap * (n - 1) > avail then
-      local each = math.floor((avail - gap * (n - 1)) / n) - 20
-      for _, c in ipairs(chips) do
-        if c:IsShown() then
-          Fit(c.text, each, c)
-          c:SetWidth(TextWidth(c.text) + 20)
-        end
-      end
-    end
-  end
-  local prev
-  for _, c in ipairs(chips) do
-    if c:IsShown() then
-      if prev then
-        c:ClearAllPoints()
-        c:SetPoint("LEFT", prev, "RIGHT", gap or 6, 0)
-      end
-      prev = c
-    end
-  end
-end
-
-local function EditBox(parent, placeholderText, onChange, budget)
-  local box = CreateFrame("Frame", nil, parent)
-  box.bg = Tex(box, "BACKGROUND", "textPrimary", 0.06)
-  box.bg:SetAllPoints(box)
-  Border(box, "textPrimary", 0.08)
-  box.icon = Icon(box, 12, "Interface\\Common\\UI-Searchbox-Icon", "ARTWORK")
-  box.icon:SetPoint("LEFT", box, "LEFT", 8, 0)
-  box.icon:SetVertexColor(C.textHint[1], C.textHint[2], C.textHint[3], 1)
-  local edit = CreateFrame("EditBox", nil, box)
-  edit:SetAutoFocus(false)
-  edit:SetMaxLetters(60)
-  edit:SetFontObject(ChatFontNormal or "ChatFontNormal")
-  edit:SetPoint("TOPLEFT", box, "TOPLEFT", 26, 0)
-  edit:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -8, 0)
-  local tc = C.textPrimary
-  if edit.SetTextColor then edit:SetTextColor(tc[1], tc[2], tc[3]) end
-  box.placeholder = Text(box, 12, "textHint", "LEFT")
-  box.placeholder:SetPoint("LEFT", box, "LEFT", 26, 0)
-  box.placeholder:SetText(placeholderText)
-  if budget then Fit(box.placeholder, budget, box) CutTip(box) end
-  local pending = 0
-  edit:SetScript("OnTextChanged", ns.Guard("quest book search", function(self)
-    local text = tostring(self:GetText() or "")
-    if text == "" then box.placeholder:Show() else box.placeholder:Hide() end
-    pending = pending + 1
-    local mine = pending
-    ns.After(0.2, function() if mine == pending then onChange(text) end end)
-  end))
-  edit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  edit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-  box.edit = edit
-  function box:SetText(text)
-    text = tostring(text or "")
-    if edit.SetText then edit:SetText(text) end
-    if text == "" then self.placeholder:Show() else self.placeholder:Hide() end
-  end
-  return box
-end
-
--- (17.10.) the book's look for Questdon's other windows (the options window)
-ns.BookKit = { THEME = THEME, Card = Card, Tex = Tex, Text = Text, Icon = Icon, Gradient = Gradient, Border = Border,
-  Fill = Fill, SetColor = SetColor, TextWidth = TextWidth, EditBox = EditBox, Clickable = Clickable, Fit = Fit,
-  NewPill = NewPill, SetPill = SetPill, MEDIA = MEDIA, CIRCLE = CIRCLE }
-
--- (1.3.4) The lower right corner of a page's list; the detail card takes its room from the right.
-local detailOpen = false
-local function ListBR(list, rel, relPoint, x, y)
-  list._br = { rel, relPoint, x, y }
-  list:SetPoint("BOTTOMRIGHT", rel, relPoint, x - (detailOpen and (DETAIL_W + 12) or 0), y)
-end
-local function ApplyDetailRoom()
-  for key, l in pairs(lists) do
-    if key ~= "zones" and l._br then
-      local a = l._br
-      l:SetPoint("BOTTOMRIGHT", a[1], a[2], a[3] - (detailOpen and (DETAIL_W + 12) or 0), a[4])
-    end
-  end
-end
-
--- Statistic tile: label, value, small text, optional bar.
-local function Tile(parent)
-  local t = CreateFrame("Frame", nil, parent)
-  Card(t, 0, 0)
-  t:SetCardLook("card", "cardLow", 0.92, "gold", 0.45)
-  t.label = Text(t, 11, "textSecondary", "LEFT")
-  t.label:SetPoint("TOPLEFT", t, "TOPLEFT", 12, -9)
-  t.value = Text(t, 22, "textPrimary", "LEFT")
-  t.value:SetPoint("BOTTOMLEFT", t, "BOTTOMLEFT", 12, 16)
-  t.small = Text(t, 11, "textHint", "LEFT")
-  t.small:SetPoint("BOTTOMLEFT", t.value, "BOTTOMRIGHT", 8, 2)
-  t.track = Tex(t, "ARTWORK", "barBackground")
-  t.track:SetPoint("BOTTOMLEFT", t, "BOTTOMLEFT", 12, 8)
-  t.track:SetPoint("BOTTOMRIGHT", t, "BOTTOMRIGHT", -12, 8)
-  t.track:SetHeight(6)
-  t.fill = Tex(t, "OVERLAY", "accent")
-  t.fill:SetPoint("TOPLEFT", t.track, "TOPLEFT", 0, 0)
-  t.fill:SetPoint("BOTTOMLEFT", t.track, "BOTTOMLEFT", 0, 0)
-  Gradient(t.fill, "HORIZONTAL", "violet", 1, "cyan", 1)
-  t.track:Hide() t.fill:Hide()
-  CutTip(t)
-  return t
-end
-
--- (1.3.4) XP of the last seven days as small bars in a tile (today on the right, in gold).
-local function DayBars(t)
-  t.bars = {}
-  for i = 1, 7 do
-    local b = Tex(t, "ARTWORK", "goldDark", 0.9)
-    b:SetWidth(7)
-    b:SetPoint("BOTTOMRIGHT", t, "BOTTOMRIGHT", -12 - (7 - i) * 10, 14)
-    t.bars[i] = b
-  end
-  t:SetScript("OnEnter", function(self)
-    if not self.days then ShowCut(self) return end
-    local lines = {}
-    for i = 7, 1, -1 do
-      local d = self.days[i]
-      lines[#lines + 1] = { d.label, d.xp > 0 and ("+" .. Style.Number(d.xp) .. " " .. L["XP"]) or "0" }
-    end
-    Style.Tooltip(self, L["Last 7 days"], lines, nil, "ANCHOR_RIGHT")
-  end)
-end
-
-local function CreateJournalPage(page)
-  -- (1.3.4) the map of your zone, round in a gold ring
-  local MAPD = JHERO_H - 20
-  local jm = CreateFrame("Frame", nil, page)
-  jm:SetSize(MAPD, MAPD)
-  jm:SetPoint("TOPLEFT", page, "TOPLEFT", 20, -12)
-  jm.base = Icon(jm, MAPD, CIRCLE, "BACKGROUND")
-  jm.base:SetAllPoints(jm)
-  local cl = THEME.cardLow
-  jm.base:SetVertexColor(cl[1], cl[2], cl[3], 1)
-  jm.tiles = {}
-  if jm.CreateMaskTexture then
-    local ok, mask = pcall(jm.CreateMaskTexture, jm)
-    if ok and mask then
-      pcall(mask.SetTexture, mask, CIRCLE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-      mask:SetAllPoints(jm)
-      jm.mask = mask
-    end
-  end
-  local ringF = CreateFrame("Frame", nil, jm)
-  ringF:SetAllPoints(jm)
-  jm.ringF = ringF
-  local rl = ns.Num(jm.GetFrameLevel and jm:GetFrameLevel())
-  if rl and ringF.SetFrameLevel then ringF:SetFrameLevel(rl + 3) end
-  jm.ring = ringF:CreateTexture(nil, "OVERLAY")
-  jm.ring:SetPoint("CENTER", jm, "CENTER", 0, 0)
-  jm.ring:SetSize(MAPD + 18, MAPD + 18)
-  if jm.ring:SetTexture(MEDIA .. "BookRing") == false then jm.ring:Hide() end
-  jm.name = Text(ringF, 11, "goldLight", "CENTER", "OVERLAY")
-  jm.name:SetPoint("BOTTOM", jm, "BOTTOM", 0, 18)
-  jm:EnableMouse(true)
-  jm:SetScript("OnEnter", function(self) if self.m then Style.Tooltip(self, MapName(self.m) or "?", { { L["Click: show this zone"] } }, nil, "ANCHOR_RIGHT") end end)
-  jm:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
-  jm:SetScript("OnMouseUp", function(self) if self.m then SelectZone(self.m) end end)
-  P.jmap = jm
-  P.tiles = {}
-  for i = 1, 4 do P.tiles[i] = Tile(page) end
-  DayBars(P.tiles[2])
-  page:SetScript("OnSizeChanged", function(self, w)
-    w = (ns.Num(w) or W) - 28 - MAPD - 24
-    local each = (w - 10) / 2
-    local th = (JHERO_H - 10 - 12) / 2
-    P.tileW = each
-    for i, t in ipairs(P.tiles) do
-      t:ClearAllPoints()
-      local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
-      t:SetPoint("TOPLEFT", self, "TOPLEFT", 20 + MAPD + 24 + col * (each + 10), -12 - row * (th + 10))
-      t:SetSize(each, th)
-    end
-  end)
-  P.chips = {}
-  for i, key in ipairs(FILTERS) do
-    local c = Chip(page, function() jfilter = key Refresh(true) end)
-    c.key = key
-    if i == 1 then c:SetPoint("TOPLEFT", page, "TOPLEFT", 16, -JHERO_H - 6) end
-    P.chips[i] = c
-  end
-  P.footer = CreateFrame("Frame", nil, page)
-  P.footer:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", 0, 0)
-  P.footer:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
-  P.footer:SetHeight(28)
-  local fbg = Tex(P.footer, "BACKGROUND")
-  fbg:SetAllPoints(P.footer)
-  Gradient(fbg, "VERTICAL", "header", 0.85, "header", 0.0)
-  CutTip(P.footer)
-  P.footLeft = Text(P.footer, 11, "textHint", "LEFT")
-  P.footLeft:SetPoint("LEFT", P.footer, "LEFT", 14, 0)
-  -- (Stufe 3) the journal as text, right in the footer
-  P.footText = CreateFrame("Button", nil, P.footer)
-  P.footText:SetPoint("RIGHT", P.footer, "RIGHT", -10, 0)
-  P.footText:SetHeight(22)
-  P.footText.text = Text(P.footText, 11, "accent", "RIGHT")
-  P.footText.text:SetPoint("RIGHT", P.footText, "RIGHT", -4, 0)
-  P.footText:SetScript("OnEnter", function(self)
-    Style.Tooltip(self, L["Journal as text"], { { L["What the list shows, as text to copy (Discord, forums)."] } }, nil, "ANCHOR_TOP")
-  end)
-  P.footText:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
-  P.footText:SetScript("OnClick", function() ns.SafeCall("quest book", J3.Export) end)
-  P.footOld = CreateFrame("Button", nil, P.footer)
-  P.footOld:SetPoint("RIGHT", P.footText, "LEFT", -14, 0)
-  P.footOld:SetHeight(22)
-  P.footOld.text = Text(P.footOld, 11, "accent", "RIGHT")
-  P.footOld.text:SetPoint("RIGHT", P.footOld, "RIGHT", -4, 0)
-  P.footOld:SetScript("OnEnter", function(self) ShowCut(self) end)
-  P.footOld:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
-  P.footOld:SetScript("OnClick", function()
-    local l = lists.journal
-    if l and l.items.oldAt then l:ScrollTo(l.items.oldAt) end
-  end)
-  local list = NewList(page, KINDS, W - 2 - 10 - 8)
-  list:SetPoint("TOPLEFT", page, "TOPLEFT", 10, -JHERO_H - 36)
-  ListBR(list, P.footer, "TOPRIGHT", -8, 4)
-  lists.journal = list
-end
-
-local function UpdateTiles()
-  local j = ns.JournalStore()
-  local today = Fmt.DayKey(Fmt.Now())
-  local q, xp, money, lastLevel = 0, 0, 0, nil
-  for _, e in ipairs(j and j.e or {}) do
-    if e.k == "c" and e.t and Fmt.DayKey(e.t) == today then
-      q = q + 1
-      xp = xp + (ns.Num(e.x) or 0)
-      money = money + (ns.Num(e.g) or 0)
-    elseif e.k == "l" and e.t then
-      lastLevel = e.t
-    end
-  end
-  -- (1.3.4) XP per day of the last seven days
-  local now = Fmt.Now()
-  local days, byKey = {}, {}
-  for i = 1, now and 7 or 0 do
-    local ts = now - (7 - i) * 86400
-    local key = Fmt.DayKey(ts)
-    days[i] = { key = key, xp = 0, label = Fmt.DayTitle(ts) }
-    byKey[key] = days[i]
-  end
-  for _, e in ipairs(j and j.e or {}) do
-    if e.k == "c" and e.t then
-      local d = byKey[Fmt.DayKey(e.t)]
-      if d then d.xp = d.xp + (ns.Num(e.x) or 0) end
-    end
-  end
-  local t = P.tiles
-  local maxXP = 1
-  for _, d in ipairs(days) do maxXP = math.max(maxXP, d.xp) end
-  if t[2].bars and #days == 7 then
-    t[2].days = days
-    for i, b in ipairs(t[2].bars) do
-      b:SetHeight(math.max(2, 30 * days[i].xp / maxXP))
-      local c = i == 7 and THEME.gold or THEME.goldDark
-      if b.SetColorTexture then b:SetColorTexture(c[1], c[2], c[3], i == 7 and 1 or 0.8) end
-    end
-  end
-  t[1].label:SetText(L["Today"])
-  t[1].value:SetText(tostring(q))
-  t[1].small:SetText(L["quests"])
-  t[2].label:SetText(L["Experience today"])
-  t[2].value:SetText(xp > 0 and ("+" .. Style.Number(xp)) or "0")
-  SetColor(t[2].value, xp > 0 and "goldLight" or "textPrimary")
-  t[2].small:SetText("")
-  t[3].label:SetText(L["Money today"])
-  t[3].value:SetText(Coins(money, 16) or "0")
-  t[3].small:SetText("")
-  local level = ns.PlayerLevel() or 0
-  local cur, max = ns.Num(ns.Value(UnitXP, "player")) or 0, ns.Num(ns.Value(UnitXPMax, "player")) or 0
-  t[4].label:SetText(L["Level %d to %d"]:format(level, level + 1))
-  if max > 0 then
-    local frac = math.max(0, math.min(1, cur / max))
-    t[4].value:SetText(("%d %%"):format(math.floor(frac * 100)))
-    local w = math.max(1, (ns.Num(t[4]:GetWidth()) or 200) - 24)
-    t[4].track:Show()
-    if frac > 0 then t[4].fill:SetWidth(w * frac) t[4].fill:Show() else t[4].fill:Hide() end
-  else
-    t[4].value:SetText("-")
-    t[4].track:Hide() t[4].fill:Hide()
-  end
-  local nowT = Fmt.Now()
-  -- (Stufe 3) played time on this level when Questdon's clock knows it, else the time since the level-up
-  local playedS, playedExact = ns.JournalLevelPlayed()
-  local since = (playedS and J3.Played(playedS, playedExact)) or (lastLevel and nowT and Fmt.Span(nowT - lastLevel))
-  t[4].small:SetText(since and L["%s on this level"]:format(since) or "")
-  local each = P.tileW or 300
-  for i, tile in ipairs(t) do
-    local room = each - 24 - (i == 2 and 80 or 0)
-    Fit(tile.label, room, tile)
-    Fit(tile.value, room, tile)
-    Fit(tile.small, room - 8 - TextWidth(tile.value), tile)
-  end
-end
-
-local function CreateZonePage(page)
-  local side = CreateFrame("Frame", nil, page)
-  side:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
-  side:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", 0, 0)
-  side:SetWidth(SIDE_W)
-  Tex(side, "BACKGROUND", { 0, 0, 0 }, 0.22):SetAllPoints(side)
-  local edge = Tex(side, "BORDER", "gold", 0.35)
-  edge:SetPoint("TOPRIGHT") edge:SetPoint("BOTTOMRIGHT") edge:SetWidth(1)
-  P.zoneBox = EditBox(side, L["Find a zone"], function(text) zoneQuery = text Refresh() end, SIDE_W - 20 - 34)
-  P.zoneBox:SetPoint("TOPLEFT", side, "TOPLEFT", 10, -10)
-  P.zoneBox:SetPoint("TOPRIGHT", side, "TOPRIGHT", -10, -10)
-  P.zoneBox:SetHeight(24)
-  local zl = NewList(side, KINDS, SIDE_W + 2 - 8)
-  zl:SetPoint("TOPLEFT", side, "TOPLEFT", 0, -40)
-  zl:SetPoint("BOTTOMRIGHT", side, "BOTTOMRIGHT", 2, 6)
-  lists.zones = zl
-
-  local main = CreateFrame("Frame", nil, page)
-  main:SetPoint("TOPLEFT", side, "TOPRIGHT", 0, 0)
-  main:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
-  -- the zone's own map as a picture behind its name
-  local hero = CreateFrame("Frame", nil, main)
-  hero:SetPoint("TOPLEFT", main, "TOPLEFT", 0, 0)
-  hero:SetPoint("TOPRIGHT", main, "TOPRIGHT", 0, 0)
-  hero:SetHeight(HERO_H)
-  hero.base = Tex(hero, "BACKGROUND", "header")
-  hero.base:SetAllPoints(hero)
-  hero.canvas = CreateFrame("Frame", nil, hero)
-  hero.canvas:SetAllPoints(hero)
-  hero.tiles = {}
-  hero.shade = CreateFrame("Frame", nil, hero)
-  hero.shade:SetAllPoints(hero)
-  local lvl = ns.Num(hero.canvas.GetFrameLevel and hero.canvas:GetFrameLevel())
-  if lvl and hero.shade.SetFrameLevel then hero.shade:SetFrameLevel(lvl + 2) end
-  hero.dark = Tex(hero.shade, "BACKGROUND", { 0, 0, 0 }, 0.35)
-  hero.dark:SetAllPoints(hero.shade)
-  hero.fade = Tex(hero.shade, "BORDER", { 0, 0, 0 }, 0.5)
-  hero.fade:SetPoint("TOPLEFT") hero.fade:SetPoint("BOTTOMLEFT") hero.fade:SetWidth(360)
-  if hero.fade.SetGradient and CreateColor then
-    pcall(hero.fade.SetGradient, hero.fade, "HORIZONTAL", CreateColor(0, 0, 0, 0.75), CreateColor(0, 0, 0, 0))
-  end
-  local bottom = Tex(hero.shade, "BORDER", "gold", 0.6)
-  bottom:SetPoint("BOTTOMLEFT") bottom:SetPoint("BOTTOMRIGHT") bottom:SetHeight(1)
-  hero.name = Text(hero.shade, 24, "textPrimary", "LEFT")
-  hero.name:SetPoint("BOTTOMLEFT", hero, "BOTTOMLEFT", 20, 38)
-  hero.meta = Text(hero.shade, 12, "textSecondary", "LEFT")
-  hero.meta:SetPoint("BOTTOMLEFT", hero, "BOTTOMLEFT", 20, 18)
-  hero.count = Text(hero.shade, 22, "textPrimary", "RIGHT")
-  hero.count:SetPoint("TOPRIGHT", hero, "TOPRIGHT", -20, -24)
-  hero.countLabel = Text(hero.shade, 11, "textSecondary", "RIGHT")
-  hero.countLabel:SetPoint("TOPRIGHT", hero.count, "BOTTOMRIGHT", 0, -4)
-  hero.track = Tex(hero.shade, "ARTWORK", "textPrimary", 0.15)
-  hero.track:SetSize(150, 4)
-  hero.track:SetPoint("TOPRIGHT", hero.countLabel, "BOTTOMRIGHT", 0, -8)
-  hero.fill = Tex(hero.shade, "OVERLAY", "gold")
-  hero.fill:SetPoint("TOPLEFT", hero.track, "TOPLEFT", 0, 0)
-  hero.fill:SetPoint("BOTTOMLEFT", hero.track, "BOTTOMLEFT", 0, 0)
-  CutTip(hero.shade)
-  P.hero = hero
-
-  P.segQuests = Chip(main, function() zoneSeg = "quests" lists.zone.offset = 1 Refresh() end)
-  P.segQuests:SetPoint("TOPLEFT", hero, "BOTTOMLEFT", 14, -8)
-  P.segJournal = Chip(main, function() zoneSeg = "journal" lists.zone.offset = 1 Refresh() end)
-  P.segHere = Chip(main, function() SelectZone(nil) end)
-  P.segHere:SetPoint("TOPRIGHT", hero, "BOTTOMRIGHT", -14, -8)
-  -- (1.3.4) filters and "nearest first" (second row, quests only)
-  P.zChips = {}
-  for i, key in ipairs({ "all", "log", "available", "later", "done" }) do
-    local c = Chip(main, function() zFilter = key lists.zone.offset = 1 Refresh() end)
-    c.key = key
-    if i == 1 then c:SetPoint("TOPLEFT", hero, "BOTTOMLEFT", 14, -36) end
-    P.zChips[i] = c
-  end
-  P.zNear = Chip(main, function() zNear = not zNear Refresh() end)
-  P.zNear:SetPoint("TOPRIGHT", hero, "BOTTOMRIGHT", -14, -36)
-  local list = NewList(main, KINDS, W - 2 - SIDE_W - 10 - 8)
-  list:SetPoint("TOPLEFT", hero, "BOTTOMLEFT", 6, -64)
-  ListBR(list, main, "BOTTOMRIGHT", -4, 6)
-  lists.zone = list
+function UI.LayoutZone(w, h, mode)
+  P.side:Layout(h, mode == "rail")
+  local sw = P.side:Width()
+  local mw = w - sw
+  UI.zoneW = mw
+  P.zoneMain:ClearAllPoints()
+  P.zoneMain:SetPoint("TOPLEFT", P.pages.zone, "TOPLEFT", sw, 0)
+  P.zoneMain:SetSize(mw, h)
+  P.hero:Layout(mw)
+  UI.ZoneChips()
+  local y = HERO_H + KS.gap + KS.chip + KS.gap
+  lists.zone:ClearAllPoints()
+  lists.zone:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", 0, -y)
+  lists.zone:Resize(mw, math.max(1, h - y))
+  if UI.heroMap then UI.HeroArt(UI.heroMap) end
 end
 
 -- The map of the zone, scaled to the width of the picture, middle part shown.
@@ -3353,10 +2431,129 @@ local function DrawMapArt(hero, m, width, HEIGHT, mask)
   return drawn > 0
 end
 
-local function UpdateHeroArt(m)
-  local width = ns.Num(P.hero:GetWidth()) or 0
-  if width <= 1 then width = W - SIDE_W end
-  return DrawMapArt(P.hero, m, width, HERO_H)
+-- The zone's map behind the hero (full width, middle stripe); again when the zone or the width changes
+function UI.HeroArt(m)
+  UI.heroMap = m
+  local a = P.hero and P.hero.art
+  if not a then return end
+  local w = math.floor(tonumber(P.hero._w) or 0)
+  if w <= 1 then w = 756 end
+  if m == a.artMap and w == a.artW then return end
+  a.artW = w
+  if not DrawMapArt(a, m, w, HERO_H) then a.artMap = m end
+end
+
+-- Journal: four tiles (today with the round map of your zone, experience with the last seven days, money, the level),
+-- the filters, the time line; the footer counts and copies.
+function UI.CreateJournalPage(page)
+  P.tiles = {
+    Kit.Tile(page, { art = UI.JMAP, onClick = function() if P.jmap and P.jmap.m then SelectZone(P.jmap.m) end end }),
+    Kit.Tile(page, { side = 64 }),
+    Kit.Tile(page),
+    Kit.Tile(page),
+  }
+  P.tiles[1]._tipFn = function(t)
+    local m = P.jmap and P.jmap.m
+    if not m then return nil end
+    local lines = {} -- the tile's cut texts whole
+    for _, fs in ipairs(t._cutTexts or {}) do lines[#lines + 1] = Kit.FullText(fs) end
+    return MapName(m) or L["Map %d"]:format(m), lines, L["Click: show this zone"]
+  end
+  P.cols = Kit.Columns(P.tiles[2].side, 7)
+  P.cols:SetPoint("BOTTOMLEFT", P.tiles[2].side, "BOTTOMLEFT", 0, 0)
+  -- (1.3.4) the map of your zone, round, in a gold ring
+  local D = UI.JMAP
+  local jm = CreateFrame("Frame", nil, P.tiles[1].art)
+  jm:SetSize(D, D)
+  jm:SetPoint("CENTER", P.tiles[1].art, "CENTER", 0, 0)
+  jm.ringTex = jm:CreateTexture(nil, "BACKGROUND", nil, 0)
+  jm.ringTex:SetSize(D + 4, D + 4)
+  jm.ringTex:SetPoint("CENTER", jm, "CENTER", 0, 0)
+  jm.ringTex:SetTexture(CIRCLE)
+  Kit.SetColor(jm.ringTex, KC.gold)
+  jm.base = jm:CreateTexture(nil, "BACKGROUND", nil, 1)
+  jm.base:SetAllPoints(jm)
+  jm.base:SetTexture(CIRCLE)
+  Kit.SetColor(jm.base, KC.input)
+  jm.tiles = {}
+  if jm.CreateMaskTexture then
+    local ok, mask = pcall(jm.CreateMaskTexture, jm)
+    if ok and mask then
+      pcall(mask.SetTexture, mask, CIRCLE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+      mask:SetAllPoints(jm)
+      jm.mask = mask
+    end
+  end
+  jm.ringF = CreateFrame("Frame", nil, jm)
+  jm.ringF:SetAllPoints(jm)
+  P.jmap = jm
+  P.jchips = Kit.ChipBar(page, { onChange = function(key) jfilter = key Refresh(true) end })
+  for _, key in ipairs(FILTERS) do P.jchips:Add(key, L[FILTER_TITLE[key]]) end
+  P.chips = P.jchips.chips
+  lists.journal = Kit.List(page, { kinds = UI.KINDS })
+end
+
+function UI.LayoutJournal(w, h)
+  local each = math.floor((w - 5 * KS.gap) / 4)
+  for i, t in ipairs(P.tiles) do
+    t:ClearAllPoints()
+    t:SetPoint("TOPLEFT", P.pages.journal, "TOPLEFT", KS.gap + (i - 1) * (each + KS.gap), -KS.gap)
+    t:Layout(each)
+  end
+  P.cols:Layout(P.tiles[2].sideW, 30)
+  local y = KS.gap + 72 + KS.gap
+  P.jchips:ClearAllPoints()
+  P.jchips:SetPoint("TOPLEFT", P.pages.journal, "TOPLEFT", KS.gap, -y)
+  P.jchips:Layout(math.max(1, w - 2 * KS.gap))
+  y = y + KS.chip + KS.gap
+  lists.journal:ClearAllPoints()
+  lists.journal:SetPoint("TOPLEFT", P.pages.journal, "TOPLEFT", 0, -y)
+  lists.journal:Resize(w, math.max(1, h - y))
+end
+
+local function UpdateTiles()
+  local j = ns.JournalStore()
+  local today = Fmt.DayKey(Fmt.Now())
+  local q, xp, money, lastLevel = 0, 0, 0, nil
+  for _, e in ipairs(j and j.e or {}) do
+    if e.k == "c" and e.t and Fmt.DayKey(e.t) == today then
+      q = q + 1
+      xp = xp + (ns.Num(e.x) or 0)
+      money = money + (ns.Num(e.g) or 0)
+    elseif e.k == "l" and e.t then
+      lastLevel = e.t
+    end
+  end
+  -- (1.3.4) XP per day of the last seven days
+  local now = Fmt.Now()
+  local values, labels, byKey = {}, {}, {}
+  for i = 1, now and 7 or 0 do
+    local ts = now - (7 - i) * 86400
+    byKey[Fmt.DayKey(ts)] = i
+    values[i], labels[i] = 0, Fmt.DayTitle(ts)
+  end
+  for _, e in ipairs(j and j.e or {}) do
+    if e.k == "c" and e.t then
+      local i = byKey[Fmt.DayKey(e.t)]
+      if i then values[i] = values[i] + (ns.Num(e.x) or 0) end
+    end
+  end
+  local t = P.tiles
+  local here = HereZone()
+  t[1]:SetData(L["Today"], q .. " " .. L["quests"], here and MapName(here) or "")
+  t[2]:SetData(L["Experience today"], xp > 0 and ("+" .. Style.Number(xp)) or "0", L["Last 7 days"], xp > 0 and KC.txGold or nil)
+  P.cols:SetValues(values, labels)
+  t[3]:SetData(L["Money today"], Coins(money, 16) or "0", "")
+  local level = ns.PlayerLevel() or 0
+  local cur, max = ns.Num(ns.Value(UnitXP, "player")) or 0, ns.Num(ns.Value(UnitXPMax, "player")) or 0
+  -- (Stufe 3) played time on this level when Questdon's clock knows it, else the time since the level-up
+  local nowT = Fmt.Now()
+  local playedS, playedExact = ns.JournalLevelPlayed()
+  local since = (playedS and J3.Played(playedS, playedExact)) or (lastLevel and nowT and Fmt.Span(nowT - lastLevel))
+  local frac = max > 0 and math.max(0, math.min(1, cur / max)) or nil
+  t[4]:SetData(L["Level %d to %d"]:format(level, level + 1), frac and ("%d %%"):format(math.floor(frac * 100)) or "-",
+    since and L["%s on this level"]:format(since) or "")
+  t[4]:SetProgress(frac, "blue")
 end
 
 -- The journal's round map: the zone you are in. (1.3.11) A clicked moment
@@ -3367,188 +2564,198 @@ local function UpdateJournalMap()
   local pick = P.jpick
   local m = pick and pick.m or HereZone()
   jm.m = m
-  jm.name:SetText(m and MapName(m) or "")
-  Fit(jm.name, JHERO_H - 60, jm)
   if m ~= jm.artMap then
-    local d = JHERO_H - 20
-    if not DrawMapArt(jm, m, d, d, jm.mask) then jm.artMap = m end
+    if not DrawMapArt(jm, m, UI.JMAP, UI.JMAP, jm.mask) then jm.artMap = m end
   end
-  if not jm.pinOut and jm.ringF then
-    jm.pinOut = Icon(jm.ringF, 13, CIRCLE, "OVERLAY")
-    jm.pinOut:SetVertexColor(0.05, 0.04, 0.08, 0.95)
-    jm.pinIn = Icon(jm.ringF, 8, CIRCLE, "OVERLAY")
-    local g = THEME.goldLight or THEME.gold
-    jm.pinIn:SetVertexColor(g[1], g[2], g[3], 1)
-    if jm.pinIn.SetDrawLayer then jm.pinIn:SetDrawLayer("OVERLAY", 2) end
+  if not jm.pinOut then
+    jm.pinOut = jm.ringF:CreateTexture(nil, "OVERLAY")
+    jm.pinOut:SetSize(9, 9)
+    jm.pinOut:SetTexture(CIRCLE)
+    Kit.SetColor(jm.pinOut, KC.outer)
+    jm.pinIn = jm.ringF:CreateTexture(nil, "OVERLAY", nil, 2)
+    jm.pinIn:SetSize(5, 5)
+    jm.pinIn:SetTexture(CIRCLE)
+    Kit.SetColor(jm.pinIn, KC.goldBright)
   end
   local g = jm.geo
   local shown = false
-  if pick and g and jm.pinOut and m == jm.artMap then
+  if pick and g and m == jm.artMap then
     local X = pick.x * g.lw * g.scale - g.sx
     local Y = pick.y * g.lh * g.scale - g.sy
     local r = g.w / 2
-    if (X - r) ^ 2 + (Y - r) ^ 2 <= (r - 6) ^ 2 then
-      for _, t in ipairs({ jm.pinOut, jm.pinIn }) do
-        t:ClearAllPoints()
-        t:SetPoint("CENTER", jm, "TOPLEFT", X, -Y)
-        t:Show()
+    if (X - r) ^ 2 + (Y - r) ^ 2 <= (r - 4) ^ 2 then
+      for _, tx in ipairs({ jm.pinOut, jm.pinIn }) do
+        tx:ClearAllPoints()
+        tx:SetPoint("CENTER", jm, "TOPLEFT", X, -Y)
+        tx:Show()
       end
       shown = true
     end
   end
-  if jm.pinOut and not shown then jm.pinOut:Hide() jm.pinIn:Hide() end
+  if not shown then jm.pinOut:Hide() jm.pinIn:Hide() end
   jm.pinShown = shown -- (tests)
 end
 
-local function CreateSearchPage(page)
-  P.searchBox = EditBox(page, L["Search quest, zone, level or ID"], function(text) query = text Refresh(true) end, W - 2 - 28 - 34)
-  P.searchBox:SetPoint("TOPLEFT", page, "TOPLEFT", 14, -12)
-  P.searchBox:SetPoint("TOPRIGHT", page, "TOPRIGHT", -14, -12)
-  P.searchBox:SetHeight(30)
-  local list = NewList(page, KINDS, W - 2 - 10 - 8)
-  list:SetPoint("TOPLEFT", page, "TOPLEFT", 6, -52)
-  ListBR(list, page, "BOTTOMRIGHT", -4, 6)
-  lists.search = list
+-- Search: the box, a reset, the list.
+function UI.CreateSearchPage(page)
+  P.searchBox = Kit.SearchBox(page, { placeholder = L["Search quest, zone, level or ID"],
+    onChange = function(text) UI.Later("search", function() query = text Refresh(true) end) end })
+  P.searchBox:SetPoint("TOPLEFT", page, "TOPLEFT", KS.gap, -KS.gap)
+  P.searchReset = Kit.Button(page, L["Reset"], { onClick = function()
+    query = ""
+    P.searchBox:SetText("")
+    if ns.JournalSearchReset then ns.JournalSearchReset() end
+    Refresh(true)
+  end })
+  P.searchReset:SetPoint("TOPRIGHT", page, "TOPRIGHT", -KS.gap, -KS.gap)
+  lists.search = Kit.List(page, { kinds = UI.KINDS })
 end
 
--- (1.3.5) the dungeon chosen in a dropdown at the top (own frames), the route button beside it
-local DUN_BAR_H = 56
-local UpdateDungeonBar -- (1.3.5) the mark button updates the bar
-local function CreateDungeonPage(page)
-  local bar = CreateFrame("Button", nil, page)
-  bar:SetPoint("TOPLEFT", page, "TOPLEFT", 10, -8)
-  bar:SetSize(470, 46)
-  Card(bar, 0, 0)
-  Clickable(bar)
-  bar.disc = Icon(bar, 30, CIRCLE, "ARTWORK")
-  bar.disc:SetPoint("CENTER", bar, "LEFT", 26, 0)
-  bar.ring = Icon(bar, 37, MEDIA .. "BookRing", "OVERLAY")
-  bar.ring:SetPoint("CENTER", bar.disc, "CENTER", 0, 0)
-  bar.level = Text(bar, 12, "textPrimary", "CENTER", "OVERLAY")
+function UI.LayoutSearch(w, h)
+  local rw = math.min(P.searchReset.natural or 96, 140)
+  P.searchReset:Layout(rw)
+  P.searchBox:Layout(math.max(80, w - 3 * KS.gap - rw))
+  local y = KS.gap + KS.button + KS.gap
+  lists.search:ClearAllPoints()
+  lists.search:SetPoint("TOPLEFT", P.pages.search, "TOPLEFT", 0, -y)
+  lists.search:Resize(w, math.max(1, h - y))
+end
+
+-- Dungeons: (draft 4) every dungeon as an index card in a grid; a click on "Prerequisites" shows that dungeon's quests
+-- and what each needs first (the list of 1.3.5) under a head with the way back, the entrance mark, the map and the route.
+local UpdateDungeonBar -- (1.3.5) the mark button updates the head
+function UI.CreateDungeonPage(page)
+  lists.dungrid = Kit.List(page, { kinds = UI.KINDS })
+  local bar = CreateFrame("Frame", nil, page)
+  bar:SetHeight(UI.DUN_BAR_H)
+  Kit.Fill(bar, KC.card)
+  bar.lineB = Kit.Tex(bar, "ARTWORK", KC.divider)
+  bar.lineB:SetPoint("BOTTOMLEFT") bar.lineB:SetPoint("BOTTOMRIGHT") bar.lineB:SetHeight(1)
+  -- back to the cards (and from the cards to the dungeon shown)
+  bar.onClick = function() UI.dunView = UI.dunView == "grid" and "pre" or "grid" Refresh(true) end
+  bar.back = Kit.IconButton(bar, "back", { tooltip = L["Choose a dungeon"], onClick = function() bar.onClick(bar) end })
+  bar.back:SetPoint("LEFT", bar, "LEFT", KS.pad, 0)
+  bar.badge = CreateFrame("Frame", nil, bar)
+  bar.badge:SetSize(30, 30)
+  bar.badge:SetPoint("LEFT", bar, "LEFT", KS.pad + 24 + KS.gap, 0)
+  bar.disc = bar:CreateTexture(nil, "ARTWORK")
+  bar.disc:SetSize(30, 30)
+  bar.disc:SetPoint("CENTER", bar.badge, "CENTER", 0, 0)
+  if bar.disc:SetTexture(CIRCLE) == false then bar.disc:SetTexture(WHITE) end
+  bar.level = Kit.Text(bar, "badge", KC.title, "CENTER")
   BadgeParts(bar, bar.disc, 30)
-  bar.name = Text(bar, 16, "goldLight", "LEFT")
-  bar.name:SetPoint("TOPLEFT", bar, "TOPLEFT", 52, -6)
-  bar.sub = Text(bar, 11, "textSecondary", "LEFT")
-  bar.sub:SetPoint("TOPLEFT", bar, "TOPLEFT", 52, -26)
-  bar.caret = Style.IconButton(bar, "expand")
-  bar.caret:SetPoint("RIGHT", bar, "RIGHT", -10, 0)
-  bar.hint = Text(bar, 11, "textHint", "RIGHT")
-  bar.hint:SetPoint("TOPRIGHT", bar, "TOPRIGHT", -30, -8) -- (1.3.5) on the name's line: the second line gets the whole width
-  local function Toggle() if P.dunDrop:IsShown() then P.dunDrop:Hide() else P.dunDrop:Show() lists.dunPick:SetItems(ns.QuestBookDungeonChoices()) end end
-  bar.onClick = Toggle
-  bar.caret:SetOnClick(Toggle)
+  bar.name = Kit.Text(bar, "title", KC.hero)
+  bar.name:SetPoint("TOPLEFT", bar, "TOPLEFT", KS.pad + 24 + KS.gap + 30 + KS.gap, -8)
+  bar.sub = Kit.Text(bar, "sub", KC.muted)
+  bar.sub:SetPoint("TOPLEFT", bar, "TOPLEFT", KS.pad + 24 + KS.gap + 30 + KS.gap, -27)
+  bar._cutTexts = { bar.name, bar.sub }
+  Kit.Stateful(bar)
   P.dunBar = bar
   -- (1.3.5, Daniel 10.10.) "Mark entrance": arrow and a pin on the map and the minimap; again: "Remove mark"
-  local markChip = Chip(page, function(self)
-    if self.disabled or not self.inst then return end
+  P.dunMark = Kit.Button(bar, L["Mark entrance"], { small = true, onClick = function(self)
+    if not self.inst then return end
     ns.ToggleEntranceMark(self.inst)
-    if P.dunBar and P.dunBar.inst then UpdateDungeonBar() end
-  end)
-  markChip:SetPoint("LEFT", bar, "RIGHT", 12, 0)
-  local chipEnter = markChip:GetScript("OnEnter")
-  markChip:SetScript("OnEnter", function(self)
-    if chipEnter then chipEnter(self) end
-    if self.tipTitle then Style.Tooltip(self, self.tipTitle, self.tipLines, nil, "ANCHOR_RIGHT") end
-  end)
-  P.dunMark = markChip
+    UpdateDungeonBar()
+  end })
   -- (1.3.5, Daniel 10.10.) "Show on map": the world map on the entrance, its pin pulsing for a moment
-  local showChip = Chip(page, function(self)
-    if self.disabled or not self.inst then return end
-    ns.ShowEntranceOnMap(self.inst)
-  end)
-  showChip:SetPoint("LEFT", markChip, "RIGHT", 8, 0)
-  local showEnter = showChip:GetScript("OnEnter")
-  showChip:SetScript("OnEnter", function(self)
-    if showEnter then showEnter(self) end
-    if self.tipTitle then Style.Tooltip(self, self.tipTitle, self.tipLines, nil, "ANCHOR_RIGHT") end
-  end)
-  P.dunShow = showChip
-  P.dunRoute = Chip(page, function() if P.dunRoute.run then ns.SafeCall("quest book", P.dunRoute.run) end end)
-  P.dunRoute:SetPoint("LEFT", showChip, "RIGHT", 8, 0)
-  local list = NewList(page, KINDS, W - 2 - 10 - 8)
-  list:SetPoint("TOPLEFT", page, "TOPLEFT", 6, -8 - DUN_BAR_H)
-  ListBR(list, page, "BOTTOMRIGHT", -4, 6)
-  lists.dungeons = list
-  -- the dropdown: over the list, closes on a choice or a second click
-  local drop = CreateFrame("Frame", nil, page)
-  drop:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -4)
-  drop:SetSize(470, 380)
-  local lvl = ns.Num(list.GetFrameLevel and list:GetFrameLevel())
-  if lvl and drop.SetFrameLevel then drop:SetFrameLevel(lvl + 20) end
-  if drop.EnableMouse then drop:EnableMouse(true) end
-  Card(drop, 0, 0)
-  drop:SetCardLook("cardLow", "cardLow", 0.99, "gold", 0.8)
-  local pick = NewList(drop, KINDS, 470 - 12)
-  pick:SetPoint("TOPLEFT", drop, "TOPLEFT", 4, -6)
-  pick:SetPoint("BOTTOMRIGHT", drop, "BOTTOMRIGHT", -4, 6)
-  lists.dunPick = pick
-  drop:Hide()
-  P.dunDrop = drop
+  P.dunShow = Kit.Button(bar, L["Show on map"], { small = true, onClick = function(self)
+    if self.inst then ns.ShowEntranceOnMap(self.inst) end
+  end })
+  P.dunShow:SetPoint("LEFT", P.dunMark, "RIGHT", KS.unit, 0)
+  P.dunRoute = Kit.Button(bar, "", { small = true, kind = "primary", onClick = function()
+    if P.dunRoute.run then ns.SafeCall("quest book", P.dunRoute.run) end
+  end })
+  P.dunRoute:SetPoint("LEFT", P.dunShow, "RIGHT", KS.unit, 0)
+  lists.dungeons = Kit.List(page, { kinds = UI.KINDS })
 end
 
--- the dropdown bar and the route button for the dungeon shown
+-- the head of the prerequisites: the buttons on the right as wide as they need (together at most 55 % of the width), the
+-- name and its line in what is left
+function UI.DunBarLayout(w)
+  local bar = P.dunBar
+  bar:SetWidth(w)
+  local btns = { P.dunMark, P.dunShow }
+  if P.dunRoute:IsShown() then btns[3] = P.dunRoute end
+  local need = 0
+  for i, b in ipairs(btns) do need = need + (b.natural or 80) + (i > 1 and KS.unit or 0) end
+  local room = math.floor(w * 0.55)
+  local scale = need > room and room / need or 1
+  local total = 0
+  for i, b in ipairs(btns) do
+    local bw = math.floor((b.natural or 80) * scale)
+    b:Layout(bw)
+    total = total + bw + (i > 1 and KS.unit or 0)
+  end
+  P.dunMark:ClearAllPoints()
+  P.dunMark:SetPoint("LEFT", bar, "LEFT", w - KS.pad - total, 0)
+  local tx = KS.pad + 24 + KS.gap + 30 + KS.gap
+  local textW = math.max(20, w - KS.pad - total - KS.gap - tx)
+  Kit.Fit(bar.name, textW)
+  Kit.Fit(bar.sub, textW)
+end
+
+function UI.LayoutDungeons(w, h)
+  local grid = UI.dunView == "grid"
+  UI.Shown(lists.dungrid, grid)
+  UI.Shown(P.dunBar, not grid)
+  UI.Shown(lists.dungeons, not grid)
+  lists.dungrid:ClearAllPoints()
+  lists.dungrid:SetPoint("TOPLEFT", P.pages.dungeons, "TOPLEFT", 0, -KS.gap)
+  lists.dungrid:Resize(w, math.max(1, h - KS.gap))
+  P.dunBar:ClearAllPoints()
+  P.dunBar:SetPoint("TOPLEFT", P.pages.dungeons, "TOPLEFT", 0, 0)
+  UI.DunBarLayout(w)
+  lists.dungeons:ClearAllPoints()
+  lists.dungeons:SetPoint("TOPLEFT", P.pages.dungeons, "TOPLEFT", 0, -UI.DUN_BAR_H)
+  lists.dungeons:Resize(w, math.max(1, h - UI.DUN_BAR_H))
+end
+
+-- the head and the route button for the dungeon shown
 function UpdateDungeonBar()
   local bar = P.dunBar
   if not bar then return end
   local inst = ns.QuestBookSelectedDungeon()
-  if not inst then bar:Hide() P.dunRoute:Hide() if P.dunMark then P.dunMark:Hide() end if P.dunShow then P.dunShow:Hide() end return end
-  bar:Show()
+  if not inst then bar.inst = nil P.dunRoute:Hide() return end
   local minL = ns.DungeonLevelRange(inst)
   local entries = {}
   for _, id in ipairs(ns.DungeonQuestIDs(inst)) do entries[#entries + 1] = id end
-  SetBadge(bar, inst, minL and tostring(minL) or "?")
   -- (1.3.5) name; the range, how many of your quests are done, how it fits you; the zone of the entrance
   local fitText, fitColor = FitOf(inst)
-  fitColor = fitColor or "textHint"
-  local c = RGB(fitColor)
-  bar.disc:SetVertexColor(c[1] * 0.45, c[2] * 0.45, c[3] * 0.45, 1)
-  bar.level:SetTextColor(c[1], c[2], c[3], 1)
-  bar.name:SetText(ns.DungeonName(inst) or "?")
+  UI.SetBadge(bar, inst, minL and tostring(minL) or "?", fitColor)
+  bar.name:SetText(Kit.Upper(ns.DungeonName(inst) or "?"))
   local mine, done = DungeonEntries(inst)
   local zone = ns.DungeonEntrance and select(1, ns.DungeonEntrance(inst))
   local zname = zone and MapName(ZoneOf(zone) or zone)
   local parts = {}
   if RangeOf(inst) then parts[#parts + 1] = RangeOf(inst) end
   parts[#parts + 1] = L["%d of %d quests done"]:format(done, #mine)
-  if fitText then parts[#parts + 1] = Colorize(fitText, fitColor) end
-  local base = table.concat(parts, "  ·  ")
-  -- the zone of the entrance only where it still fits
-  local subW = 470 - 52 - 40
-  bar.sub:SetText(zname and (base .. "  ·  " .. zname) or base)
-  if zname and TextWidth(bar.sub) > subW then bar.sub:SetText(base) end
+  if fitText then parts[#parts + 1] = Colorize(fitText, fitColor or "textHint") end
+  if zname then parts[#parts + 1] = zname end
+  bar.sub:SetText(table.concat(parts, "  ·  "))
   bar.inst, bar.rangeText, bar.doneText = inst, RangeOf(inst), L["%d of %d quests done"]:format(done, #mine)
-  bar.hint:SetText(L["Choose a dungeon"])
-  Fit(bar.hint, 120, bar)
-  Fit(bar.name, 470 - 52 - 30 - 8 - TextWidth(bar.hint), bar)
-  Fit(bar.sub, subW, bar)
   -- (1.3.5) the entrance mark of this dungeon: set, remove, or nothing known
-  local markChip = P.dunMark
-  if markChip then
-    local m = ns.EntranceMark and ns.EntranceMark()
-    local known = ns.DungeonEntrance(inst) ~= nil
-    markChip.inst = inst
-    markChip.disabled = not known
-    local on = m ~= nil and m.inst == inst
-    markChip:Set(on and L["Remove mark"] or L["Mark entrance"], on)
-    markChip:SetAlpha(known and 1 or 0.45)
-    if known then
-      markChip.tipTitle = on and L["Remove mark"] or L["Mark entrance"]
-      markChip.tipLines = { L["The arrow points to the entrance, and a mark stands on the world map and the minimap. It goes away when you get there, after 30 minutes, or with a right-click on it."] }
-    else
-      markChip.tipTitle, markChip.tipLines = L["Mark entrance"], { L["No entrance known for this dungeon."] }
-    end
-    markChip:Show()
+  local known = ns.DungeonEntrance(inst) ~= nil
+  local mk = P.dunMark
+  local m = ns.EntranceMark and ns.EntranceMark()
+  local on = m ~= nil and m.inst == inst
+  mk.inst = inst
+  mk:SetText(on and L["Remove mark"] or L["Mark entrance"])
+  mk:SetSelected(on)
+  mk:SetDisabled(not known)
+  if known then
+    mk.tipTitle = on and L["Remove mark"] or L["Mark entrance"]
+    mk.tipLines = { L["The arrow points to the entrance, and a mark stands on the world map and the minimap. It goes away when you get there, after 30 minutes, or with a right-click on it."] }
+  else
+    mk.tipTitle, mk.tipLines = L["Mark entrance"], { L["No entrance known for this dungeon."] }
   end
-  local showChip = P.dunShow
-  if showChip then
-    local known = ns.DungeonEntrance(inst) ~= nil
-    showChip.inst, showChip.disabled = inst, not known
-    showChip:Set(L["Show on map"], false)
-    showChip:SetAlpha(known and 1 or 0.45)
-    showChip.tipTitle = L["Show on map"]
-    showChip.tipLines = { known and L["Opens the world map at the entrance and lets its pin pulse for a moment."] or L["No entrance known for this dungeon."] }
-    showChip:Show()
-  end
+  mk:SetTooltip(mk.tipTitle, mk.tipLines)
+  local sh = P.dunShow
+  sh.inst = inst
+  sh:SetText(L["Show on map"])
+  sh:SetDisabled(not known)
+  sh.tipTitle = L["Show on map"]
+  sh.tipLines = { known and L["Opens the world map at the entrance and lets its pin pulse for a moment."] or L["No entrance known for this dungeon."] }
+  sh:SetTooltip(sh.tipTitle, sh.tipLines)
   -- route: the quest givers of what you can take now (dungeon quests and the steps before them)
   local pickIDs, seen = {}, {}
   local own = {}
@@ -3563,22 +2770,64 @@ function UpdateDungeonBar()
     end
   end
   if #pickIDs > 0 then
-    P.dunRoute:Set(L["Route: pick up %d"]:format(#pickIDs), false)
+    P.dunRoute:SetText(L["Route: pick up %d"]:format(#pickIDs))
     P.dunRoute.run = function() ns.QuestBookRoute(pickIDs) end
     P.dunRoute:Show()
   else
     P.dunRoute.run = nil
     P.dunRoute:Hide()
   end
+  UI.DunBarLayout(UI.cw or 976)
+end
+
+-- (02.11.2026) an index card of a dungeon: picture or level, name, "Level 17-26 · Zone", a ring with the quests ready
+-- (all done: done), a line how it fits you, the entrance mark and its prerequisites
+function UI.CardArt(card, d)
+  UI.Badge(card.art, 30)
+  UI.SetBadge(card.art, d.inst, d.minL and tostring(d.minL) or "?", d.fitColor, d.quiet)
+end
+function UI.CardData(c)
+  local inst = c.inst
+  local known = ns.DungeonEntrance(inst) ~= nil
+  local mark = ns.EntranceMark and ns.EntranceMark()
+  local on = mark ~= nil and mark.inst == inst
+  local zone = ns.DungeonEntrance and select(1, ns.DungeonEntrance(inst))
+  local zname = zone and MapName(ZoneOf(zone) or zone)
+  local sub = c.fitText or ""
+  if zname then sub = sub ~= "" and (sub .. "  ·  " .. zname) or zname end
+  local markText = on and L["Remove mark"] or L["Mark entrance"]
+  return { inst = inst, minL = c.minL, quiet = c.quiet, fitColor = c.fitColor, title = c.text, sub = sub,
+    ring = { c.done and c.total or (c.ready or 0), c.total or 0 }, status = c.sub, statusColor = c.done and "green" or UI.FIT[c.fitColor] or "grey",
+    selected = c.selected, art = UI.CardArt,
+    buttons = {
+      { text = markText, disabled = not known, onClick = function() ns.ToggleEntranceMark(inst) Refresh() end,
+        tooltip = { markText, { known and L["The arrow points to the entrance, and a mark stands on the world map and the minimap. It goes away when you get there, after 30 minutes, or with a right-click on it."] or L["No entrance known for this dungeon."] } } },
+      { text = L["Prerequisites (%s)"]:format(ns.Fraction(c.ready or 0, c.total or 0)), kind = "primary", onClick = c.onClick },
+    } }
+end
+-- the grid: the groups of the choices (your level, coming up, below, all done) as heads, the cards in rows
+function UI.GridItems(cols)
+  local items, row = {}, nil
+  for _, c in ipairs(ns.QuestBookDungeonChoices()) do
+    if c.kind == "head" then
+      items[#items + 1] = { kind = "head", h = HEAD_H, text = c.text, count = c.count, color = c.color }
+      row = nil
+    else
+      if not row or #row.cards >= cols then
+        row = { kind = "cards", cols = cols, cards = {} }
+        items[#items + 1] = row
+      end
+      row.cards[#row.cards + 1] = UI.CardData(c)
+    end
+  end
+  if #items == 0 then items[1] = { kind = "empty", h = 60, text = L["No dungeon quests known for you."] } end
+  return items
 end
 
 ---------------------------------------------------------------------------
 -- (1.3.4) Detail card: everything about the clicked quest at one glance.
+-- (02.11.2026) Kit.Detail: docked on the right at full width, over the list under 960 px.
 ---------------------------------------------------------------------------
-local detailID
-local detailEntry -- (1.3.11) a journal entry in the card instead of a quest (moments, notes)
-local DrawSections, RenderEntryDetail
-local PlaceDetail
 local function ObjectiveTexts(id)
   local out = {}
   if ns.InQuestLog(id) then
@@ -3747,444 +2996,323 @@ function ns.QuestBookDetail(id)
   return d
 end
 
-local function CreateDetail()
-  local pane = CreateFrame("Frame", nil, book)
-  Card(pane, 0, 0)
-  pane:SetCardLook("card", "cardLow", 0.97, "gold", 0.6)
-  pane:EnableMouse(true)
-  pane:Hide()
-  pane.close = Style.IconButton(pane, "close")
-  pane.close:SetPoint("TOPRIGHT", pane, "TOPRIGHT", -8, -8)
-  pane.close:SetTooltip(L["Close"])
-  pane.close:SetOnClick(function() ns.QuestBookShowQuest(nil) end)
-  pane.badge = Tex(pane, "ARTWORK", "cardLow", 0.95)
-  pane.badge:SetSize(30, 26)
-  pane.badge:SetPoint("TOPLEFT", pane, "TOPLEFT", 14, -14)
-  Edges(pane, pane.badge, "gold", 0.6, "ARTWORK")
-  pane.level = Text(pane, 13, "textPrimary", "CENTER")
-  pane.level:SetPoint("CENTER", pane.badge, "CENTER", 0, 0)
-  pane.title = Text(pane, 15, "goldLight", "LEFT")
-  pane.title:SetPoint("TOPLEFT", pane, "TOPLEFT", 52, -12)
-  pane.title:SetPoint("RIGHT", pane, "RIGHT", -32, 0)
-  pane.title:SetWordWrap(true)
-  pane.title:SetJustifyV("TOP")
-  pane.pillHost = CreateFrame("Frame", nil, pane)
-  pane.pillHost:SetSize(DETAIL_W - 60, 24)
-  NewPill(pane.pillHost)
-  pane.pillHost.pillText:ClearAllPoints()
-  pane.pillHost.pillText:SetPoint("LEFT", pane.pillHost, "LEFT", 9, 0)
-  pane.photo = Pic.Button(pane, 0.6) -- (1.3.11) a screenshot's picture under the title
-  pane.texts = {}
-  pane.arrow = Chip(pane, function()
-    if detailEntry then EntryToMap(detailEntry, false) elseif detailID then ns.FocusQuest(detailID, false) end
-  end)
-  pane.arrow:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 14, 12)
-  pane.map = Chip(pane, function()
-    if detailEntry then EntryToMap(detailEntry, true) elseif detailID then ns.FocusQuest(detailID, true) end
-  end)
-  pane.map:SetPoint("LEFT", pane.arrow, "RIGHT", 8, 0)
+-- the card's buttons: Arrow, World map and (with Leveldon) Report; pane.arrow / .map / .report name them, a button not
+-- shown names a hidden one
+UI.ACTION = {
+  arrow = { text = L["Arrow"], onClick = function()
+    if UI.detailEntry then EntryToMap(UI.detailEntry, false) elseif UI.detailID then ns.FocusQuest(UI.detailID, false) end
+  end },
+  map = { text = L["World map"], onClick = function()
+    if UI.detailEntry then EntryToMap(UI.detailEntry, true) elseif UI.detailID then ns.FocusQuest(UI.detailID, true) end
+  end },
   -- (1.3.6, Daniel 11.10.) with Leveldon: report this quest (quest giver not there, route, a remark)
-  pane.report = Chip(pane, function()
+  report = { text = L["Report"], onClick = function()
     local api = rawget(_G, "LeveldonAPI")
-    if detailID and type(api) == "table" and type(api.Report) == "function" then
-      api.Report({ quest = detailID, title = ns.QuestTitle(detailID) })
+    if UI.detailID and type(api) == "table" and type(api.Report) == "function" then
+      api.Report({ quest = UI.detailID, title = ns.QuestTitle(UI.detailID) })
     end
-  end)
-  pane.report:SetPoint("LEFT", pane.map, "RIGHT", 8, 0)
-  pane.report:Hide()
-  -- (1.3.11) a journal entry: its icon in the badge, the player's note above the chips
-  pane.icon = Icon(pane, 20, nil, "OVERLAY")
-  pane.icon:SetPoint("CENTER", pane.badge, "CENTER", 0, 0)
-  pane.icon:Hide()
-  pane.noteLabel = Text(pane, 11, "gold", "LEFT")
-  pane.noteLabel:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 16, 86)
-  pane.noteBox = EditBox(pane, L["Write a note for this entry"], function(text)
-    if pane.noteFor then
-      ns.JournalSetNote(pane.noteFor, text)
-      if Refresh then Refresh(false) end
-    end
-  end, DETAIL_W - 70)
-  pane.noteBox:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 14, 46)
-  pane.noteBox:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", -14, 46)
-  pane.noteBox:SetHeight(30)
-  pane.noteBox.icon:SetTexture("Interface\\Buttons\\UI-GuildButton-PublicNote-Up")
-  pane.noteBox.icon:SetSize(14, 14)
-  if pane.noteBox.edit.SetMaxLetters then pane.noteBox.edit:SetMaxLetters(ns.JOURNAL_NOTE_LETTERS or 200) end
-  pane.noteLabel:Hide() pane.noteBox:Hide()
-  P.detail = pane
+  end },
+}
+function UI.Actions(keys)
+  local d = P.detail
+  local spec, used = {}, {}
+  for i, k in ipairs(keys) do spec[i] = UI.ACTION[k] used[k] = true end
+  d:SetActions(spec)
+  for i, k in ipairs(keys) do d[k] = d.actions[i] end
+  local spare = #keys
+  for _, k in ipairs({ "arrow", "map", "report" }) do
+    if not used[k] then spare = spare + 1 d[k] = d.actions[spare] end
+  end
 end
 
-local function DetailText(i, size)
-  local pane = P.detail
-  local fs = pane.texts[i]
-  if not fs then
-    fs = Text(pane, size or 12, "textPrimary", "LEFT")
-    fs:SetWordWrap(true)
-    fs:SetJustifyV("TOP")
-    pane.texts[i] = fs
+function UI.CreateDetail()
+  local d = Kit.Detail(book.body, { onClose = function() ns.QuestBookShowQuest(nil) end })
+  d:Hide()
+  if d.SetFrameLevel and book.body.GetFrameLevel then pcall(d.SetFrameLevel, d, (tonumber(book.body:GetFrameLevel()) or 1) + 30) end
+  P.detail = d
+  UI.Actions({ "arrow", "map", "report" }) -- all three made once
+  d.photo = Pic.Button(d) -- (1.3.11) a screenshot's picture, as wide as the card
+  -- (1.3.11) a journal entry: the player's note, saved while typing
+  d.noteBox = Kit.SearchBox(d, { placeholder = L["Write a note for this entry"], onChange = function(text)
+    UI.Later("note", function()
+      if d.noteFor then
+        ns.JournalSetNote(d.noteFor, text)
+        if Refresh then Refresh(false) end
+      end
+    end)
+  end })
+  pcall(d.noteBox.SetMaxLetters, d.noteBox, ns.JOURNAL_NOTE_LETTERS or 200)
+  d.noteBox:Hide()
+  -- the chain of the quest as a path (Chain.lua); a click on a box that sums up parts shows the whole chain
+  P.chainPath = ns.ChainPath and ns.ChainPath(d)
+  if P.chainPath then
+    P.chainPath.frame:Hide()
+    P.chainPath.summaryHint = L["Click: show the whole chain."]
+    -- (02.11.2026, Daniel: "man kann nicht mehr auf 4 klicken um zurück zu kommen") the boxes before and after page through
+    -- the chain; another quest in the card starts at its own part again
+    P.chainPath.onSummary = function(box)
+      local id = UI.detailID
+      if UI.CH.fullFor ~= id then UI.CH.shift = 0 end
+      UI.CH.shift, UI.CH.fullFor = (UI.CH.shift or 0) + ((box and box.dir) or 0), id
+      UI.RenderDetail()
+    end
   end
-  if fs.SetFont then pcall(fs.SetFont, fs, FontPath(), size or 12, "") end
-  fs:SetWidth(DETAIL_W - 30)
-  fs:Show()
-  return fs
 end
 
-local function RenderDetail()
-  local pane = P.detail
-  if not pane then return end
-  if detailEntry then RenderEntryDetail() return end
-  if not detailID then if ns.PostcardHide then ns.PostcardHide(pane) end pane:Hide() return end
-  local d = ns.QuestBookDetail(detailID)
-  local lv = d.level and d.level > 0 and d.level or nil
-  pane.level:SetText(lv and tostring(lv) or "?")
-  local lc = LevelRGB(lv)
-  pane.level:SetTextColor(lc[1], lc[2], lc[3], 1)
-  -- one line if it fits (a little smaller if needed), else two lines; never "(1/" and "2)" apart
-  local titleW = DETAIL_W - 52 - 32
-  pane.title:SetWordWrap(false)
-  pane.title:SetWidth(titleW)
-  pane.title:SetText(d.title or "")
-  if not Style.FitText(pane.title, titleW) then
-    Style.FitText(pane.title, 1e6)
-    pane.title:SetWordWrap(true)
-    pane.title:SetText(((d.title or ""):gsub(" %((%d+)/(%d+)%)$", "\n(%1/%2)")))
-  end
-  local th = math.max(18, math.min(40, ns.Num(pane.title:GetStringHeight()) or 18))
-  pane.pillHost:ClearAllPoints()
-  pane.pillHost:SetPoint("TOPLEFT", pane, "TOPLEFT", 50, -16 - th)
-  SetPill(pane.pillHost, d.pill, d.pillColor, DETAIL_W - 90)
-  for _, fs in ipairs(pane.texts) do fs:Hide() end
-  pane.icon:Hide() pane.noteLabel:Hide() pane.noteBox:Hide()
-  Pic.Set(pane.photo, nil)
-  if ns.PostcardHide then ns.PostcardHide(pane) end
-  pane.noteFor = nil
-  pane.arrow:Show() pane.map:Show()
-  DrawSections(d.sections, 16 + th + 34, (ns.Num(pane:GetHeight()) or 400) - 46)
-  pane.arrow:Set(L["Arrow"], false)
-  pane.map:Set(L["World map"], false)
-  local api = rawget(_G, "LeveldonAPI")
-  if type(api) == "table" and type(api.Report) == "function" then
-    pane.report:Set(L["Report"], false)
-    pane.report:Show()
+-- the width inside the card (Kit.Detail's lines)
+function UI.DetailInner() return math.max(40, (tonumber(P.detail and P.detail._w) or 320) - 2 * KS.pad - 6) end
+
+-- a line of a section: "Kobold Vermin slain: 3/8" as a progress bar, a long sentence as a paragraph
+function UI.DetailLine(d, line)
+  local text, color = tostring(line[1] or ""), UI.Tone(line[2]) or "body"
+  local name, have, need = text:match("^(.-):%s*(%d+)%s*/%s*(%d+)$")
+  if name and tonumber(need) and tonumber(need) > 0 then
+    have, need = tonumber(have), tonumber(need)
+    d:Progress(name, have, need, have >= need)
+  elseif #Plain(text) > 70 and not text:find("^%- ") then
+    d:Para(text, color)
   else
-    pane.report:Hide()
+    d:Line(text, color)
   end
-  pane:Show()
 end
 
-DrawSections = function(sections, y, bottom)
-  local pane = P.detail
-  local n = 0
-  for _, sec in ipairs(sections) do
-    if y > bottom - 30 then break end
-    n = n + 1
-    local head = DetailText(n, 11)
-    head:SetText(sec.title)
-    SetColor(head, "gold")
-    head:ClearAllPoints()
-    head:SetPoint("TOPLEFT", pane, "TOPLEFT", 16, -y)
-    y = y + 17
-    for _, line in ipairs(sec.lines) do
-      if y > bottom - 16 then break end
-      n = n + 1
-      local fs = DetailText(n, 12)
-      fs:SetText(line[1] or "")
-      SetColor(fs, line[2] or "textPrimary")
-      fs:ClearAllPoints()
-      fs:SetPoint("TOPLEFT", pane, "TOPLEFT", 16, -y)
-      -- (1.3.4) wrapped lines: their whole height (before, at most three lines counted and the next one overlapped)
-      local lh = ns.Num(fs:GetStringHeight()) or 14
-      if lh < 14 then lh = 14 end
-      y = y + math.min(160, lh) + 4
-    end
-    y = y + 8
+-- yards to where the quest starts, nil when unknown
+function UI.Yards(id)
+  if not (ns.PlayerWorld and ns.DistanceFrom) then return nil end
+  local ok, d = pcall(function()
+    local m, x, y = ns.QuestStart(id)
+    if not (m and x and y) then return nil end
+    local pc, pn, pw = ns.PlayerWorld()
+    if not (pc and pn) then return nil end
+    return ns.DistanceFrom(pc, pn, pw, { mapID = m, x = x / 100, y = y / 100 })
+  end)
+  return ok and tonumber(d) and math.floor(d + 0.5) or nil
+end
+
+UI.CH = { shift = 0, fullFor = nil } -- (02.11.2026) how far the chain in the card was paged (boxes before / after)
+function UI.RenderDetail()
+  local d = P.detail
+  if not d then return end
+  if UI.detailEntry then return UI.RenderEntryDetail() end
+  if not UI.detailID then
+    if ns.PostcardHide then ns.PostcardHide(d) end
+    Pic.Set(d.photo, nil)
+    d.noteBox:Hide()
+    d:Hide()
+    return
   end
-  return y
+  local id = UI.detailID
+  local q = ns.QuestBookDetail(id)
+  local group = ns.ZoneQuestStatus(id)
+  local lv = q.level and q.level > 0 and q.level or nil
+  local meta = {}
+  local yd = UI.Yards(id)
+  if yd then meta[#meta + 1] = L["%d yards"]:format(yd) end
+  if not (group == "log" and q.pillColor == "good") then meta[#meta + 1] = q.pill end
+  d:SetHead({ level = lv or "?", levelStatus = not lv and "trivial" or nil, title = q.title or "",
+    meta = table.concat(meta, "  ·  "), pill = (group == "log" and q.pillColor == "good") and { q.pill, "ready" } or nil })
+  local api = rawget(_G, "LeveldonAPI")
+  UI.Actions((type(api) == "table" and type(api.Report) == "function") and { "arrow", "map", "report" } or { "arrow", "map" })
+  if ns.PostcardHide then ns.PostcardHide(d) end
+  Pic.Set(d.photo, nil)
+  d.noteBox:Hide()
+  d.noteFor = nil
+  d:Begin()
+  for _, sec in ipairs(q.sections) do
+    if sec.chain and P.chainPath then
+      d:Section(sec.title, sec.lines[1] and sec.lines[1][1])
+      local h = ns.ChainPathDraw(P.chainPath, sec.chain, UI.DetailInner(), { shift = UI.CH.fullFor == sec.chain and UI.CH.shift or 0 })
+      if h > 0 then d:Block(P.chainPath.frame, h) end
+    else
+      d:Section(sec.title)
+      for _, line in ipairs(sec.lines) do UI.DetailLine(d, line) end
+    end
+  end
+  d:End()
+  d:Show()
 end
 
 -- (1.3.11) A journal entry in the card: what, when and where, what the moment
 -- knows, and the player's note (saved while typing).
-RenderEntryDetail = function()
-  local pane = P.detail
-  local e = detailEntry
-  for _, fs in ipairs(pane.texts) do fs:Hide() end
-  pane.level:SetText("")
-  pane.icon:SetTexture(EntryIcon(e))
-  if FULL_ICON[e.k] then pane.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) else pane.icon:SetTexCoord(0, 1, 0, 1) end
-  pane.icon:Show()
-  local titleW = DETAIL_W - 52 - 32
+function UI.RenderEntryDetail()
+  local d, e = P.detail, UI.detailEntry
   local title = Fmt.EntryTitle(e)
   if e.k == "r" and QUALITY_HEX[e.iq] then title = "|c" .. QUALITY_HEX[e.iq] .. title .. "|r" end
-  pane.title:SetWordWrap(true)
-  pane.title:SetWidth(titleW)
-  pane.title:SetText(title)
-  local th = math.max(18, math.min(40, ns.Num(pane.title:GetStringHeight()) or 18))
-  pane.pillHost:ClearAllPoints()
-  pane.pillHost:SetPoint("TOPLEFT", pane, "TOPLEFT", 50, -16 - th)
   local kind = e.k == "l" and "level-up" or (Fmt.KIND_TEXT[e.k] or "done earlier")
-  SetPill(pane.pillHost, L[kind], Fmt.KIND_COLOR[e.k] or "textHint", DETAIL_W - 90)
-  local function Line(label, text, color)
-    return { Colorize(label .. ":", "textHint") .. " " .. Colorize(text, color or "textPrimary") }
-  end
-  local when = {}
-  if e.t then when[#when + 1] = Line(L["Date"], Fmt.DayTitle(e.t) .. "  " .. Fmt.Clock(e.t)) end
-  local zone = e.m and MapName(e.m)
-  if zone then when[#when + 1] = Line(L["Zone"], zone) end
-  if e.l and e.k ~= "l" then when[#when + 1] = Line(L["Your level"], tostring(e.l)) end
-  if e.k == "c" and e.x then when[#when + 1] = Line(L["Experience"], "+" .. Style.Number(e.x), "warning") end
-  local sections = { { title = L["When and where"], lines = when } }
-  local story = ns.JournalStory and ns.JournalStory(e) -- (1.3.12) what the quest giver told at the turn-in
-  if story then sections[#sections + 1] = { title = L["Story"], lines = { { story, "textSecondary" } } } end
-  if MOMENT[e.k] then
-    local more = {}
-    for _, l in ipairs(Fmt.MomentLines(e, {})) do more[#more + 1] = Line(l[1], l[2], l[3]) end
-    if #more > 0 then sections[#sections + 1] = { title = L["Moment"], lines = more } end
-  end
-  -- (1.3.11) the screenshot's picture, as wide as the card
-  local top = 16 + th + 34
-  local shot = e.k == "s" and ns.AlbumShotFor and ns.AlbumShotFor(e) or nil
-  if shot then
-    local pw = DETAIL_W - 32
-    local ph = math.floor(pw * 9 / 16 + 0.5)
-    Pic.Set(pane.photo, shot, pw, ph)
-    pane.photo:ClearAllPoints()
-    pane.photo:SetPoint("TOPLEFT", pane, "TOPLEFT", 16, -top)
-    top = top + ph + 12
-  elseif e.k == "s" and ns.PostcardFor then
-    -- (1.3.12) no picture of the album: the postcard (map, character, target, time of day)
-    Pic.Set(pane.photo, nil)
-    local pw = DETAIL_W - 32
-    local ph = math.floor(pw * 9 / 16 + 0.5)
-    local card = ns.PostcardFor(pane)
-    card:ClearAllPoints()
-    card:SetPoint("TOPLEFT", pane, "TOPLEFT", 16, -top)
-    ns.PostcardShow(card, e, pw, ph)
-    top = top + ph + 12
-  else
-    Pic.Set(pane.photo, nil)
-  end
-  if not (e.k == "s" and not shot) and ns.PostcardHide then ns.PostcardHide(pane) end
-  DrawSections(sections, top, (ns.Num(pane:GetHeight()) or 400) - 100)
-  pane.noteLabel:SetText(L["Your note"])
-  pane.noteLabel:Show()
-  pane.noteBox:Show()
-  if pane.noteFor ~= e then
-    pane.noteFor = e
-    pane.noteBox:SetText(e.note or "")
-  end
+  d:SetHead({ icon = EntryIcon(e), title = title, meta = Colorize(L[kind], Fmt.KIND_COLOR[e.k] or "textHint") })
   local where = (e.pm or e.m) and e.px and e.py
   local quest = e.q and not MOMENT[e.k]
-  if where or quest then pane.arrow:Set(L["Arrow"], false) pane.arrow:Show() else pane.arrow:Hide() end
-  if where or quest or e.m then pane.map:Set(L["World map"], false) pane.map:Show() else pane.map:Hide() end
-  pane.report:Hide()
-  pane:Show()
-end
-
--- Next to the list of the open tab, as high as the list.
-PlaceDetail = function()
-  if not P.detail then return end
-  local l = lists[tab]
-  P.detail:ClearAllPoints()
-  if l and (detailID or detailEntry) then
-    P.detail:SetPoint("TOPLEFT", l, "TOPRIGHT", 10, 0)
-    P.detail:SetPoint("BOTTOMRIGHT", book, "BOTTOMRIGHT", -16, 16)
+  local acts = {}
+  if where or quest then acts[#acts + 1] = "arrow" end
+  if where or quest or e.m then acts[#acts + 1] = "map" end
+  UI.Actions(acts)
+  d:Begin()
+  -- (1.3.11) the screenshot's picture, as wide as the card; (1.3.12) without one the postcard (map, character, target,
+  -- time of day)
+  local w = UI.DetailInner()
+  local ph = math.floor(w * 9 / 16 + 0.5)
+  local shot = e.k == "s" and ns.AlbumShotFor and ns.AlbumShotFor(e) or nil
+  if shot then
+    Pic.Set(d.photo, shot, w, ph)
+    d:Block(d.photo, ph)
+  else
+    Pic.Set(d.photo, nil)
   end
-  RenderDetail()
-end
-
--- Show a quest in the detail card (nil closes the card). (1.3.5) focus: nil = the card only,
--- "arrow" = also arrow and map mark, "map" = also open the world map there.
-function ns.QuestBookShowQuest(id, focus)
-  if id and focus then ns.FocusQuest(id, focus == "map") end
-  local changed = detailID ~= id or detailEntry ~= nil
-  detailID = id
-  detailEntry = nil
-  P.jpick = nil
-  local open = id ~= nil
-  if open ~= detailOpen then detailOpen = open ApplyDetailRoom() end
-  PlaceDetail()
-  if changed and not focus and Refresh then Refresh(false) end -- the clicked line stands out
-end
-function ns.QuestBookDetailID() return detailID end
-
--- (30.10.2026, Daniel: "mit Shift-Links-Klick die Quest im Quest-Buch im Zonenbereich aufgemacht") the book on the zone
--- of the quest (where it starts, else the zone shown), with the quest's card and its chain
-function ns.QuestBookOpenQuest(id)
-  id = ns.Num(id)
-  if not id then return end
-  local m = ns.QuestStart(id)
-  local zone = m and (ZoneOf(m) or m)
-  if zone then SelectZone(zone) else ns.OpenQuestBook("zone") end
-  ns.QuestBookShowQuest(id)
-  -- its row (and the chain under it) in sight
-  local list = lists.zone
-  for i, it in ipairs(list and list.items or {}) do
-    if it.kind == "quest" and it.questID == id then list:ScrollTo(math.max(1, i - 1)) break end
+  if e.k == "s" and not shot and ns.PostcardFor then
+    local card = ns.PostcardFor(d)
+    ns.PostcardShow(card, e, w, ph)
+    d:Block(card, ph)
+  elseif ns.PostcardHide then
+    ns.PostcardHide(d)
   end
+  d:Section(L["When and where"])
+  if e.t then d:Line(L["Date"], "muted", Fmt.DayTitle(e.t) .. "  " .. Fmt.Clock(e.t), "body") end
+  local zone = e.m and MapName(e.m)
+  if zone then d:Line(L["Zone"], "muted", zone, "body") end
+  if e.l and e.k ~= "l" then d:Line(L["Your level"], "muted", tostring(e.l), "body") end
+  if e.k == "c" and e.x then d:Line(L["Experience"], "muted", "+" .. Style.Number(e.x), "txGold") end
+  local story = ns.JournalStory and ns.JournalStory(e) -- (1.3.12) what the quest giver told at the turn-in
+  if story then
+    d:Section(L["Story"])
+    d:Para(story, "muted")
+  end
+  if MOMENT[e.k] then
+    local more = Fmt.MomentLines(e, {})
+    if #more > 0 then
+      d:Section(L["Moment"])
+      for _, l in ipairs(more) do d:Line(l[1], "muted", l[2], UI.Tone(l[3]) or "body") end
+    end
+  end
+  d:Section(L["Your note"])
+  d:Block(d.noteBox, KS.button)
+  if d.noteFor ~= e then
+    d.noteFor = e
+    d.noteBox:SetText(e.note or "")
+  end
+  d:End()
+  d:Show()
 end
-function ns.QuestBookZoneList() return lists.zone end -- (tests)
 
--- (1.3.11) Show a journal entry in the card (nil closes it); a moment with a
--- spot in its zone also shows that spot on the journal's round map.
-function ns.QuestBookShowEntry(e)
-  if type(e) ~= "table" then return ns.QuestBookShowQuest(nil) end
-  e = type(e.src) == "table" and e.src or e
-  detailEntry, detailID = e, nil
-  P.jpick = MOMENT[e.k] and e.m and e.px and e.py and not e.pm and { m = ZoneOf(e.m) or e.m, x = e.px, y = e.py } or nil
-  if not detailOpen then detailOpen = true ApplyDetailRoom() end
-  PlaceDetail()
-  if Refresh then Refresh(false) end
+-- Place everything for the width of the window: the open tab's page (narrower while the card is docked on the right),
+-- the card docked or over the list.
+function UI.Place()
+  if not P.pages then return end
+  local w, h, mode = UI.w, UI.h, UI.mode
+  local full = mode == "full"
+  local open = UI.DetailOpen()
+  local dw = math.max(UI.DETAIL_MIN, math.min(UI.DETAIL_MAX, math.floor(w * 0.36)))
+  local cw = (full and open) and (w - dw) or w
+  UI.cw = cw
+  for _, page in pairs(P.pages) do page:SetSize(cw, h) end
+  if tab == "zone" then UI.LayoutZone(cw, h, mode)
+  elseif tab == "journal" then UI.LayoutJournal(cw, h)
+  elseif tab == "dungeons" then UI.LayoutDungeons(cw, h)
+  else UI.LayoutSearch(cw, h) end
+  local d = P.detail
+  d:ClearAllPoints()
+  if full then
+    d.docked = true
+    d:SetPoint("TOPLEFT", book.body, "TOPLEFT", cw, 0)
+    d:Layout(dw, h)
+  else
+    d.docked = false
+    local ow = math.min(dw, w - KS.rail - 2 * KS.gap)
+    d:SetPoint("TOPRIGHT", book.body, "TOPRIGHT", -KS.gap, -KS.gap)
+    d:Layout(ow, h - 2 * KS.gap)
+  end
+  UI.RenderDetail() -- (closed: hides the card, its postcard and picture)
+  -- the grid's columns and the album's tiles follow the width
+  local cols = full and 3 or 2 -- (the window 960 px and wider)
+  if tab == "dungeons" and cols ~= UI.gridCols and Refresh then UI.gridCols = cols Refresh(false) end
+  if tab == "journal" and jfilter == "p" and UI.albumW ~= cw and Refresh then UI.albumW = cw Refresh(false) end
 end
-function ns.QuestBookDetailEntry() return detailEntry end
-function ns.QuestBookMapPick() return P.jpick, P.jmap and P.jmap.pinShown end -- (tests)
-function ns.QuestBookDetailPane() return P.detail end -- (tests)
 
-local function TabButton(parent, key)
-  local b = CreateFrame("Button", nil, parent)
-  b.key = key
-  b:SetSize(118, HEADER_H - 8)
-  -- (1.3.4) a framed tab; the open one brighter with a gold frame
-  Card(b, 2, 0)
-  b.hover = Tex(b, "BACKGROUND", "rowHover", nil, 3)
-  b.hover:SetAllPoints(b.cardFill)
-  b.hover:Hide()
-  b.icon = Icon(b, 16, TAB_ICON[key], "ARTWORK")
-  if b.icon.SetTexCoord then b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
-  b.text = Text(b, 13, "textSecondary", "LEFT")
-  b.text:SetText(L[TAB_TITLE[key]])
-  b.icon:SetPoint("RIGHT", b, "CENTER", -TextWidth(b.text) / 2 + 2, 0)
-  b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
-  b.mark = Tex(b, "OVERLAY", "goldLight")
-  b.mark:SetPoint("TOPLEFT", b.cardFill, "TOPLEFT", 10, -1)
-  b.mark:SetPoint("TOPRIGHT", b.cardFill, "TOPRIGHT", -10, -1)
-  b.mark:SetHeight(1)
-  b:SetScript("OnEnter", function(self) self.hover:Show() ShowCut(self) end)
-  b:SetScript("OnLeave", function(self) self.hover:Hide() Style.HideTooltip(self) end)
-  b:SetScript("OnClick", function(self) ns.OpenQuestBook(self.key) end)
-  return b
+-- The footer: on the journal the entries, "Done earlier (n)" and "Copy as text"
+function UI.CreateFooter()
+  local f = book.footer
+  P.footer = f
+  P.footText = Kit.Button(f, L["Copy as text"], { small = true, onClick = function() ns.SafeCall("quest book", J3.Export) end,
+    tooltip = L["Journal as text"], tooltipLines = { L["What the list shows, as text to copy (Discord, forums)."] } })
+  P.footText:SetPoint("RIGHT", f, "RIGHT", -KS.pad - 16, 0)
+  P.footOld = Kit.Button(f, "", { small = true, onClick = function()
+    local l = lists.journal
+    if l and l.items.oldAt then l:ScrollTo(l.items.oldAt, true) end
+  end })
+  P.footOld:SetPoint("RIGHT", P.footText, "LEFT", -KS.gap, 0)
+end
+
+function UI.Footer()
+  if not P.footText then return end
+  local journal = tab == "journal"
+  local room = (UI.w or 976) - 2 * KS.pad - 16
+  if journal then
+    P.footText:Show()
+    room = room - (P.footText.natural or 100) - KS.gap
+    local old = UI.oldCount or 0
+    if old > 0 then
+      P.footOld:SetText(L["Done earlier (%d)"]:format(old))
+      P.footOld:Layout(math.min(P.footOld.natural or 120, math.floor(room / 2)))
+      P.footOld:Show()
+      room = room - (tonumber(P.footOld:GetWidth()) or 120) - KS.gap
+    else
+      P.footOld:Hide()
+    end
+    book:SetStatus(UI.footStatus or "")
+  else
+    -- (02.11.2026, Daniel: "kurze Zahl je Reiter") the other tabs: a short count in the footer
+    P.footText:Hide() P.footOld:Hide()
+    local text = ""
+    if tab == "zone" then
+      local m = ShownZone()
+      local s = m and ZoneStats(m)
+      if s and s.total > 0 then text = L["%d of %d quests done"]:format(s.done, s.total) end
+    elseif tab == "dungeons" then
+      local inst = UI.dunView == "pre" and ns.QuestBookSelectedDungeon()
+      if inst then
+        local mine, done = DungeonEntries(inst)
+        text = L["%d of %d quests done"]:format(done, #mine)
+      else
+        local n = 0
+        for _, c in ipairs(ns.QuestBookDungeonChoices()) do if c.kind ~= "head" then n = n + 1 end end
+        text = L["%d dungeons with quests for you"]:format(n)
+      end
+    elseif tab == "search" and query and query ~= "" then
+      local n = 0
+      for _, it in ipairs(lists.search and lists.search.items or {}) do
+        if it.kind == "quest" or it.kind == "entry" or it.kind == "zone" then n = n + 1 end
+      end
+      text = L["%d found"]:format(n)
+    end
+    book:SetStatus(text)
+  end
+  if book.status then Kit.Fit(book.status, math.max(20, room)) end
 end
 
 local function Create()
-  book = CreateFrame("Frame", "QuestdonQuestBook", UIParent)
-  book:SetSize(W, H)
-  book:SetFrameStrata("HIGH")
-  book:SetToplevel(true)
-  book:SetClampedToScreen(true)
-  book:SetMovable(true)
-  book:EnableMouse(true)
+  book = Kit.Window("QuestdonQuestBook", { title = "Questdon", subtitle = L["Quest book"], logo = TAB_ICON.zone,
+    options = "Questdon", hint = L["/qd opens them too."], footer = true, store = UI.Store(), width = 980, height = 640,
+    onLayout = function(_, w, h, mode) UI.w, UI.h, UI.mode = w, h, mode UI.Place() UI.Footer() end,
+    onTab = function(key) ns.OpenQuestBook(key) end })
   book:Hide()
-  -- (1.3.4) navy at the top to violet at the bottom, a gold frame, ornaments in the corners
-  local bg = Tex(book, "BACKGROUND")
-  bg:SetAllPoints(book)
-  Gradient(bg, "VERTICAL", "backgroundLow", 0.97, "background", 0.97)
-  Border(book, "gold", 0.95)
-  local inner = CreateFrame("Frame", nil, book)
-  inner:SetPoint("TOPLEFT", book, "TOPLEFT", 3, -3)
-  inner:SetPoint("BOTTOMRIGHT", book, "BOTTOMRIGHT", -3, 3)
-  Border(inner, "goldDark", 0.9)
-  local inner2 = CreateFrame("Frame", nil, book)
-  inner2:SetPoint("TOPLEFT", book, "TOPLEFT", 5, -5)
-  inner2:SetPoint("BOTTOMRIGHT", book, "BOTTOMRIGHT", -5, 5)
-  Border(inner2, "gold", 0.35)
-  if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "QuestdonQuestBook") end
   book:SetScript("OnHide", function()
     ns.zoneFocus = nil
     if ns.RefreshPins then ns.RefreshPins() end
   end)
-
-  local header = CreateFrame("Frame", nil, book)
-  header:SetPoint("TOPLEFT", book, "TOPLEFT", 1, -1)
-  header:SetPoint("TOPRIGHT", book, "TOPRIGHT", -1, -1)
-  header:SetHeight(HEADER_H)
-  local hbg = Tex(header, "BACKGROUND")
-  hbg:SetAllPoints(header)
-  Gradient(hbg, "VERTICAL", "background", 0.0, "header", 0.85)
-  local hline = Tex(header, "BORDER", "gold", 0.7)
-  hline:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 8, 0) hline:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", -8, 0) hline:SetHeight(1)
-  header:EnableMouse(true)
-  header:RegisterForDrag("LeftButton")
-  header:SetScript("OnDragStart", function() book:StartMoving() end)
-  header:SetScript("OnDragStop", function() book:StopMovingOrSizing() SavePos() end)
-  local title = Text(header, 15, "textPrimary", "LEFT")
-  title:SetPoint("LEFT", header, "LEFT", 14, 0)
-  title:SetText(Style.Wordmark("Quest", "don"))
-  local sub = Text(header, 12, "textSecondary", "LEFT")
-  sub:SetPoint("LEFT", title, "RIGHT", 10, 0)
-  sub:SetText(L["Quest book"])
-  local close = Style.IconButton(header, "close")
-  close:SetPoint("RIGHT", header, "RIGHT", -10, 0)
-  close:SetTooltip(L["Close"])
-  close:SetOnClick(function() book:Hide() end) -- OnHide drops the focus
-  -- (1.3.5, Daniel 05.10.) the options right from the book (the window is off for new players)
-  -- (round 8b, Daniel 10.10.: "could be a bit bigger and does not sit centred") The gear's glyph fills less
-  -- of its box than the X: a larger box (GEAR_SIZE), its centre on the X's centre line, GEAR_GAP between them.
-  local gear = Style.IconButton(header, "options")
-  gear:SetSize(GEAR_SIZE, GEAR_SIZE)
-  local closeW = tonumber(close.GetWidth and close:GetWidth()) or 14
-  gear:SetPoint("CENTER", close, "CENTER", -(closeW / 2 + GEAR_GAP + GEAR_SIZE / 2), 0)
-  gear:SetTooltip(L["Options"], nil, L["/qd opens them too."])
-  gear:SetOnClick(function() if ns.OpenOptions then ns.OpenOptions() end end)
-  P.gear = gear
-  P.tabs = {}
-  local prev = close
-  for i = #TABS, 1, -1 do
-    local b = TabButton(header, TABS[i])
-    if prev == close then b:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", -64, 0) else b:SetPoint("BOTTOMRIGHT", prev, "BOTTOMLEFT", -4, 0) end
-    P.tabs[TABS[i]] = b
-    prev = b
-  end
-  -- (i18n) tabs as wide as their text needs (at least 118 px); the subtitle gets what is left
-  local titleW = TextWidth(title)
-  local each = math.floor((W - 2 - 14 - titleW - 10 - 60 - 58) / #TABS) - 50
-  local tabsW = 0
-  for _, key in ipairs(TABS) do
-    local b = P.tabs[key]
-    Fit(b.text, each, b)
-    local w = math.max(118, TextWidth(b.text) + 50)
-    b:SetWidth(w)
-    b.icon:ClearAllPoints()
-    b.icon:SetPoint("RIGHT", b, "CENTER", -TextWidth(b.text) / 2 + 2, 0)
-    tabsW = tabsW + w
-  end
-  Fit(sub, W - 2 - 14 - titleW - 10 - tabsW - 58 - 16, header)
-  header:SetScript("OnEnter", function(self) ShowCut(self) end)
-  header:SetScript("OnLeave", function(self) Style.HideTooltip(self) end)
-
+  for _, key in ipairs(TABS) do book:AddTab(key, L[TAB_TITLE[key]]) end
+  P.gear = book.gear
   P.pages = {}
   for _, key in ipairs(TABS) do
-    local page = CreateFrame("Frame", nil, book)
-    page:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, 0)
-    page:SetPoint("BOTTOMRIGHT", book, "BOTTOMRIGHT", -1, 1)
+    local page = CreateFrame("Frame", nil, book.body)
+    page:SetPoint("TOPLEFT", book.body, "TOPLEFT", 0, 0)
     page:Hide()
     P.pages[key] = page
   end
-  CreateJournalPage(P.pages.journal)
-  CreateZonePage(P.pages.zone)
-  CreateSearchPage(P.pages.search)
-  CreateDungeonPage(P.pages.dungeons)
-  CreateDetail()
-  -- the ornaments lie on top of everything and take no clicks
-  local orn = CreateFrame("Frame", nil, book)
-  orn:SetAllPoints(book)
-  local lvl = ns.Num(book.GetFrameLevel and book:GetFrameLevel())
-  if lvl and orn.SetFrameLevel then orn:SetFrameLevel(lvl + 30) end
-  if orn.EnableMouse then orn:EnableMouse(false) end
-  local corners = {
-    { "TOPLEFT", 0, 1, 0, 1 }, { "TOPRIGHT", 1, 0, 0, 1 },
-    { "BOTTOMLEFT", 0, 1, 1, 0 }, { "BOTTOMRIGHT", 1, 0, 1, 0 },
-  }
-  P.corners = {}
-  for i, c in ipairs(corners) do
-    local t = orn:CreateTexture(nil, "OVERLAY")
-    t:SetSize(44, 44)
-    if t:SetTexture(MEDIA .. "BookCorner") == false then t:Hide() end
-    t:SetTexCoord(c[2], c[3], c[4], c[5])
-    local dx = (c[1]:find("LEFT") and -3) or 3
-    local dy = (c[1]:find("TOP") and 3) or -3
-    t:SetPoint(c[1], book, c[1], dx, dy)
-    P.corners[i] = t
-  end
-
+  UI.CreateZonePage(P.pages.zone)
+  UI.CreateJournalPage(P.pages.journal)
+  UI.CreateSearchPage(P.pages.search)
+  UI.CreateDungeonPage(P.pages.dungeons)
+  UI.CreateDetail()
+  UI.CreateFooter()
   -- the world map opened, closed or shows another zone: follow it (zone tab,
   -- no zone picked). Our own frame looks twice a second while the book is open.
   local watch, elapsed, last = CreateFrame("Frame", nil, book), 0, nil
@@ -4198,7 +3326,7 @@ local function Create()
       if tab == "zone" and not selZone then ns.SafeCall("quest book", Refresh) end
     end
   end)
-  ApplyPos()
+  book:Layout()
 end
 
 ---------------------------------------------------------------------------
@@ -4210,48 +3338,31 @@ local function RenderJournal(reset)
   local items = JournalItems()
   local c = ns.JournalCounts()
   local n = { all = nil, c = c.c, a = c.a, x = c.x + c.f, l = c.l, m = c.m, p = #ns.AlbumShots(), chap = #ns.JournalChapters() }
-  for _, chip in ipairs(P.chips) do
+  for _, chip in ipairs(P.jchips.chips) do
     local label = L[FILTER_TITLE[chip.key]]
     if n[chip.key] and n[chip.key] > 0 then label = label .. "  " .. n[chip.key] end
-    chip:Set(label, chip.key == jfilter)
+    chip:SetText(label)
     -- (1.3.11) "Pictures" only with the album (the helper Questdon-Album)
     if chip.key == "p" then if n.p > 0 or jfilter == "p" then chip:Show() else chip:Hide() end end
   end
-  Layout(P.chips, 6, W - 2 - 28)
+  P.jchips.active = { [jfilter] = true }
+  P.jchips:Paint()
+  P.jchips:Place()
   local dated = c.a + c.c + c.x + c.f + c.l + (c.m or 0)
-  P.footLeft:SetText(jfilter == "p" and L["%d pictures"]:format(n.p) or L["%d entries"]:format(dated))
-  P.footText.text:SetText(L["Copy as text"])
-  P.footText:SetWidth(TextWidth(P.footText.text) + 8)
-  local oldW = TextWidth(P.footText.text) + 22
-  if items.old and items.old > 0 then
-    P.footOld.text:SetText(L["Done earlier (%d)"]:format(items.old))
-    Fit(P.footOld.text, (W - 40) / 2, P.footOld)
-    P.footOld:SetWidth(TextWidth(P.footOld.text) + 8)
-    P.footOld:Show()
-    oldW = oldW + TextWidth(P.footOld.text) + 8
-  else
-    P.footOld:Hide()
-  end
-  Fit(P.footLeft, W - 2 - 24 - oldW - 30, P.footer)
-  lists.journal:SetItems(items, not reset)
+  UI.footStatus = jfilter == "p" and L["%d pictures"]:format(n.p) or L["%d entries"]:format(dated)
+  UI.oldCount = items.old or 0
+  lists.journal:SetItems(items, reset)
 end
 
 local function RenderZone(reset)
   local m = ShownZone()
   local here = HereZone()
-  lists.zones:SetItems(ZoneListItems(), true)
-  local hero = P.hero
+  lists.zones:SetItems(ZoneListItems())
   local info = m and ZONE_INFO[m]
-  hero.name:SetText(m and (MapName(m) or L["Map %d"]:format(m)) or L["Unknown zone"])
-  local meta = {}
-  if info then meta[#meta + 1] = ContinentName(info.cont) end
-  if info and info.min then meta[#meta + 1] = L["Level %s"]:format(RangeText(info)) elseif info then meta[#meta + 1] = L["City"] end
-  if m and m == here then meta[#meta + 1] = L["you are here"] end
-  hero.meta:SetText(table.concat(meta, "  ·  "))
-  if m ~= hero.artMap then
-    local ok = UpdateHeroArt(m)
-    if not ok then hero.artMap = m end
-  end
+  local kick = {}
+  if info then kick[#kick + 1] = ContinentName(info.cont) end
+  if info and info.min then kick[#kick + 1] = L["Level %s"]:format(RangeText(info)) elseif info then kick[#kick + 1] = L["City"] end
+  if m and m == here then kick[#kick + 1] = L["you are here"] end
   local items, s
   if zoneSeg == "journal" then
     items = ZoneJournalItems(m)
@@ -4259,95 +3370,108 @@ local function RenderZone(reset)
   else
     items, s = ZoneQuestItems(m)
   end
-  hero.count:SetText(("%d / %d"):format(s.done, s.total))
-  hero.countLabel:SetText(L["quests done"])
-  local heroW = W - 2 - SIDE_W
-  Fit(hero.countLabel, 150, hero.shade)
-  Fit(hero.name, heroW - 40 - 170, hero.shade)
-  Fit(hero.meta, heroW - 40 - 170, hero.shade)
-  if s.total > 0 and s.done > 0 then
-    hero.fill:SetWidth(math.max(1, 150 * s.done / s.total))
-    hero.fill:Show()
-  else
-    hero.fill:Hide()
-  end
+  P.hero:SetData({ kicker = table.concat(kick, "  ·  "), title = m and (MapName(m) or L["Map %d"]:format(m)) or L["Unknown zone"],
+    value = ns.Fraction(s.done, s.total), label = L["quests done"], progress = s.total > 0 and s.done / s.total or nil })
+  UI.HeroArt(m)
   local jn = 0
   for _, e in ipairs(ns.JournalEntries()) do if e.m and ZoneOf(e.m) == m then jn = jn + 1 end end
-  P.segQuests:Set(L["Quests"] .. "  " .. s.total, zoneSeg == "quests")
-  P.segJournal:Set(L["Your journal here"] .. "  " .. jn, zoneSeg == "journal")
-  P.segJournal:ClearAllPoints()
-  P.segJournal:SetPoint("LEFT", P.segQuests, "RIGHT", 6, 0)
-  local hereW = 0
-  if selZone and selZone ~= here then
-    P.segHere:Set(L["Back to my zone"], false)
-    P.segHere:Show()
-    hereW = (ns.Num(P.segHere:GetWidth()) or 0) + 12
-  else
-    P.segHere:Hide()
-  end
-  Layout({ P.segQuests, P.segJournal }, 6, W - 2 - SIDE_W - 28 - hereW)
-  local showChips = zoneSeg == "quests"
+  P.seg:Chip("quests"):SetText(L["Quests"] .. "  " .. s.total)
+  P.seg:Chip("journal"):SetText(L["Your journal here"] .. "  " .. jn)
+  UI.Shown(P.seg:Chip("here"), selZone ~= nil and selZone ~= here)
+  P.seg.active = { [zoneSeg] = true }
+  P.seg:Paint()
   local gc = s.groups or {}
-  for _, c in ipairs(P.zChips) do
-    local n = c.key == "all" and s.total or (gc[c.key] or 0)
-    c:Set(L[c.key == "all" and "All" or ns.ZONE_GROUP_TITLE[c.key]] .. "  " .. n, zFilter == c.key)
-    c:SetShown(showChips)
+  for _, c in ipairs(P.zChips.chips) do
+    if c.key ~= "near" then
+      local n = c.key == "all" and s.total or (gc[c.key] or 0)
+      c:SetText(L[c.key == "all" and "All" or ns.ZONE_GROUP_TITLE[c.key]] .. "  " .. n)
+    end
   end
-  P.zNear:Set(L["Nearest first"], zNear)
-  P.zNear:SetShown(showChips)
-  Layout(P.zChips, 6, W - 2 - SIDE_W - 28 - (ns.Num(P.zNear:GetWidth()) or 110) - 12)
-  lists.zone:SetItems(items, not reset)
-  -- (30.10.2026, Daniel: a chain lower down took the rest of the list away until he scrolled) the list draws only lines
-  -- that fit: when a chain line opens, scroll so its quest and the chain are in sight (once per quest, so your own
-  -- scrolling stays)
-  local qi, ci
-  for i, it in ipairs(items) do
-    if it.kind == "chain" then ci = i break end
-    if it.kind == "quest" then qi = i end
-  end
-  if not ci then CH.scrolledFor = nil return end
-  if CH.scrolledFor == items[ci].questID then return end
-  CH.scrolledFor = items[ci].questID
-  local list, sum = lists.zone, 0
-  for i = list.offset, ci do sum = sum + (items[i].h or ROW_H) end
-  if list.offset <= qi and sum <= list:Height() then return end
-  if (items[qi].h or ROW_H) + items[ci].h <= list:Height() then list:ScrollTo(qi) else list:ScrollTo(ci) end
+  UI.Shown(P.zChips, zoneSeg == "quests")
+  P.zChips.active = { [zFilter] = true, near = zNear or nil }
+  P.zChips:Paint()
+  UI.ZoneChips()
+  lists.zone:SetItems(items, reset)
 end
 
 local function RenderSearch(reset)
-  lists.search:SetItems(SearchItems(), not reset)
+  lists.search:SetItems(SearchItems(), reset)
 end
 
 local function RenderDungeons(reset)
   UpdateDungeonBar()
-  if P.dunDrop and P.dunDrop:IsShown() then lists.dunPick:SetItems(ns.QuestBookDungeonChoices(), true) end
-  lists.dungeons:SetItems(DungeonItems(), not reset)
+  UI.gridCols = UI.mode == "full" and 3 or 2
+  lists.dungrid:SetItems(UI.GridItems(UI.gridCols), reset)
+  lists.dungeons:SetItems(DungeonItems(), reset)
+  UI.LayoutDungeons(UI.cw, UI.h)
 end
 
-local lastTab
 function Refresh(reset)
   if not book or not book:IsShown() then return end
-  for key, b in pairs(P.tabs) do
-    local on = key == tab
-    SetColor(b.text, on and "goldLight" or "textSecondary")
-    if on then b:SetCardLook("card", "cardLow", 0.98, "gold", 0.9) else b:SetCardLook("cardLow", "cardLow", 0.75, "gold", 0.35) end
-    if b.icon.SetDesaturated then b.icon:SetDesaturated(not on) end
-    b.icon:SetAlpha(on and 1 or 0.6)
-    if on then b.mark:Show() else b.mark:Hide() end
-  end
+  for _, t in ipairs(book.tabs) do t:SetSelected(t.key == tab) end
   for key, page in pairs(P.pages) do if key == tab then page:Show() else page:Hide() end end
-  if tab ~= lastTab then reset = true lastTab = tab end
-  ApplyDetailRoom()
+  if tab ~= UI.lastTab then reset = true UI.lastTab = tab UI.Place() end
   if tab == "journal" then RenderJournal(reset)
   elseif tab == "zone" then RenderZone(reset)
   elseif tab == "dungeons" then RenderDungeons(reset)
   else RenderSearch(reset) end
-  if detailID then PlaceDetail() end
+  UI.Footer()
+  if UI.DetailOpen() then UI.RenderDetail() end
 end
 
 ---------------------------------------------------------------------------
 -- API (the names stay those of 1.2.2: Panel.lua, Core.lua, Journal.lua, ZoneQuests.lua)
 ---------------------------------------------------------------------------
+-- Show a quest in the detail card (nil closes the card). (1.3.5) focus: nil = the card only,
+-- "arrow" = also arrow and map mark, "map" = also open the world map there.
+function ns.QuestBookShowQuest(id, focus)
+  if id and focus then ns.FocusQuest(id, focus == "map") end
+  local changed = UI.detailID ~= id or UI.detailEntry ~= nil
+  local wasOpen = UI.DetailOpen()
+  UI.detailID = id
+  UI.detailEntry = nil
+  P.jpick = nil
+  if P.detail then
+    if wasOpen ~= UI.DetailOpen() then UI.Place() else UI.RenderDetail() end
+  end
+  if changed and not focus and Refresh then Refresh(false) end -- the clicked line stands out
+end
+function ns.QuestBookDetailID() return UI.detailID end
+
+-- (30.10.2026, Daniel: "mit Shift-Links-Klick die Quest im Quest-Buch im Zonenbereich aufgemacht") the book on the zone
+-- of the quest (where it starts, else the zone shown), with the quest's card and its chain
+function ns.QuestBookOpenQuest(id)
+  id = ns.Num(id)
+  if not id then return end
+  local m = ns.QuestStart(id)
+  local zone = m and (ZoneOf(m) or m)
+  if zone then SelectZone(zone) else ns.OpenQuestBook("zone") end
+  ns.QuestBookShowQuest(id)
+  -- its row in sight
+  local list = lists.zone
+  for i, it in ipairs(list and list.items or {}) do
+    if it.kind == "quest" and it.questID == id then list:ScrollTo(math.max(1, i - 1), true) break end
+  end
+end
+function ns.QuestBookZoneList() return lists.zone end -- (tests)
+
+-- (1.3.11) Show a journal entry in the card (nil closes it); a moment with a
+-- spot in its zone also shows that spot on the journal's round map.
+function ns.QuestBookShowEntry(e)
+  if type(e) ~= "table" then return ns.QuestBookShowQuest(nil) end
+  e = type(e.src) == "table" and e.src or e
+  local wasOpen = UI.DetailOpen()
+  UI.detailEntry, UI.detailID = e, nil
+  P.jpick = MOMENT[e.k] and e.m and e.px and e.py and not e.pm and { m = ZoneOf(e.m) or e.m, x = e.px, y = e.py } or nil
+  if P.detail then
+    if not wasOpen then UI.Place() else UI.RenderDetail() end
+  end
+  if Refresh then Refresh(false) end
+end
+function ns.QuestBookDetailEntry() return UI.detailEntry end
+function ns.QuestBookMapPick() return P.jpick, P.jmap and P.jmap.pinShown end -- (tests)
+function ns.QuestBookDetailPane() return P.detail end -- (tests)
+
 function ns.UpdateZoneQuests(force)
   if not book or not book:IsShown() then return end
   Refresh(false)
@@ -4359,13 +3483,19 @@ function ns.OpenQuestBook(which)
   which = which or tab
   local changed = which ~= tab
   tab = which
+  -- (02.11.2026, Daniel: "... oder wenn man oben auf reiter dungeons journal oder search geht") another tab closes the card
+  if changed and (UI.detailID ~= nil or UI.detailEntry ~= nil) then
+    UI.detailID, UI.detailEntry, P.jpick = nil, nil, nil
+    if P.detail then UI.Place() end
+  end
   if tab == "search" and changed and ns.JournalSearchReset then ns.JournalSearchReset() end
+  if tab == "dungeons" and changed then UI.dunView = "grid" end -- (draft 4) the tab opens on the index cards
   if not book:IsShown() then
     stats = {}
     book:Show()
   end
   Refresh(changed)
-  if tab == "search" and changed and P.searchBox and P.searchBox.edit.SetFocus then P.searchBox.edit:SetFocus() end
+  if tab == "search" and changed and P.searchBox and P.searchBox.SetFocus then pcall(P.searchBox.SetFocus, P.searchBox) end
 end
 
 local function Close()
@@ -4386,12 +3516,15 @@ function ns.ZoneQuestsFrame() return book end
 function ns.QuestBookTab() return tab end
 function ns.QuestBookGear() return P.gear end -- (tests)
 function ns.QuestBookDungeonBar() return P.dunBar, P.dunMark, P.dunShow end -- (tests)
+-- (02.11.2026, tests) the dungeons tab: "grid" (index cards) or "pre" (the prerequisites of the dungeon shown)
+function ns.QuestBookDungeonView(view) if view then UI.dunView = view if Refresh then Refresh(true) end end return UI.dunView end
+function ns.QuestBookUI() return UI, P end -- (02.11.2026, tests) the window's state and parts
 function ns.QuestBookZone() return ShownZone() end
 -- For /qd diag: where the picture of the zone came from.
 function ns.QuestBookArt()
-  local h = P.hero
+  local h = P.hero and P.hero.art
   if not h then return "not built" end
-  return ("%s, map %s, %d tiles drawn, %d explored areas, width %s"):format(tostring(h.artSource), tostring(h.artMap), h.artDrawn or 0, h.artExplored or 0, tostring(ns.Num(h:GetWidth())))
+  return ("%s, map %s, %d tiles drawn, %d explored areas, width %s"):format(tostring(h.artSource), tostring(h.artMap), h.artDrawn or 0, h.artExplored or 0, tostring(h.artW))
 end
 function ns.QuestBookFilter(key) if key then jfilter = key Refresh(true) end return jfilter end
 function ns.QuestBookChips() return P.chips end -- (1.3.11, tests)
@@ -4411,12 +3544,12 @@ function ns.QuestBookSetZoneQuery(text)
   P.zoneBox:SetText(zoneQuery)
   Refresh()
 end
--- For tests and /qd diag: the lines drawn now in a list ("journal", "zone", "zones", "search").
+-- For tests and /qd diag: the lines drawn now in a list ("journal", "zone", "zones", "search", "dungeons", "dungrid").
 function ns.QuestBookLines(which)
   local l = lists[which or tab]
   local out = {}
   if not l then return out end
-  for _, r in ipairs(l.used) do out[#out + 1] = r end
+  for _, r in ipairs(l:Rows()) do out[#out + 1] = r end
   return out, l
 end
 -- (Stufe 3, tests) the text of the footer button "Copy as text"

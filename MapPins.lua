@@ -1031,7 +1031,7 @@ local function MapCaller(closed)
 end
 -- (Daniel 26.10.: "dass jeder die selber skalieren kann") one factor for all our world map pins, 25 to 200 %
 function ns.MapPinMult()
-  local v = tonumber(ns.db and ns.db.mapPinScale) or 1
+  local v = tonumber(ns.db and ns.db.mapPinScale) or 0.6 -- (04.11.2026, Era-Test) 60 % by default (Daniel)
   return math.max(0.25, math.min(2, v))
 end
 -- the map's own scaling first (from 1, so the factor never adds up), then ours on top
@@ -1040,7 +1040,14 @@ local function ScaleBy(self, base)
   self:SetScale(1)
   if base then base(self) end
   local s = self.GetScale and self:GetScale() or 1
-  self:SetScale((tonumber(s) or 1) * ns.MapPinMult())
+  local m = ns.MapPinMult()
+  self:SetScale((tonumber(s) or 1) * m)
+  -- (02.11.2026, Daniel's video: with the pin size at 75 % all pins jumped to the top left once the map rescaled them)
+  -- the map places a pin for its scale (the offset divided by it); with ours on top it is placed again for the final one
+  if m ~= 1 and self.ApplyCurrentPosition and self.GetMap and self:GetMap()
+     and (self.normalizedX or (self.GetPosition and self:GetPosition())) then
+    self:ApplyCurrentPosition()
+  end
 end
 local Setup
 function Setup()

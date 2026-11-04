@@ -1,5 +1,21 @@
 # Changes
 
+## 1.5.0
+- **Options window for other addons:** drop-down lists (own list, the same on WoW Forever and Classic Era) and a picture or icon per tab. Luredon uses it for its options.
+- **The Don look:** the quest book is a new window you can drag from 720x420 to 1300x900: Zones with zone header and zone bar, Dungeons as cards with the quests that lead there, a Journal with four tiles, search and a focus card with the quest chain. The quest list has the same look: level in the game's quest colours, the map colour as a mark, finished quests below the open ones.
+- **Quest chains:** follow-up quests stand under their pre-quest; in an opened chain a finished part shows a green check and "Completed". Shift-click opens the quest book.
+- `/qd dungeons` opens the quest book on Dungeons. All text windows (export, diagnostics) use one copy window; the export has a "Mark as sent" button.
+- **Reward advice:** the suggested reward only shimmers.
+- **Pin sizes:** new defaults 60 % on the world map and 85 % on the minimap (changed once for everybody).
+- **Sharing sends only what is new:** quest turn-ins, drops, dungeon entrances, services and reward choices the data already has stay at home (with DonData 1.2.0). Fish and gathering finds count once per loot window.
+- **Classic Era:** sharing works over yell (at most 6 an hour); `/qd diag` shows why something was not sent.
+- **One options window for all Don addons:** switches, sliders, lists, a picture and an explanation for every option, a search over all Don addons. The gear button and the slash command open it on this addon's section. Blizzard's AddOns page only shows the status and a button.
+- **Window size:** all Don windows share one scale, 80 % by default, set from 60 to 110 % under General > Window in the options window. Saved window sizes are reset once, places stay.
+- **Minimap button:** new Q logo with a golden ring; the right-click menu ends with "Hide minimap button".
+- **Addon list:** the addon has its own logo in the game's addon list.
+- **Fixed:** map pins no longer jump to the upper left after a click when the pin size is below 100 %. Square minimaps (EllesmereUI, SexyMap and others) show points and pins in the corners. Counts read "16 / 17".
+- **Update note:** new files, so restart the game after updating (a /reload is not enough).
+
 ## 1.4.0
 
 - **New required addons: DonData and DonMap.** Questdon's quest database is now the addon **DonData**, its map pins, arrow and compass are the addon **DonMap**. The CurseForge app installs both for you. If you install by hand, download DonData and DonMap too and put their folders next to Questdon in `Interface\AddOns`, or Questdon does not load.
@@ -16,7 +32,7 @@
 
 - **Update note:** new files, so restart the game after updating (a /reload is not enough).
 - **Inns, auction houses, flight masters and banks on the map:** the world map shows them with the game's own tracking symbols, for your faction and the neutral towns (Booty Bay, Gadgetzan, Ratchet, Everlook and more). Mouse over: what it is; click: the arrow leads you there. One switch in Options > Map, on by default. Forever and Classic Era each use their own data (ForeverDB, CMaNGOS classic-db).
-- **Quest chains at a glance** (thanks to L3Hummus for the idea): next to the quest log a small window shows the chain of the quest you picked: its name, "part 3 of 7", the parts you finished, the current one in gold and the next step with its quest giver and zone. In the quest book the chain section is now a diagram, with branches side by side. A click on a part opens that quest. Option "Chain next to the quest log" (on by default).
+- **Quest chains at a glance** (thanks to L3Hummus for the idea): in the quest book's zone list the chain of the quest you open is drawn right under it as a diagram, with branches side by side, the parts you finished and the next step. A click on a part opens that quest; Shift-click a quest in your quest list to open it there.
 - **Fewer options:** the options window went from 89 to about 50 switches. Things that every player should simply have are now fixed (for example confirmed quests only), the rest is sorted by what it is for. Compass and arrow are one choice now ("Show the way with": compass, arrow or both).
 - **Clearer texts:** one name for each thing in all languages (Questdon's pins on the map, the game's markers), tooltips without references to the old Questdon window, and the title bar of the quest list tells you about Ctrl + mouse wheel (text size) and Shift + mouse wheel (opacity).
 - **Look:** the quest book, the options window, the menus and the arrow take their colours from the same set as our other addons.

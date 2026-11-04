@@ -93,9 +93,20 @@ local JOIN_DELAY, JOIN_CHECK = 10, 3 -- seconds after login; seconds until a joi
 local JOIN_WAIT_MAX = 90    -- (1.3.3) seconds to wait for the game's own channels before joining anyway
 local SENDS_PER_FLUSH = 9   -- addon messages per prefix: 10 at once, then 1 per second
 local NEAR = 2              -- map units: two spots this close are the same
+-- (03.11.2026, docs/PIPELINE_PRUEFUNG_2026-11-03.md 12) gathering finds (H) are many (up to 3000 places with 6 items)
+-- and must not crowd out the quest facts: their own small part of FACTS_PER_HOUR, at most H_PENDING of them looked
+-- at for one send list, at most MAX_SHARED_H of them kept from others
+local H_PER_HOUR = 30
+local H_PENDING = 60
+local MAX_SHARED_H = 1500
+-- (15) one grid rule for places: p a position in percent (0..100), read as the lines write it (one decimal), floored
+-- to cells of size units. Gather.lua keeps a place per 1 unit cell, a shared H fact is a NEAR cell (two 1 unit
+-- cells in each direction: the grids nest). Whole tenths, so no float error at a cell border.
+function ns.GridCell(p, size) return math.floor(math.floor(p * 10 + 0.5) / (size * 10)) end
 
 local stats = { saved = 0, sentMsgs = 0, sentFacts = 0, resentFacts = 0, recvMsgs = 0, recvLines = 0, bad = 0, own = 0, limited = 0, blocked = 0, pruned = 0,
-  recvChannel = 0, otherWay = 0 }
+  recvChannel = 0, otherWay = 0,
+  held = 0, refused = 0, refusedWhy = {}, yelled = 0, recvYell = 0 } -- (04.11.2026, Era-Test) blocked = held (lockdown, combat) + refused (a way said no, why per way)
 ns.shareStats = stats
 local registered = false
 local seq = 0
@@ -279,7 +290,7 @@ local PARSE = {
     local k, s, id, m, x, y, item, n = l:match("^H ([hmsf]) ([oc%-]) (%d+) (%d+) (%d+%.%d) (%d+%.%d) (%d+) (%d+)$")
     if not (k and Int(id, 1e7) and Int(m, 1e5) and Pos(x) and Pos(y) and Int(item, 1e7) and Int(n, 1e4)) then return nil end
     if (s == "-") ~= (tonumber(id) == 0) then return nil end
-    return ("H %s %s%s %s %s %d %d"):format(k, s, id, item, m, math.floor(tonumber(x) / NEAR), math.floor(tonumber(y) / NEAR)),
+    return ("H %s %s%s %s %s %d %d"):format(k, s, id, item, m, ns.GridCell(tonumber(x), NEAR), ns.GridCell(tonumber(y), NEAR)),
       nov or { m = tonumber(m), x = tonumber(x), y = tonumber(y) }, tonumber(n)
   end,
   -- (1.1) the quest giver never offers this quest (NotHere.lua)
@@ -345,6 +356,15 @@ local sharedCount
 local function SharedCount()
   if not sharedCount then sharedCount = Count(DB().shared) end
   return sharedCount
+end
+-- (12) the gathering finds among them (nil: count again, like sharedCount)
+local sharedH
+local function SharedHCount()
+  if not sharedH then
+    sharedH = 0
+    for key in pairs(DB().shared) do if type(key) == "string" and key:byte(1) == 72 and key:byte(2) == 32 then sharedH = sharedH + 1 end end
+  end
+  return sharedH
 end
 
 -- (A5) The compact strings (format at the top). Decode gives the old shape: { t, c, v = { { m, x, y, id, f, v, n, o,
@@ -481,7 +501,7 @@ local function PruneTo(target)
     pruneGen, placeVersion, spotCache = pruneGen + 1, placeVersion + 1, nil -- every quest anew
     Forget()
   end
-  sharedCount = nil
+  sharedCount, sharedH = nil, nil
 end
 local function Prune() PruneTo(math.floor(MAX_SHARED * 0.9)) end
 ns.SharedPruneTo = PruneTo -- (measurements)
@@ -497,7 +517,7 @@ function Migrate(db)
     end
   end
   db.sharedVersion = 3
-  sharedCount = nil
+  sharedCount, sharedH = nil, nil
   if SharedCount() > MAX_SHARED then Prune() end
   Forget()
   return n
@@ -533,7 +553,10 @@ local function Store(key, value, count, reporter, open)
   local shared = DB().shared
   local e = Decode(shared[key])
   local new = not e
+  local isH = key:byte(1) == 72
   if new then
+    -- (12) no new gathering find beyond MAX_SHARED_H (the ones kept still take reporters)
+    if isH and SharedHCount() >= MAX_SHARED_H then stats.hFull = (stats.hFull or 0) + 1 return end
     if SharedCount() >= MAX_SHARED then Prune() end
     e = { v = {} }
   end
@@ -577,7 +600,10 @@ local function Store(key, value, count, reporter, open)
   local s = Encode(e)
   if s then
     shared[key] = s
-    if new then sharedCount = (sharedCount or 0) + 1 end
+    if new then
+      sharedCount = (sharedCount or 0) + 1
+      if isH and sharedH then sharedH = sharedH + 1 end
+    end
   end
 end
 
@@ -637,7 +663,7 @@ local recvAt, recvLines = 0, 0 -- (A5) the open channel's lines in the current s
 local function OnMessage(_, prefix, text, chatType, sender)
   if prefix ~= PREFIX then return end
   -- (1.3.5) guild and group are trusted, the channel is open, every other way is ignored
-  local open = chatType == "CHANNEL" -- (1.1) anybody can be in the channel
+  local open = chatType == "CHANNEL" or chatType == "YELL" -- (1.1) anybody can be in the channel; (04.11.2026) or nearby (Era)
   if not open and not (type(chatType) == "string" and TRUSTED_WAYS[chatType]) then stats.otherWay = stats.otherWay + 1 return end
   if type(text) ~= "string" or not ns.Usable(text) or #text > 255 then return end
   -- (A5) at most RECV_PER_SEC lines a second from the open channel (thousands of players send there): the rest is
@@ -663,7 +689,7 @@ local function OnMessage(_, prefix, text, chatType, sender)
   end
   if not payload then stats.bad = stats.bad + 1 return end
   stats.recvMsgs = stats.recvMsgs + 1
-  if open then stats.recvChannel = stats.recvChannel + 1 end
+  if chatType == "CHANNEL" then stats.recvChannel = stats.recvChannel + 1 elseif open then stats.recvYell = stats.recvYell + 1 end -- (04.11.2026)
   local lines = {}
   for line in payload:gmatch("[^;]+") do lines[#lines + 1] = line end
   if open then recvLines = recvLines + #lines end
@@ -854,6 +880,33 @@ function ns.ShareChannelState()
   return chan.state, chan.name, id, chan.joins
 end
 
+-- (04.11.2026, Era-Test) Classic Era refuses addon messages in own channels (Daniel's /qd nettest in Era: channel
+-- InvalidChatType, yell works; on Forever it is the other way round). Solo without a guild Era sent nothing. There
+-- (and wherever the channel is refused with InvalidChatType) the messages also go out as YELL to the players nearby,
+-- sparingly: at most YELL_PER_HOUR messages an hour. Forever keeps its channel.
+local YELL_PER_HOUR = 6
+local yellTimes = {}
+local function YellBudget()
+  local now = Now()
+  while yellTimes[1] and now - yellTimes[1] > 3600 do table.remove(yellTimes, 1) end
+  return YELL_PER_HOUR - #yellTimes
+end
+ns.ShareYellBudget = YellBudget -- (tests)
+local refusedChannel = false -- the channel was refused with InvalidChatType (session): left out, YELL instead
+local function YellWanted() return (ns.ERA or refusedChannel) and true or false end
+ns.ShareYellWanted = YellWanted -- (tests)
+ns.ShareWaysReset = function() refusedChannel = false wipe(yellTimes) end -- (tests)
+
+-- Name of a send result (Enum.SendAddonMessageResult) or the value itself
+local function ResultName(ok, result)
+  if not ok then return "error" end
+  local enum = Enum and Enum.SendAddonMessageResult
+  if type(enum) == "table" then
+    for k, v in pairs(enum) do if v == result then return tostring(k) end end
+  end
+  return tostring(result)
+end
+
 -- Where to send: { {chatType, target}, ... }
 local function Channels()
   local list = {}
@@ -863,8 +916,9 @@ local function Channels()
     local instance = LE_PARTY_CATEGORY_INSTANCE and ns.True(ns.Value(IsInGroup, LE_PARTY_CATEGORY_INSTANCE))
     list[#list + 1] = { instance and "INSTANCE_CHAT" or (ns.True(ns.Value(IsInRaid)) and "RAID" or "PARTY") }
   end
-  local id = ChannelWanted() and chan.name and ChannelID(chan.name)
+  local id = not refusedChannel and ChannelWanted() and chan.name and ChannelID(chan.name)
   if id then list[#list + 1] = { "CHANNEL", tostring(id) } end
+  if YellWanted() and ChannelWanted() and YellBudget() > 0 then list[#list + 1] = { "YELL" } end
   return list
 end
 
@@ -880,8 +934,19 @@ end
 local function SendTo(msg, channels)
   local any = false
   for _, ch in ipairs(channels) do
-    local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, ch[1], ch[2])
-    if ok and (result == nil or result == true or result == 0) then any = true else stats.blocked = stats.blocked + 1 end
+    if ch[1] ~= "YELL" or YellBudget() > 0 then
+      local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, ch[1], ch[2])
+      if ok and (result == nil or result == true or result == 0) then
+        any = true
+        if ch[1] == "YELL" then yellTimes[#yellTimes + 1] = Now() stats.yelled = stats.yelled + 1 end
+      else
+        -- (04.11.2026, Era-Test) a refused way counts apart from lockdown and combat, with its reason (for /qd diag)
+        local why = ResultName(ok, result)
+        stats.blocked, stats.refused = stats.blocked + 1, stats.refused + 1
+        stats.refusedWhy[ch[1]] = why
+        if ch[1] == "CHANNEL" and why == "InvalidChatType" then refusedChannel = true end
+      end
+    end
   end
   return any
 end
@@ -927,10 +992,14 @@ local function Pending()
   local db = DB()
   local sent, at, shared = db.shareSent, db.shareSentAt, db.shared
   local list, again, spots = {}, {}, {}
+  local hList, hAgain, hTaken = {}, {}, 0 -- (12) gathering finds: after the rest, at most H_PENDING
   local due = Clock() - RESEND
   nextDueSeen = nil
   for _, line in ipairs(ns.ExportRecords and ns.ExportRecords(false) or {}) do
-    local key, _, count = Parse(line, true) -- (23.10.) no value table per line
+    local isH = line:byte(1) == 72
+    -- (12) enough finds for this list: the others are not even read (they come with a later list)
+    local key, _, count
+    if not (isH and hTaken >= H_PENDING) then key, _, count = Parse(line, true) end -- (23.10.) no value table per line
     if key then
       local sig = Signature(line, nil, count)
       local skip = false
@@ -950,22 +1019,33 @@ local function Pending()
           if known then
             sent[key] = sig -- known well enough already
             stats.saved = stats.saved + 1
+          elseif isH then
+            hList[#hList + 1] = { key, sig, line }
+            hTaken = hTaken + 1
           else
             list[#list + 1] = { key, sig, line }
           end
         elseif not known then
           -- sent before 1.3.5 (no time): due at once
           local t = ns.Num(at[key]) or 0
-          if t <= due then again[#again + 1] = { key, sig, line, t }
+          if t <= due and isH then
+            hAgain[#hAgain + 1] = { key, sig, line, t }
+            hTaken = hTaken + 1
+          elseif t <= due then again[#again + 1] = { key, sig, line, t }
           elseif not nextDueSeen or t + RESEND < nextDueSeen then nextDueSeen = t + RESEND end
         end
       end
     end
   end
-  table.sort(again, function(a, b) if a[4] ~= b[4] then return a[4] < b[4] end return a[1] < b[1] end)
+  local function Oldest(a, b) if a[4] ~= b[4] then return a[4] < b[4] end return a[1] < b[1] end
+  table.sort(again, Oldest)
   for _, e in ipairs(again) do list[#list + 1] = e end
+  table.sort(hAgain, Oldest)
+  for _, e in ipairs(hList) do list[#list + 1] = e end
+  for _, e in ipairs(hAgain) do list[#list + 1] = e end
   return list
 end
+ns.SharePending = Pending -- (tests, measurements)
 
 -- (23.10., /qd mem round 2) The list of what is due is kept from one send to the next: a few thousand own facts
 -- go out at FACTS_PER_HOUR over hours, and every minute built all export lines again (4.5 MB a send with 7500
@@ -993,8 +1073,19 @@ local function FactBudget()
   return FACTS_PER_HOUR - n
 end
 
+-- (12) gathering finds sent within the last hour (session): { {t, n}, ... }
+local hTimes = {}
+local function HBudget()
+  local now, n = Now(), 0
+  while hTimes[1] and now - hTimes[1][1] > 3600 do table.remove(hTimes, 1) end
+  for _, e in ipairs(hTimes) do n = n + e[2] end
+  return H_PER_HOUR - n
+end
+ns.ShareHBudget = HBudget -- (tests)
+
 -- (1.3.9) play time lines sent within the last hour (session)
 local sampleTimes = {}
+ns.ShareSendTimes = function() return { sentTimes, factTimes, hTimes, sampleTimes, yellTimes } end -- (tests, 04.11.2026)
 local function SampleBudget()
   local now = Now()
   while sampleTimes[1] and now - sampleTimes[1] > 3600 do table.remove(sampleTimes, 1) end
@@ -1004,7 +1095,7 @@ end
 function ns.ShareFlush()
   if not (ns.db and ns.db.shareLearned and ns.db.learnQuests) then return 0 end
   if not (C_ChatInfo and type(C_ChatInfo.SendAddonMessage) == "function") then return 0 end
-  if Locked() or ns.True(ns.Value(InCombatLockdown)) then stats.blocked = stats.blocked + 1 return 0 end
+  if Locked() or ns.True(ns.Value(InCombatLockdown)) then stats.blocked, stats.held = stats.blocked + 1, stats.held + 1 return 0 end -- (04.11.2026) counted apart
   local channels = Channels()
   if #channels == 0 or not Register() then return 0 end
   -- (1.1) every message goes to each way: stay within the client's burst
@@ -1037,16 +1128,23 @@ function ns.ShareFlush()
   if sd and (not quiet.nextDue or sd < quiet.nextDue) then quiet.nextDue = sd end
   local sent, at = DB().shareSent, DB().shareSentAt
   local msgs, i, done = 0, 1, 1
+  local hLeft = HBudget() -- (12) a find beyond it is passed over (not marked sent: a later list has it again)
   while i <= total and msgs < budget and facts > 0 do
     seq = (seq + 1) % 1000
     local head = ("D2:%d:%s:"):format(seq, MyToken())
-    local parts, used, size = {}, {}, #head
+    local parts, used, size, nH = {}, {}, #head, 0
     while i <= total and #parts < facts and size + #Item(i)[3] + (#parts > 0 and 1 or 0) <= MAX_MSG do
       local item = Item(i)
-      parts[#parts + 1] = item[3]
-      used[#used + 1] = item
-      size = size + #item[3] + (#parts > 1 and 1 or 0)
-      i = i + 1
+      local isH = not item.sample and item[3]:byte(1) == 72
+      if isH and nH >= hLeft then
+        i = i + 1
+      else
+        parts[#parts + 1] = item[3]
+        used[#used + 1] = item
+        size = size + #item[3] + (#parts > 1 and 1 or 0)
+        if isH then nH = nH + 1 end
+        i = i + 1
+      end
     end
     if #parts == 0 then i = i + 1 done = i -- a line that never fits (cannot happen with export lines)
     elseif SendTo(head .. table.concat(parts, ";"), channels) then
@@ -1054,6 +1152,7 @@ function ns.ShareFlush()
       msgs = msgs + 1
       sentTimes[#sentTimes + 1] = Now()
       factTimes[#factTimes + 1] = { Now(), #used }
+      if nH > 0 then hTimes[#hTimes + 1] = { Now(), nH } hLeft = hLeft - nH end
       facts = facts - #used
       stats.sentMsgs = stats.sentMsgs + 1
       stats.sentFacts = stats.sentFacts + #used
@@ -1235,16 +1334,23 @@ function ns.ShareDiag()
     if Best(e) then confirmed = confirmed + 1 end
   end
   local state, name, id, joins = ns.ShareChannelState()
-  return ("%s, channel %s%s, sent %d facts in %d messages (again %d, left out as known %d), received %d lines in %d messages (via channel %d; bad %d, limited %d, own %d, other ways %d), blocked %d, shared %d facts (confirmed %d), pruned %d"):format(
+  -- (04.11.2026, Era-Test) blocked apart: held back (chat lockdown, combat) and refused by a way, with the reason per
+  -- way (Enum.SendAddonMessageResult name); the yell way (Era, or the channel refused) with its count and hour budget
+  local why = {}
+  for way, r in pairs(stats.refusedWhy) do why[#why + 1] = way .. " " .. r end
+  table.sort(why)
+  local yell = YellWanted() and ("yell %d (%d left this hour, received %d)"):format(stats.yelled, math.max(0, YellBudget()), stats.recvYell) or "yell off"
+  return ("%s, channel %s%s, sent %d facts in %d messages (again %d, left out as known %d), received %d lines in %d messages (via channel %d; bad %d, limited %d, own %d, other ways %d), blocked %d (lockdown or combat %d, refused %d%s), %s, shared %d facts (confirmed %d), pruned %d"):format(
     ns.db and ns.db.shareLearned and "on" or "off", tostring(state), name and (" " .. name .. " #" .. tostring(id or "?") .. ", joins " .. joins) or "",
     stats.sentFacts, stats.sentMsgs, stats.resentFacts, stats.saved, stats.recvLines, stats.recvMsgs, stats.recvChannel,
-    stats.bad, stats.limited, stats.own, stats.otherWay, stats.blocked, facts, confirmed, stats.pruned)
+    stats.bad, stats.limited, stats.own, stats.otherWay, stats.blocked, stats.held, stats.refused,
+    #why > 0 and (": " .. table.concat(why, ", ")) or "", yell, facts, confirmed, stats.pruned)
 end
 
 function ns.ResetShared()
   local db = DB()
   wipe(db.shared)
-  sharedCount, version, placeVersion = 0, version + 1, placeVersion + 1
+  sharedCount, sharedH, version, placeVersion = 0, 0, version + 1, placeVersion + 1
   pruneGen, spotCache = pruneGen + 1, nil -- (16.10.) every quest's places anew
   Forget() -- (A5)
   -- (23.10.) learned data deleted (Options.lua calls this): the kept send list goes too

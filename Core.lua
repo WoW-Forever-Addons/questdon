@@ -2,7 +2,7 @@ local addonName, ns = ...
 local L = ns.L
 -- (31.10.2026, DONCORE_PLAN.md) the kit and the Blizzard options come from DonCore (Libs\DonCore\Style.lua, Settings.lua).
 -- An own kit (ForAddon): Look.lua sets onError for Questdon's error log without touching the other addons' kit.
-ns.Style = LibStub("DonCore-1.0"):Get("Style", 4):ForAddon()
+ns.Style = LibStub("DonCore-1.0"):Get("Style", 6):ForAddon() -- (02.11.2026) minor 6: the Don look of the quest list
 LibStub("DonCore-1.0"):Get("Settings", 1):Attach(addonName, ns)
 ns.HOST = addonName -- (L3) the addon the engine of DonData serves (ns.Version, exports)
 
@@ -72,6 +72,15 @@ frame:SetScript("OnEvent", function(_, event, ...)
       -- arrow") once for everybody: the quest list and the arrow see-through; who wants the frame switches it on again
       if not QuestdonDB.plainV1311 then
         QuestdonDB.trackerPlain, QuestdonDB.arrowPlain, QuestdonDB.plainV1311 = true, true, true
+      end
+      -- (04.11.2026, Era-Test, Daniel: "questdon die einstellungen für die größe als standart") pin sizes 60 % on the
+      -- world map and 85 % on the minimap by default; the old default 100 % was written into the saved settings at the
+      -- first start, so once: who still has exactly 100 % gets the new size, a size moved on the slider stays
+      if not QuestdonDB.pinScaleV0411 then
+        local function Old(v) return v == nil or tonumber(v) == 1 end
+        if Old(QuestdonDB.mapPinScale) then QuestdonDB.mapPinScale = 0.6 end
+        if Old(QuestdonDB.minimapPinScale) then QuestdonDB.minimapPinScale = 0.85 end
+        QuestdonDB.pinScaleV0411 = true
       end
       -- (28.10.2026, Daniel: "Sachen vorgeben, weil wir sind die Entwickler") the options no longer in the window: once to
       -- the value we chose (Options.lua ns.FIXED_OPTIONS)
@@ -165,7 +174,8 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
     -- (1.3.5) the level ranges of the data and the game, and the entrances, to check the data
     if ns.OpenDungeonLevels then ns.OpenDungeonLevels() end
   elseif msg == "dungeons" or msg == "dungeon" then
-    if ns.OpenDungeons then ns.OpenDungeons() end
+    -- (04.11.2026, Era-Test, Daniel: "das scheint noch im alten stil") the quest book on its "dungeons" tab
+    if ns.OpenQuestBook then ns.OpenQuestBook("dungeons") elseif ns.OpenDungeons then ns.OpenDungeons() end
   elseif msg == "group" or msg == "party" then
     if ns.PrintParty then ns.PrintParty() end
   elseif msg == "nothere" then

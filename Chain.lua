@@ -2,13 +2,11 @@ local _, ns = ...
 local L = ns.L
 local Style = ns.Style
 
--- (30.10.2026, L3Hummus on CurseForge, Daniel's draft) Quest chains as a diagram: boxes from top to bottom, a fork as
--- columns that join again ("needs 4a and 4b"), in the "Chain" section of the quest book's detail card (the whole chain,
--- long ones shortened). Daniel after the first look: no window next to the quest list; Shift-click a quest there opens
--- the book on its zone with this diagram.
+-- (30.10.2026, L3Hummus on CurseForge, Daniel's draft) Quest chains: the graph of a quest's chain (before, after, forks
+-- that join again, "needs 4a and 4b"). Daniel after the first look: no window next to the quest list; Shift-click a quest
+-- there opens the book on its zone with the chain. (02.11.2026, draft 4) drawn as a path from left to right in the
+-- "Chain" section of the quest's focus card (below).
 
-local WHITE = "Interface\\Buttons\\WHITE8x8"
-local C = Style.COLORS
 local MAX_SIDE = 30 -- quests before and after the selected one at most (a hub of a zone would take everything)
 
 ---------------------------------------------------------------------------
@@ -206,223 +204,229 @@ end
 ns.ChainRows = Rows -- (tests)
 
 ---------------------------------------------------------------------------
--- Drawing (pooled boxes and lines on one parent)
+-- (02.11.2026, StyleKit 2 step 4, draft 4) The chain as a path from left to right in the quest's focus card: a box per
+-- part, a fork as boxes stacked in one column ("4a" over "4b"), lines between the columns; done / current / next /
+-- later in the status colours of the Don style (Kit.STATUS), the current part with a bright edge. A click on a box opens
+-- that quest in the quest book, the mouse over it shows the quest's tooltip; a box that sums up parts shows the whole
+-- chain. The old diagram (boxes from top to bottom under the quest's line in the zone list) is gone with it.
 ---------------------------------------------------------------------------
-local SIZE = { font = 12, sub = 11, pad = 6, gap = 10, line = 14, colGap = 8, mid = 0.78 }
--- fill, fill alpha, edge, edge alpha, text
-local LOOK = {
-  done = { C.good, 0.16, C.good, 0.55, C.good },
-  cur = { C.warning, 0.20, C.warning, 0.95, C.warning },
-  next = { C.header, 0.95, C.border, 0.30, C.textPrimary },
-  later = { C.background, 0.70, C.border, 0.12, C.textHint },
-}
+local Kit = LibStub("DonCore-1.0"):Get("Kit", 3)
+local PATH = { boxH = 36, gapX = 10, gapY = 4, minW = 52, maxW = 150 }
+ns.CHAIN_PATH = PATH -- (tests)
+local STATUS_OF = { done = "done", cur = "current", next = "next", later = "later" }
 
-local function Flat(parent, layer)
-  local t = parent:CreateTexture(nil, layer or "BACKGROUND")
-  t:SetTexture(WHITE)
-  return t
-end
-
-local function Paint(t, c, a) t:SetVertexColor(c[1], c[2], c[3], a or 1) end
-
-local function FontSize(fs, size)
-  local obj = _G.GameFontHighlightSmall
-  local ok, path = false, nil
-  if type(obj) == "table" and type(obj.GetFont) == "function" then ok, path = pcall(obj.GetFont, obj) end
-  path = (ok and type(path) == "string" and path) or _G.STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
-  if fs.SetFont then pcall(fs.SetFont, fs, path, size, "") end
+local function BoxPaint(b, hover)
+  local st = Kit.STATUS[STATUS_OF[b.state] or "later"] or Kit.STATUS.grey
+  Kit.SetColor(b.bg, st.bg)
+  b.bd:SetColor((hover or b.state == "cur") and Kit.C.goldBright or st.bd)
+  Kit.TextColor(b.label, b.state == "cur" and Kit.C.hero or st.fg)
+  Kit.TextColor(b.title, b.state == "later" and Kit.C.muted or Kit.C.title)
 end
 
 local function BoxEnter(self)
-  local d = self.diagram
-  for _, e in ipairs(self.edges) do Paint(e, C.textPrimary, 0.7) end
+  BoxPaint(self, true)
   if self.questID then
     local _, text, color = ns.ZoneQuestStatus(self.questID)
     local tip = ns.ZoneQuestTooltip({ questID = self.questID, text = text or L["unknown"], color = color })
     local title, lines = tip()
-    Style.Tooltip(self, title, lines, L["Click: open in the quest book."], "auto")
+    local all = {}
+    for _, l in ipairs(type(lines) == "table" and lines or {}) do all[#all + 1] = l end
+    if self.hint then all[#all + 1] = { self.hint, nil, "textSecondary" } end
+    if self.needs then all[#all + 1] = { self.needs, nil, "textHint" } end
+    Style.Tooltip(self, title, all, L["Click: open in the quest book."], "auto")
   elseif self.summaryTip then
-    Style.Tooltip(self, self.summaryTip, nil, d.summaryHint, "auto")
+    local hint = self.dir == 1 and L["Click: show the next parts."] or self.dir == -1 and L["Click: show the parts before."] or self.path.summaryHint
+    Style.Tooltip(self, self.summaryTip, nil, hint, "auto")
   end
 end
 
 local function BoxLeave(self)
-  local lk = LOOK[self.state] or LOOK.next
-  for _, e in ipairs(self.edges) do Paint(e, lk[3], lk[4]) end
+  BoxPaint(self, false)
   Style.HideTooltip(self)
 end
 
 local function BoxClick(self)
-  local d = self.diagram
   if self.questID then
     ns.QuestBookOpenQuest(self.questID)
-  elseif d.onSummary then
-    d.onSummary(self)
+  elseif self.path.onSummary then
+    self.path.onSummary(self)
   end
 end
 
-local function NewBox(d)
-  local b = CreateFrame("Button", nil, d.parent)
-  b.diagram = d
-  b.fill = Flat(b, "BACKGROUND")
-  b.fill:SetAllPoints(b)
-  b.edges = {}
-  for i, p in ipairs({ { "TOPLEFT", "TOPRIGHT" }, { "BOTTOMLEFT", "BOTTOMRIGHT" }, { "TOPLEFT", "BOTTOMLEFT" }, { "TOPRIGHT", "BOTTOMRIGHT" } }) do
-    local e = Flat(b, "BORDER")
-    e:SetPoint(p[1], b, p[1]) e:SetPoint(p[2], b, p[2])
-    if i <= 2 then e:SetHeight(1) else e:SetWidth(1) end
-    b.edges[i] = e
-  end
-  b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  b.text:SetJustifyH("CENTER")
-  b.text:SetWordWrap(true)
-  b.sub = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  b.sub:SetJustifyH("CENTER")
-  b.sub:SetWordWrap(true)
+local function NewBox(p)
+  local b = CreateFrame("Button", nil, p.frame)
+  b.path = p
+  b.bg = Kit.Fill(b, Kit.C.card)
+  b.bd = Kit.Border(b, Kit.C.divider)
+  b.label = Kit.Text(b, "mono", Kit.C.txGold)
+  b.label:SetPoint("TOPLEFT", 6, -5)
+  b.title = Kit.Text(b, "sub", Kit.C.title)
+  b.title:SetPoint("TOPLEFT", 6, -19)
   b:SetScript("OnEnter", BoxEnter)
   b:SetScript("OnLeave", BoxLeave)
+  if b.RegisterForClicks then b:RegisterForClicks("LeftButtonUp") end
   b:SetScript("OnClick", BoxClick)
   return b
 end
 
--- A diagram on a parent frame.
-function ns.ChainDiagram(parent)
-  return { parent = parent, size = SIZE, boxes = {}, lines = {}, nb = 0, nl = 0 }
+-- A path on its own frame (made once, drawn again and again); p.frame goes into the card (Kit.Detail:Block).
+function ns.ChainPath(parent)
+  local f = CreateFrame("Frame", nil, parent)
+  local p = { frame = f, boxes = {}, lines = {}, nb = 0, nl = 0 }
+  f.path = p
+  function f:Layout(w) self:SetWidth(w) end
+  return p
 end
 
-local function Line(d, x, y, w, h)
-  d.nl = d.nl + 1
-  local t = d.lines[d.nl]
-  if not t then t = Flat(d.parent, "ARTWORK") d.lines[d.nl] = t end
-  Paint(t, C.textHint, 0.8)
+local function Line(p, x, y, w, h)
+  p.nl = p.nl + 1
+  local t = p.lines[p.nl]
+  if not t then t = Kit.Tex(p.frame, "ARTWORK", Kit.C.mid) p.lines[p.nl] = t end
   t:ClearAllPoints()
-  t:SetPoint("TOPLEFT", d.parent, "TOPLEFT", x, -y)
+  t:SetPoint("TOPLEFT", p.frame, "TOPLEFT", x, -y)
   t:SetSize(math.max(1, w), math.max(1, h))
   t:Show()
 end
 
 local function SummaryText(it)
-  if it.summary == "done" then return "|TInterface\\RaidFrame\\ReadyCheck-Ready:0|t " .. L["%d done"]:format(it.count), "done" end
+  if it.summary == "done" then return L["%d done"]:format(it.count), "done" end
   if it.summary == "before" then return L["%d before"]:format(it.count), "next" end
   if it.summary == "others" then return L["%d more quests"]:format(it.count), "later" end
   return L["%d more parts"]:format(it.count), "later"
 end
 
--- Draws the chain of questID at (x, y) of the parent, width w. opts.full, opts.maxH.
--- Returns the height used (0: no chain, nothing drawn), and the graph.
-function ns.ChainDraw(d, questID, x, y, w, opts)
+-- The columns that fit into width w: the chain's layers (Rows, a fork stacked up to three), a long chain as a window
+-- around the current part with a box for the parts before and one for the parts after it.
+-- (02.11.2026, Daniel: "man kann nicht mehr auf 4 klicken um zurück zu kommen ... 1 more parts funktioniert auch nicht")
+-- shift moves the window by whole steps of columns: a click on the box before goes back, the box after forward. Every
+-- layer counts (Rows with full), the window alone shortens. Returns the columns and the step (columns per window).
+local function Columns(g, full, w, shift)
+  local cols = Rows(g, true, 3)
+  local maxCols = math.max(3, math.floor((w + PATH.gapX) / (PATH.minW + PATH.gapX)))
+  local n = #cols
+  if n <= maxCols then return cols, n end
+  local ci = 1
+  for i, col in ipairs(cols) do for _, it in ipairs(col) do if it.id == g.sel then ci = i end end end
+  local keep = maxCols - 2
+  -- the part before the current one too when there is room for three
+  local start = math.max(1, math.min(ci - (keep >= 3 and 1 or 0), n - keep + 1)) + (tonumber(shift) or 0) * keep
+  local stop
+  if start <= 1 then start, stop = 1, maxCols - 1
+  elseif start + keep - 1 >= n then start, stop = n - (maxCols - 1) + 1, n
+  else stop = start + keep - 1 end
+  local function Count(from, to)
+    local layers, done = 0, true
+    for i = from, to do
+      local first = cols[i][1]
+      if first.summary then
+        layers = layers + (first.count or 0)
+        if first.summary ~= "done" then done = false end
+      else
+        layers = layers + 1
+        for _, it in ipairs(cols[i]) do if it.id and not ns.IsQuestDone(it.id) then done = false end end
+      end
+    end
+    return layers, done
+  end
+  local out = {}
+  if start > 1 then
+    local layers, done = Count(1, start - 1)
+    out[1] = { { summary = done and "done" or "before", count = layers, dir = -1 } }
+  end
+  for i = start, stop do out[#out + 1] = cols[i] end
+  if stop < n then out[#out + 1] = { { summary = "more", count = (Count(stop + 1, n)), dir = 1 } } end
+  return out, keep
+end
+ns.ChainColumns = Columns -- (tests)
+
+-- Draws the chain of questID across width w. opts.full: every part. Returns the height used (0: no chain, nothing
+-- drawn) and the graph.
+function ns.ChainPathDraw(p, questID, w, opts)
   opts = opts or {}
-  d.nb, d.nl = 0, 0
+  p.nb, p.nl = 0, 0
+  w = math.max(PATH.minW, tonumber(w) or 300)
   local g = ns.ChainGraph(questID)
   local used = 0
   if g then
-    local s = d.size
-    local rows = Rows(g, opts.full, 3)
-    local top = y
-    local prevCenters, prevBottom
-    for ri, row in ipairs(rows) do
-      local n = #row
-      local bw = n == 1 and math.floor(w * s.mid) or math.floor((w - (n - 1) * s.colGap) / n)
-      local left = n == 1 and x + math.floor((w - bw) / 2) or x
-      -- boxes of this row: text first, the height of the tallest
-      local made, rowH = {}, 0
-      for ci, it in ipairs(row) do
-        d.nb = d.nb + 1
-        local b = d.boxes[d.nb]
-        if not b then b = NewBox(d) d.boxes[d.nb] = b end
-        FontSize(b.text, s.font)
-        FontSize(b.sub, s.sub)
-        b.text:SetWidth(bw - 2 * s.pad)
-        b.sub:SetWidth(bw - 2 * s.pad)
-        local state, main, sub
+    local cols, step = Columns(g, opts.full, w, opts.shift)
+    local k = #cols
+    local bw = math.min(PATH.maxW, math.floor((w - (k - 1) * PATH.gapX) / k))
+    local tallest = 1
+    for _, col in ipairs(cols) do tallest = math.max(tallest, #col) end
+    local H = tallest * PATH.boxH + (tallest - 1) * PATH.gapY
+    local half = math.floor(PATH.gapX / 2)
+    for ci, col in ipairs(cols) do
+      local x = (ci - 1) * (bw + PATH.gapX)
+      local colH = #col * PATH.boxH + (#col - 1) * PATH.gapY
+      local y0 = math.floor((H - colH) / 2)
+      local centers = {}
+      for ri, it in ipairs(col) do
+        p.nb = p.nb + 1
+        local b = p.boxes[p.nb]
+        if not b then b = NewBox(p) p.boxes[p.nb] = b end
+        local y = y0 + (ri - 1) * (PATH.boxH + PATH.gapY)
+        b:ClearAllPoints()
+        b:SetPoint("TOPLEFT", p.frame, "TOPLEFT", x, -y)
+        b:SetSize(bw, PATH.boxH)
+        b.needs, b.hint = nil, nil
         if it.id then
-          state = State(g, it.id)
-          local label = Label(g, it.id)
-          local title = ns.QuestTitle(it.id) or ("#" .. it.id)
-          main = label .. " · " .. title
-          if state == "cur" then sub = L["You are here"]
-          elseif state == "next" then sub = GiverAndPlace(it.id) end
+          b.state = State(g, it.id)
+          b.questID, b.summaryTip = it.id, nil
+          b.mark = Label(g, it.id)
+          b.label:SetText(b.state == "cur" and (b.mark .. "  ·  " .. L["You are here"]) or b.mark)
+          b.title:SetText(ns.QuestTitle(it.id) or ("#" .. it.id))
+          if b.state == "cur" then b.hint = L["You are here"] elseif b.state == "next" then b.hint = GiverAndPlace(it.id) end
           local need = g.pre[it.id]
           if #need >= 2 and g.layerOf[it.id] > 1 then
             local names = {}
-            for _, p in ipairs(need) do names[#names + 1] = Label(g, p) end
+            for _, q in ipairs(need) do names[#names + 1] = Label(g, q) end
             local list = #names == 2 and L["%s and %s"]:format(names[1], names[2]) or table.concat(names, ", ")
-            local text = L["needs %s"]:format(list)
-            sub = sub and (sub .. "\n" .. text) or text
+            b.needs = L["needs %s"]:format(list)
           end
-          b.questID, b.summaryTip = it.id, nil
         else
-          main, state = SummaryText(it)
-          sub = nil
-          b.questID = nil
-          b.summaryTip = it.summary == "more" and L["%d more parts"]:format(it.count) or main
+          local text, state = SummaryText(it)
+          b.state, b.questID, b.mark = state, nil, nil
+          b.dir, b.step = it.dir, step -- (02.11.2026) a click pages back or forward
+          b.summaryTip = it.summary == "more" and L["%d more parts"]:format(it.count) or text
+          b.label:SetText(it.summary == "done" and "|TInterface\\RaidFrame\\ReadyCheck-Ready:0|t" or "...")
+          b.title:SetText(text)
         end
-        b.state = state
-        local lk = LOOK[state] or LOOK.next
-        Paint(b.fill, lk[1], lk[2])
-        for _, e in ipairs(b.edges) do Paint(e, lk[3], lk[4]) end
-        b.text:SetText(main)
-        b.text:SetTextColor(lk[5][1], lk[5][2], lk[5][3], 1)
-        if sub then
-          b.sub:SetText(sub)
-          local sc = state == "later" and C.textHint or C.textSecondary
-          b.sub:SetTextColor(sc[1], sc[2], sc[3], 1)
-          b.sub:Show()
-        else
-          b.sub:SetText("")
-          b.sub:Hide()
-        end
-        local th = ns.Num(b.text:GetStringHeight()) or s.line
-        if th < s.line then th = s.line end
-        local sh = sub and (ns.Num(b.sub:GetStringHeight()) or s.line) or 0
-        if sub and sh < s.line - 2 then sh = s.line - 2 end
-        local h = math.floor(th + sh + 2 * s.pad + (sub and 2 or 0) + 0.5)
-        if h > rowH then rowH = h end
-        made[ci] = b
-      end
-      local rowTop = ri == 1 and top or (prevBottom + s.gap)
-      if opts.maxH and rowTop + rowH - y > opts.maxH then
-        d.nb = d.nb - n -- does not fit: this row and the rest stay out
-        break
-      end
-      local centers = {}
-      for ci, b in ipairs(made) do
-        local bx = left + (ci - 1) * (bw + s.colGap)
-        b:ClearAllPoints()
-        b:SetPoint("TOPLEFT", d.parent, "TOPLEFT", bx, -rowTop)
-        b:SetSize(bw, rowH)
-        b.text:ClearAllPoints()
-        b.text:SetPoint("TOP", b, "TOP", 0, -s.pad)
-        b.sub:ClearAllPoints()
-        b.sub:SetPoint("TOP", b.text, "BOTTOM", 0, -2)
+        Kit.Fit(b.label, bw - 12)
+        Kit.Fit(b.title, bw - 12)
+        BoxPaint(b, false)
         b:Show()
-        centers[ci] = bx + math.floor(bw / 2)
+        centers[ri] = y + math.floor(PATH.boxH / 2)
       end
-      -- lines from the row above: straight down, or over a bar where the rows fork or join
-      if prevCenters then
-        local gy = prevBottom
-        if #prevCenters == 1 and #centers == 1 then
-          Line(d, centers[1], gy, 2, s.gap)
-        else
-          local half = math.floor(s.gap / 2)
-          local lo, hi = 1e9, -1e9
-          for _, c in ipairs(prevCenters) do Line(d, c, gy, 2, half) lo, hi = math.min(lo, c), math.max(hi, c) end
-          for _, c in ipairs(centers) do Line(d, c, gy + half, 2, s.gap - half) lo, hi = math.min(lo, c), math.max(hi, c) end
-          if hi > lo then Line(d, lo, gy + half, hi - lo + 2, 2) end
+      -- a fork or a join: a bar beside the stacked boxes, a short line to each of them
+      if #col > 1 then
+        local top, bottom = centers[1], centers[#centers]
+        if ci > 1 then
+          Line(p, x - half, top, 2, bottom - top + 2)
+          for _, c in ipairs(centers) do Line(p, x - half, c, half, 2) end
+        end
+        if ci < k then
+          Line(p, x + bw + half - 2, top, 2, bottom - top + 2)
+          for _, c in ipairs(centers) do Line(p, x + bw, c, half, 2) end
         end
       end
-      prevCenters, prevBottom = centers, rowTop + rowH
-      used = prevBottom - y
+      -- to the next column, at the middle of the path
+      if ci < k then
+        local from = x + bw + (#col > 1 and half or 0)
+        local to = x + bw + PATH.gapX - (#cols[ci + 1] > 1 and half or 0)
+        if to > from then Line(p, from, math.floor(H / 2), to - from, 2) end
+      end
     end
+    used = H
+    p.frame:SetHeight(H)
   end
-  for i = d.nb + 1, #d.boxes do d.boxes[i]:Hide() d.boxes[i].questID = nil end
-  for i = d.nl + 1, #d.lines do d.lines[i]:Hide() end
+  for i = p.nb + 1, #p.boxes do p.boxes[i]:Hide() p.boxes[i].questID = nil end
+  for i = p.nl + 1, #p.lines do p.lines[i]:Hide() end
   return used, g
 end
 
--- Hides everything a diagram drew.
-function ns.ChainClear(d)
-  d.nb, d.nl = 0, 0
-  for _, b in ipairs(d.boxes) do b:Hide() b.questID = nil end
-  for _, t in ipairs(d.lines) do t:Hide() end
+-- Hides everything a path drew.
+function ns.ChainClear(p)
+  p.nb, p.nl = 0, 0
+  for _, b in ipairs(p.boxes) do b:Hide() b.questID = nil end
+  for _, t in ipairs(p.lines) do t:Hide() end
 end
