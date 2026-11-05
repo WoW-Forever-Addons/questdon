@@ -1556,7 +1556,7 @@ end
 -- (Questdon review 3) the arrow window switched on only when nothing shows the way yet (the quest list's compass or a
 -- guide): a pin click, /qd next, a zone list entry or a dungeon mark switched it on for good, two arrows from then on
 function ns.EnsureArrow()
-  if ns.db.arrow or (ns.ArrowRuns and ns.ArrowRuns()) then return end
+  if ns.db.arrow or ns.db.noWay or (ns.ArrowRuns and ns.ArrowRuns()) then return end -- (05.11.2026) "None" stays
   ns.db.arrow = true
   if ns.ApplyArrow then ns.ApplyArrow() end
 end

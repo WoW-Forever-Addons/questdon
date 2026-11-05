@@ -1530,6 +1530,11 @@ end
 -- (Questdon review 5) the list shows the way only with its compass on: the compass switched off counts like the list
 -- closed (before, the list's sync took the arrow away while the compass was off: no direction at all)
 local function SyncArrowData(db)
+  -- (05.11.2026) "Show the way with: None": no arrow stands in for the list
+  if db.noWay then
+    if db.arrowAuto then db.arrow, db.arrowAuto = false, nil end
+    return
+  end
   local listShowsWay = db.tracker ~= false and db.trackerShown ~= false and db.trackerCompass ~= false
   if not listShowsWay then
     if not db.arrow then db.arrow, db.arrowAuto = true, true end

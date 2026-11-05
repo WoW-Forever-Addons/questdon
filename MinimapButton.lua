@@ -41,7 +41,7 @@ local function RefreshPins() if ns.RefreshPins then ns.RefreshPins() end end
 local SWITCHES = {
   { label = "Available quests on the map", keys = { "availablePins" }, apply = RefreshPins },
   { label = "Quest mobs on the map", keys = { "objectivePins" }, apply = RefreshPins },
-  { label = "Direction arrow", keys = { "arrow" }, apply = function() ns.db.arrowAuto = nil if ns.ApplyArrow then ns.ApplyArrow() end end }, -- (review 4) your choice
+  { label = "Direction arrow", keys = { "arrow" }, apply = function() ns.db.arrowAuto = nil if ns.db.arrow then ns.db.noWay = nil end if ns.ApplyArrow then ns.ApplyArrow() end end }, -- (review 4) your choice
   { label = "Auto accept and turn in", keys = { "autoAccept", "autoTurnIn" } },
   { label = "XP bar", keys = { "xpBar" }, apply = function() if ns.UpdateXPBar then ns.UpdateXPBar() end end },
   -- (1.3.8) the quest list instead of the old window; without the list its compass is gone, the arrow comes back

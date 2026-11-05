@@ -122,6 +122,7 @@ function API.SetArrowMode(on)
   if on == API.ArrowMode() then return true end
   local function Changed(key) if ns.OptionChanged then ns.OptionChanged(key) end end
   if on then
+    db.noWay = nil -- (05.11.2026) asked for the arrow: "Show the way with: None" ends
     db.arrowModePrev = { compass = db.trackerCompass ~= false, arrow = db.arrow and true or false }
     db.trackerCompass, db.arrow, db.arrowAuto = false, true, nil
     Changed("trackerCompass")

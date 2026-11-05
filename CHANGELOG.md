@@ -1,5 +1,9 @@
 # Changes
 
+## 1.5.3
+- **Fixed:** selling junk and repairing at a merchant work again on WoW Forever (broken in 1.5.2).
+- **Show the way with: None:** no compass in the quest list and no arrow window.
+
 ## 1.5.2
 - **Fixed for gamepad players (Steam Deck and others):** accepting a group invite could show "Questdon has been blocked from an action only available to the Blizzard UI". While a Blizzard dialog is open (group invite, ready check, dungeon finder), Questdon now waits: taking and handing in quests, picking the reward, sharing a quest, selling junk and repairing happen once the dialog is closed; fast loot leaves that loot window to the game.
 - `/qd diag` shows the line "blizzard dialogs" (what waited, and what the game blocked).

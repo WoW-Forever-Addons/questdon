@@ -86,17 +86,22 @@ local PAGES = {
     -- comes back; both at once must be possible")
     -- (29.10.2026, round 6) compass and arrow as one choice in the options window instead of two switches that turn
     -- each other on and off; the settings behind it stay trackerCompass and arrow (Blizzard's panel, API, Leveldon)
-    { key = "wayMode", kind = "choice", name = "Show the way with", status = GuideStatus, choices = { "Compass", "Arrow", "Both" }, covers = { "trackerCompass", "arrow" },
-      tip = "Compass: on the card of the picked quest in the quest list. Arrow: a separate window you can move. Both: the two together. Click to switch.",
+    { key = "wayMode", kind = "choice", name = "Show the way with", status = GuideStatus, choices = { "Compass", "Arrow", "Both", "None" }, covers = { "trackerCompass", "arrow" },
+      -- (05.11.2026, Daniel: an option to have neither arrow nor compass) None: db.noWay
+      tip = "Compass: on the card of the picked quest in the quest list. Arrow: a separate window you can move. Both: the two together. None: neither, also not after a click on a map pin (a guide such as Leveldon keeps its own). Click to switch.",
       get = function()
         local db = ns.db or {}
+        if db.noWay then return 4 end
         local compass, arrow = db.trackerCompass ~= false, db.arrow and not db.arrowAuto
         return (compass and arrow) and 3 or (compass and 1 or 2)
       end,
       set = function(i)
         local db = ns.db
         local listOn = db.tracker ~= false and db.trackerShown ~= false
-        if i == 2 then
+        db.noWay = i == 4 or nil
+        if i == 4 then
+          db.trackerCompass, db.arrow, db.arrowAuto = false, false, nil
+        elseif i == 2 then
           db.trackerCompass, db.arrow, db.arrowAuto = false, true, nil
         elseif i == 3 then
           db.trackerCompass, db.arrow, db.arrowAuto = true, true, nil
@@ -112,7 +117,10 @@ local PAGES = {
         -- window goes, as before), else the window stays and goes with the list's return
         local db = ns.db
         local listOn = db.tracker ~= false and db.trackerShown ~= false
-        if db.trackerCompass == false then
+        if db.noWay and db.trackerCompass ~= false then db.noWay = nil end -- (05.11.2026) switched on: "None" ends
+        if db.noWay then -- (05.11.2026) "None": switched off stays without an arrow
+          db.arrow, db.arrowAuto = false, nil
+        elseif db.trackerCompass == false then
           db.arrow, db.arrowAuto = true, nil
         else
           db.arrow, db.arrowAuto = not listOn, (not listOn) or nil
@@ -126,7 +134,7 @@ local PAGES = {
     { key = "trackerScale", kind = "slider", name = "Text size", tip = "Size of the quest list and its text. Ctrl + mouse wheel over the title bar does it too.", min = SMIN, max = SMAX, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then f:SetPanelScale(ns.db.trackerScale, true) end if ns.UpdateTracker then ns.UpdateTracker(true) end end },
     { key = "trackerPlain", name = "No background and frame", tip = "Hides the quest list's background, its frame and the quest card's gold box: only the text, the compass and the buttons up top stay.", parent = "tracker", onChange = function() if ns.ApplyTrackerChrome then ns.ApplyTrackerChrome() end end },
     { header = "Direction arrow" },
-    { key = "arrow", name = "Show window", status = GuideStatus, tip = "Arrow with distance to the quest you picked in the quest list or track in the quest log (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = function(...) ns.db.arrowAuto = nil ArrowLook(...) end }, -- (review 4) your choice
+    { key = "arrow", name = "Show window", status = GuideStatus, tip = "Arrow with distance to the quest you picked in the quest list or track in the quest log (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = function(...) ns.db.arrowAuto = nil if ns.db.arrow then ns.db.noWay = nil end ArrowLook(...) end }, -- (review 4) your choice
     { key = "arrowPlain", name = "No background and frame", tip = "Hides the plate behind the arrow's text and its frame: only the arrow and the writing stay. The background opacity below then does nothing.", parent = "arrow", onChange = ArrowLook },
     { key = "arrowLocked", name = "Lock window", tip = "The arrow can no longer be dragged.", parent = "arrow" },
     { key = "arrowNext", name = "Move on to the next quest by itself", tip = "When no quest is tracked (after a turn-in, or after you arrived at a clicked target), the arrow points to the nearest turn-in of a finished quest, or to an open objective close by when that is nearer. Click the arrow to put it aside until your quest log changes.", parent = "arrow", onChange = function() ns.UpdateArrowTarget() end },

@@ -186,10 +186,15 @@ ns.On("PLAYER_MONEY", function()
   if retryRepair and MerchantFrame and MerchantFrame:IsShown() and not Repair(true) then retryRepair = false end
 end)
 local OnMerchant
+local merchantOpen = false
 ns.On("MERCHANT_SHOW", function()
+  merchantOpen = true
   -- (05.11.2026) a Blizzard dialog (group invite) open: selling and repairing wait until it is closed
+  -- (05.11.2026, Daniel: "auto junk sell funktioniert nicht mehr", "reparieren auch nicht") the merchant's own window is
+  -- not shown yet when MERCHANT_SHOW reaches Questdon on Forever, so asking MerchantFrame:IsShown() here skipped both:
+  -- open or not is what MERCHANT_SHOW and MERCHANT_CLOSED say
   if ns.WhenNoDialog then
-    ns.WhenNoDialog("merchant", function() if MerchantFrame and MerchantFrame:IsShown() then OnMerchant() end end)
+    ns.WhenNoDialog("merchant", function() if merchantOpen then OnMerchant() end end)
   else
     OnMerchant()
   end
@@ -207,6 +212,7 @@ function OnMerchant()
 end
 
 ns.On("MERCHANT_CLOSED", function()
+  merchantOpen = false
   if ns.DropWaiting then ns.DropWaiting("merchant") end
   retryRepair = false
   if ticker then ticker:Cancel() ticker = nil end

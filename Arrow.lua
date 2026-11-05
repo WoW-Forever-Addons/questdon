@@ -728,6 +728,7 @@ end
 function ns.ToggleArrow()
   ns.db.arrow = not ns.db.arrow
   ns.db.arrowAuto = nil -- (review 4) your choice, kept when the quest list comes back
+  if ns.db.arrow then ns.db.noWay = nil end -- (05.11.2026) switched on by hand: "None" ends
   ns.ApplyArrow()
 end
 
