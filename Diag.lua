@@ -321,6 +321,7 @@ function ns.BuildDiag()
     return ("%s, windows %d, looted fast %d, left to the game %d (bind on pickup, quest items, unknown)"):format(
       ns.db.fastLoot and "on" or "off", s.windows, s.fast, s.leftToGame)
   end)
+  Probe(out, "blizzard dialogs", function() return ns.DialogDiag and ns.DialogDiag() or "nil" end) -- (05.11.2026)
   Probe(out, "not offered here", function() return ns.NotHereDiag and ns.NotHereDiag() or "nil" end) -- (1.1)
   out[#out + 1] = "# Blizzard quest POIs"
   Probe(out, "POI APIs", function() return (ns.POIDiag()) end)

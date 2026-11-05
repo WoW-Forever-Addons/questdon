@@ -1,5 +1,9 @@
 # Changes
 
+## 1.5.2
+- **Fixed for gamepad players (Steam Deck and others):** accepting a group invite could show "Questdon has been blocked from an action only available to the Blizzard UI". While a Blizzard dialog is open (group invite, ready check, dungeon finder), Questdon now waits: taking and handing in quests, picking the reward, sharing a quest, selling junk and repairing happen once the dialog is closed; fast loot leaves that loot window to the game.
+- `/qd diag` shows the line "blizzard dialogs" (what waited, and what the game blocked).
+
 ## 1.5.1
 - **Surnames on WoW Forever:** names are kept as first name and surname, as the game gives them: whispers between Questdon users reach the right player, group members are found again, and the chronicle keeps your entries (moved once to the new name).
 - **Quest list:** after logging in, the handle of the quest list starts at all quests again instead of an empty list.

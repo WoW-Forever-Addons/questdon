@@ -21,6 +21,111 @@ local function Repeatable(questID, clientFlag)
 end
 ns.SkipAutoTurnIn = Repeatable
 
+---------------------------------------------------------------------------
+-- (05.11.2026, Malte on a Steam Deck with a gamepad, after a group invite: "Questdon has been blocked from an action
+-- only available to the Blizzard UI", only Disable worked) Questdon's automatic steps (take, confirm, turn in, pick a
+-- reward, loot, sell, share) start game actions whose own dialog code then runs inside Questdon's call. Done while a
+-- Blizzard dialog is open (group invite, ready check), that dialog is tainted, and its button (AcceptGroup) is then
+-- blamed on Questdon, above all when pressed with a gamepad. So while such a dialog is open Questdon waits and does
+-- the step once it is closed (the NPC or merchant window still open), and /qd diag keeps what the game blocked.
+---------------------------------------------------------------------------
+local OTHER_DIALOGS = { "ReadyCheckFrame", "LFGDungeonReadyPopup", "LFDRoleCheckPopup", "LFGInvitePopup" }
+local function Shown(f)
+  return type(f) == "table" and type(f.IsShown) == "function" and ns.True(ns.Value(f.IsShown, f))
+end
+-- The open Blizzard dialog (its frame name) or nil. except: the popup kind left out (the escort's own question).
+function ns.BlizzardDialogOpen(except)
+  for i = 1, ns.Num(rawget(_G, "STATICPOPUP_NUMDIALOGS")) or 4 do
+    local f = rawget(_G, "StaticPopup" .. i)
+    if Shown(f) and not (except and f.which == except) then return "StaticPopup" .. i end
+  end
+  for _, name in ipairs(OTHER_DIALOGS) do
+    if Shown(rawget(_G, name)) then return name end
+  end
+  return nil
+end
+
+local waiting = {}
+local dialogStats = { waited = 0, done = 0, dropped = 0 }
+local lastStep, lastStepAt
+local waitTicker
+local WAIT_MAX = 120 -- seconds; a step still waiting then is dropped (left to the player)
+-- Notes the automatic step Questdon is about to start (for the blocked log).
+function ns.NoteAutoStep(label)
+  lastStep, lastStepAt = label, ns.Num(ns.Value(GetTime))
+end
+local function RunWaiting()
+  if ns.BlizzardDialogOpen() then
+    local now = ns.Num(ns.Value(GetTime)) or 0
+    for key, w in pairs(waiting) do
+      if now > w.untilT then waiting[key] = nil dialogStats.dropped = dialogStats.dropped + 1 end
+    end
+    if next(waiting) then return end
+  end
+  if waitTicker then waitTicker:Cancel() waitTicker = nil end
+  local list = waiting
+  waiting = {}
+  for key, w in pairs(list) do
+    dialogStats.done = dialogStats.done + 1
+    ns.SafeCall("after dialog " .. key, w.fn)
+  end
+end
+-- Runs fn now, or once no Blizzard dialog is open any more (one waiting step per key, the newest).
+function ns.WhenNoDialog(key, fn)
+  local open = ns.BlizzardDialogOpen()
+  if not open then fn() return true end
+  waiting[key] = { fn = fn, untilT = (ns.Num(ns.Value(GetTime)) or 0) + WAIT_MAX }
+  dialogStats.waited = dialogStats.waited + 1
+  dialogStats.lastDialog = open
+  if not waitTicker then waitTicker = ns.NewTicker(0.5, RunWaiting) end
+  return false
+end
+-- A window closed: its waiting steps go.
+function ns.DropWaiting(...)
+  for i = 1, select("#", ...) do
+    local key = select(i, ...)
+    if waiting[key] then waiting[key] = nil dialogStats.dropped = dialogStats.dropped + 1 end
+  end
+end
+
+-- What the game blocked (any addon, the newest 5), kept over a reload: Disable reloads the UI.
+local BLOCKED_KEEP = 5
+local function OnBlocked(kind)
+  return function(_, addon, fn)
+    local db = rawget(_G, "QuestdonDB")
+    if type(db) ~= "table" then return end
+    db.blockedLog = type(db.blockedLog) == "table" and db.blockedLog or {}
+    local now = ns.Num(ns.Value(GetTime))
+    local ago = (now and lastStepAt) and ("%.1fs"):format(now - lastStepAt) or "-"
+    table.insert(db.blockedLog, 1, ("%s %s: %s %s, dialog %s, last step %s %s before"):format(
+      ns.Today and ns.Today() or "?", kind, tostring(ns.Usable(addon) and addon or "?"), tostring(ns.Usable(fn) and fn or "?"),
+      tostring(ns.BlizzardDialogOpen() or "none"), tostring(lastStep or "none"), ago))
+    for i = #db.blockedLog, BLOCKED_KEEP + 1, -1 do db.blockedLog[i] = nil end
+  end
+end
+ns.On("ADDON_ACTION_FORBIDDEN", OnBlocked("forbidden"))
+ns.On("ADDON_ACTION_BLOCKED", OnBlocked("blocked"))
+
+function ns.DialogDiag()
+  local db = rawget(_G, "QuestdonDB")
+  local log = type(db) == "table" and type(db.blockedLog) == "table" and db.blockedLog or {}
+  return ("waited %d, done after %d, dropped %d, last dialog %s, last step %s; blocked: %s"):format(dialogStats.waited,
+    dialogStats.done, dialogStats.dropped, tostring(dialogStats.lastDialog or "none"), tostring(lastStep or "none"),
+    #log > 0 and table.concat(log, " | ") or "none")
+end
+
+-- An NPC dialog event whose automatic step waits for open Blizzard dialogs.
+local function OnNpc(event, fn)
+  ns.On(event, function(...)
+    local args, n = { ... }, select("#", ...)
+    ns.WhenNoDialog(event, function() fn(unpack(args, 1, n)) end)
+  end)
+end
+ns.On("GOSSIP_CLOSED", function() ns.DropWaiting("GOSSIP_SHOW") end)
+ns.On("QUEST_FINISHED", function()
+  ns.DropWaiting("QUEST_GREETING", "QUEST_DETAIL", "QUEST_PROGRESS", "QUEST_COMPLETE", "reward")
+end)
+
 -- (Questdon review 1) never pay gold automatically, also not in the reward dialog (a server may open it right
 -- away, or the player clicked on in the progress dialog): the cost the dialog shows, the one the quest log has,
 -- or one seen in the progress dialog of the quest; a cost that cannot be read counts as a cost
@@ -102,7 +207,7 @@ end
 
 
 -- Gossip window (modern NPC dialog with quest list)
-ns.On("GOSSIP_SHOW", function()
+OnNpc("GOSSIP_SHOW", function()
   if ns.IsPaused() or not C_GossipInfo then return end
   local db = ns.db
 
@@ -111,7 +216,7 @@ ns.On("GOSSIP_SHOW", function()
       -- (1.23) secret flags count as "no" (like everywhere else)
       local id = type(q) == "table" and ns.True(q.isComplete) and ns.Num(q.questID)
       if id and id > 0 and not Repeatable(id, q.repeatable) then
-        C_GossipInfo.SelectActiveQuest(id)
+        ns.NoteAutoStep("C_GossipInfo.SelectActiveQuest(id)") C_GossipInfo.SelectActiveQuest(id)
         return
       end
     end
@@ -126,7 +231,7 @@ ns.On("GOSSIP_SHOW", function()
         -- (1.23) a secret "trivial" flag counts as trivial: left to the player
         local trivial = q.isTrivial ~= nil and (not ns.Usable(q.isTrivial) or q.isTrivial == true)
         if not (db.skipTrivial and trivial) and not HeldForCrumb(id) then
-          C_GossipInfo.SelectAvailableQuest(id)
+          ns.NoteAutoStep("C_GossipInfo.SelectAvailableQuest(id)") C_GossipInfo.SelectAvailableQuest(id)
           return
         end
       end
@@ -135,7 +240,7 @@ ns.On("GOSSIP_SHOW", function()
 end)
 
 -- Old style quest greeting window (NPC offers only quests)
-ns.On("QUEST_GREETING", function()
+OnNpc("QUEST_GREETING", function()
   if ns.IsPaused() then return end
   local db = ns.db
 
@@ -143,7 +248,7 @@ ns.On("QUEST_GREETING", function()
     for i = 1, ns.Num(ns.Value(GetNumActiveQuests)) or 0 do
       local ok, _, isComplete = pcall(GetActiveTitle, i)
       if ok and ns.True(isComplete) and not Repeatable(ns.Value(GetActiveQuestID, i)) then
-        SelectActiveQuest(i)
+        ns.NoteAutoStep("SelectActiveQuest(i)") SelectActiveQuest(i)
         return
       end
     end
@@ -158,14 +263,14 @@ ns.On("QUEST_GREETING", function()
       local qid = okT and ns.Usable(availID) and availID or nil
       if not (db.skipTrivial and trivial) and not LeftToPlayer(qid) and not (okT and Repeatable(qid, isRepeat))
           and not HeldForCrumb(qid) then
-        SelectAvailableQuest(i)
+        ns.NoteAutoStep("SelectAvailableQuest(i)") SelectAvailableQuest(i)
         return
       end
     end
   end
 end)
 
-ns.On("QUEST_DETAIL", function()
+OnNpc("QUEST_DETAIL", function()
   local questID = ns.Num(ns.Value(GetQuestID))
   if ns.IsPaused() or not ns.Active("autoAccept") then
     local crumb = OpenCrumb(questID)
@@ -184,30 +289,32 @@ ns.On("QUEST_DETAIL", function()
   elseif ns.QuestLogFull() then
     ns.Warn(L["Quest log is full: quest not accepted."])
   else
-    AcceptQuest()
+    ns.NoteAutoStep("AcceptQuest()") AcceptQuest()
   end
 end)
 
 -- Escort quests started by another player
 ns.On("QUEST_ACCEPT_CONFIRM", function()
   if ns.IsPaused() or not ns.Active("autoAccept") or ns.QuestLogFull() then return end
-  ConfirmAcceptQuest()
+  -- (05.11.2026) its own question is a popup too: only another open dialog (group invite) leaves it to the player
+  if ns.BlizzardDialogOpen("QUEST_ACCEPT") then return end
+  ns.NoteAutoStep("ConfirmAcceptQuest()") ConfirmAcceptQuest()
 end)
 
-ns.On("QUEST_PROGRESS", function()
+OnNpc("QUEST_PROGRESS", function()
   if ns.IsPaused() or not ns.Active("autoTurnIn") then return end
   if not ns.True(ns.Value(IsQuestCompletable)) then return end
   if Repeatable(ns.Value(GetQuestID)) then return end -- (1.3.5) left to you
   -- Never spend gold automatically (unreadable cost: leave it to the player)
   if ns.QuestCostsGold(ns.Value(GetQuestID), true) then return end
-  CompleteQuest()
+  ns.NoteAutoStep("CompleteQuest()") CompleteQuest()
 end)
 
-ns.On("QUEST_COMPLETE", function()
+OnNpc("QUEST_COMPLETE", function()
   if ns.IsPaused() or not ns.Active("autoTurnIn") then return end
   if Repeatable(ns.Value(GetQuestID)) then return end -- (1.3.5) left to you
   if ns.QuestCostsGold(ns.Value(GetQuestID)) then return end -- (Questdon review 1) the reward dialog pays it
   local choices = ns.Num(ns.Value(GetNumQuestChoices))
   if not choices or choices > 1 then return end -- Rewards.lua decides (or the player)
-  GetQuestReward(choices)
+  ns.NoteAutoStep("GetQuestReward(choices)") GetQuestReward(choices)
 end)

@@ -158,6 +158,9 @@ local function SellJunk(list, after)
     i = i + 1
     local entry = list[i]
     while entry and not StillJunk(entry) do i = i + 1 entry = list[i] end -- changed slots are left alone
+    -- (05.11.2026) a Blizzard dialog (group invite) opened: the rest is left alone (sold on the next visit)
+    local dialog = entry and ns.BlizzardDialogOpen and ns.BlizzardDialogOpen()
+    if dialog then entry, after = nil, nil end
     if not entry or not (MerchantFrame and MerchantFrame:IsShown()) then
       t:Cancel()
       ticker = nil
@@ -182,7 +185,16 @@ local retryRepair = false
 ns.On("PLAYER_MONEY", function()
   if retryRepair and MerchantFrame and MerchantFrame:IsShown() and not Repair(true) then retryRepair = false end
 end)
+local OnMerchant
 ns.On("MERCHANT_SHOW", function()
+  -- (05.11.2026) a Blizzard dialog (group invite) open: selling and repairing wait until it is closed
+  if ns.WhenNoDialog then
+    ns.WhenNoDialog("merchant", function() if MerchantFrame and MerchantFrame:IsShown() then OnMerchant() end end)
+  else
+    OnMerchant()
+  end
+end)
+function OnMerchant()
   if ns.IsPaused() then return end
   local junk = ns.db.sellJunk and CollectJunk() or {}
   local otherSells = #junk > 0 and not Mine("sellJunk")
@@ -192,9 +204,10 @@ ns.On("MERCHANT_SHOW", function()
   SellJunk(junk, short and function() Repair() end or nil)
   -- (review 6) another addon sells the junk: the repair again as its money comes in
   retryRepair = (short and otherSells) and true or false
-end)
+end
 
 ns.On("MERCHANT_CLOSED", function()
+  if ns.DropWaiting then ns.DropWaiting("merchant") end
   retryRepair = false
   if ticker then ticker:Cancel() ticker = nil end
 end)
@@ -241,6 +254,8 @@ ns.On("LOOT_READY", function()
   if GetCVarBool("autoLootDefault") == IsModifiedClick("AUTOLOOTTOGGLE") then return end
   if not Mine("fastLoot") then return end
   lootStats.windows = lootStats.windows + 1
+  -- (05.11.2026) a Blizzard dialog (group invite) open: the window is left to the game
+  if ns.BlizzardDialogOpen and ns.BlizzardDialogOpen() then lootStats.leftToGame = lootStats.leftToGame + 1 return end
   local n = ns.Num(ns.Value(GetNumLootItems)) or 0
   for i = 1, n do
     if NeedsConfirm(i) then
@@ -248,6 +263,7 @@ ns.On("LOOT_READY", function()
       return -- the game loots this window itself
     end
   end
+  if ns.NoteAutoStep then ns.NoteAutoStep("LootSlot()") end
   for i = n, 1, -1 do
     LootSlot(i)
   end

@@ -82,7 +82,9 @@ local function Evaluate()
   -- (1.3.5) repeatable quests are never turned in automatically (Quests.lua): the marker only
   if db.autoPickBest and ns.Active("autoTurnIn") and not ns.IsPaused() and not pausedAtOpen and not (ns.SkipAutoTurnIn and ns.SkipAutoTurnIn(ns.Value(GetQuestID)))
       and not (ns.QuestCostsGold and ns.QuestCostsGold(ns.Value(GetQuestID))) then -- (Questdon review 1) no gold paid
+    if ns.BlizzardDialogOpen and ns.BlizzardDialogOpen() then ns.WhenNoDialog("reward", Evaluate) return end -- (05.11.2026)
     ns._rewardAuto = true -- (1.3.8) Questdon chose: not a player's pick
+    if ns.NoteAutoStep then ns.NoteAutoStep("GetQuestReward(pick)") end
     GetQuestReward(index)
     return
   end

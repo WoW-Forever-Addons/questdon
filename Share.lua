@@ -25,6 +25,8 @@ local afterFight = {}
 local function Push(questID)
   if not ns.db.shareQuests or not ns.True(ns.Value(IsInGroup)) then return end
   if InCombatLockdown() then afterFight[questID] = true return end
+  -- (05.11.2026) not while a Blizzard dialog (group invite) is open: shared once it is closed
+  if ns.BlizzardDialogOpen() then ns.WhenNoDialog("share" .. questID, function() Push(questID) end) return end
   if not ns.InQuestLog(questID) then return end
   if C_QuestLog.IsPushableQuest and not ns.True(ns.Value(C_QuestLog.IsPushableQuest, questID)) then return end
   -- Forever beta 2026-09-24: dungeon quests can no longer be shared
@@ -37,6 +39,7 @@ local function Push(questID)
   -- (1.20) secret or missing values must not reach the comparisons below
   local previous = ns.Num(ns.Value(C_QuestLog.GetSelectedQuest))
   if not pcall(C_QuestLog.SetSelectedQuest, questID) then return end
+  ns.NoteAutoStep("QuestLogPushQuest()")
   local pushed = pcall(QuestLogPushQuest)
   if previous and previous > 0 and previous ~= questID
       and (ns.Num(ns.Value(C_QuestLog.GetLogIndexForQuestID, previous)) or 0) > 0 then
