@@ -1,5 +1,9 @@
 # Changes
 
+## 1.5.1
+- **Surnames on WoW Forever:** names are kept as first name and surname, as the game gives them: whispers between Questdon users reach the right player, group members are found again, and the chronicle keeps your entries (moved once to the new name).
+- **Quest list:** after logging in, the handle of the quest list starts at all quests again instead of an empty list.
+
 ## 1.5.0
 - **Options window for other addons:** drop-down lists (own list, the same on WoW Forever and Classic Era) and a picture or icon per tab. Luredon uses it for its options.
 - **The Don look:** the quest book is a new window you can drag from 720x420 to 1300x900: Zones with zone header and zone bar, Dungeons as cards with the quests that lead there, a Journal with four tiles, search and a focus card with the quest chain. The quest list has the same look: level in the game's quest colours, the map colour as a mark, finished quests below the open ones.

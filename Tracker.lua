@@ -37,7 +37,6 @@ local COMPASS = 58
 local panel, card
 local rows = {}        -- needle rows of the last build: { row = , target = }
 local lastSig
-local lastShown = 0   -- quests the list showed at the last build (the handle starts from there)
 local grip
 local MIN_W, MAX_W, ROW, MAX_LINES = 240, 600, 30, 30
 local function TrackerWidth() return math.max(MIN_W, math.min(MAX_W, tonumber((ns.db or {}).trackerWidth) or 300)) end
@@ -1459,8 +1458,6 @@ local function Build()
       ns.QueueRefresh("tracker")
     end
   end
-  lastShown = (tonumber(ns.db.trackerLines) or math.huge) - left
-  if lastShown == math.huge or lastShown ~= lastShown then lastShown = 0 end
   Extras()
   Footer()
   panel:Relayout()
@@ -1639,7 +1636,10 @@ function ns.TrackerAttachGrip()
     end
     local x, y = Cursor()
     local total = #Entries()
-    self._drag = { x = x, y = y, w = panel._width or TrackerWidth(), lines = tonumber(ns.db.trackerLines) or lastShown, total = total }
+    -- (05.11.2026, Daniel: "nach dem neu einloggen liste voll aufgeklappt") a list without a saved size shows all its
+    -- quests: the handle starts from all of them. It started from 0 before (math.huge - math.huge), so the first drag,
+    -- even one only in width, cut the list to 1 quest.
+    self._drag = { x = x, y = y, w = panel._width or TrackerWidth(), lines = tonumber(ns.db.trackerLines) or total, total = total }
     self:SetScript("OnUpdate", function()
       local d = self._drag
       if not d then return end

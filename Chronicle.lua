@@ -342,19 +342,33 @@ function ns.JournalChronicleReset() chapCache, chapKey, recapCache, recapKey = n
 ---------------------------------------------------------------------------
 -- Characters of the account
 ---------------------------------------------------------------------------
+-- (05.11.2026) on Forever the name is "Mae Wipeborn" (Core.lua ns.UnitNameRealm); 4th result: the key as it was before,
+-- with the first name only (UpdateMe moves that entry over)
 local function MyKey()
-  local name = Name(ns.Value(UnitName, "player"))
+  local first = Name(ns.Value(UnitName, "player"))
+  local name = first
+  if ns.Surnames() then name = Name((ns.UnitNameRealm("player"))) or first end
   local realm = Name(ns.Value(GetRealmName))
   if not name then return nil end
-  return (realm or "?") .. "/" .. name, name, realm
+  local key = (realm or "?") .. "/" .. name
+  local old = first and first ~= name and ((realm or "?") .. "/" .. first) or nil
+  return key, name, realm, old
 end
 ns.JournalMyKey = MyKey
 
 local function UpdateMe()
   local db = ns.db
-  local key, name, realm = MyKey()
+  local key, name, realm, oldKey = MyKey()
   if type(db) ~= "table" or not key then return end
   if type(db.chars) ~= "table" then db.chars = {} end
+  -- (05.11.2026) an entry saved under the first name only: kept, under the full name from now on
+  local was = oldKey and db.chars[oldKey]
+  if type(was) == "table" then
+    local c = db.chars[key]
+    if type(c) ~= "table" then db.chars[key] = was
+    else for k, v in pairs(was) do if c[k] == nil then c[k] = v end end end
+    db.chars[oldKey] = nil
+  end
   local c = db.chars[key]
   if type(c) ~= "table" then c = {} db.chars[key] = c end
   c.n, c.r = name, realm

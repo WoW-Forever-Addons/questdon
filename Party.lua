@@ -74,6 +74,8 @@ local function Short(name)
 end
 
 local function UnitFullName(unit)
+  -- (05.11.2026) Forever: "Mae Wipeborn" as the senders say it (GetUnitName would give "Mae-Wipeborn")
+  if ns.Surnames() then return Short(ns.UnitNameRealm(unit)) end
   local fn = GetUnitName
   if type(fn) == "function" then
     local n = ns.Value(fn, unit, true)

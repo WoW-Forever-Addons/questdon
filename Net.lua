@@ -145,6 +145,8 @@ local function SendAll()
     if ok then name, realm = n, r end
   end
   if not (type(name) == "string" and ns.Usable(name)) then name = ns.Value(UnitName, "player") end
+  -- (05.11.2026) Forever: whispered as "Mae Wipeborn", without a realm ("Mae-Wipeborn" was no player)
+  if ns.Surnames() then name, realm = ns.UnitNameRealm("player"), nil end
   if type(name) == "string" and ns.Usable(name) then
     Send("whisper", "WHISPER", (type(realm) == "string" and ns.Usable(realm) and realm ~= "") and (name .. "-" .. realm) or name)
   else
