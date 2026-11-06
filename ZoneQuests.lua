@@ -173,7 +173,13 @@ function ns.ZoneFocusPin(mapID)
 end
 
 local function Focus(e, openMap)
-  local m, x, y, what = QuestSpot(e)
+  local m, x, y, what
+  if e.atStart then -- (06.11.2026) the quest giver, also for a quest in the log
+    m, x, y = ns.QuestStart(e.questID)
+    if m and x then x, y, what = x / 100, y / 100, "start" else m = nil end
+  else
+    m, x, y, what = QuestSpot(e)
+  end
   if not m then ns.Print(L["No position known for %s."]:format(ns.QuestTitle(e.questID))) return end
   ns.zoneFocus = { questID = e.questID, mapID = m, x = x, y = y, group = e.group, text = e.text, what = what }
   if ns.SetArrowTarget then
@@ -189,6 +195,13 @@ end
 function ns.FocusQuest(questID, openMap)
   local group, text = ns.ZoneQuestStatus(questID)
   Focus({ questID = questID, group = group or "done", text = text }, openMap)
+end
+
+-- (06.11.2026, Daniel: dungeon quests, "den Questgeber (wenn außerhalb) dem namen anklicken ... dann soll er auf der
+-- zonenmap angezeigt werden") the giver's spot on its zone map: map mark, arrow, the world map opened there
+function ns.ShowQuestGiver(questID)
+  local group, text = ns.ZoneQuestStatus(questID)
+  Focus({ questID = questID, group = group or "done", text = text, atStart = true }, true)
 end
 
 ---------------------------------------------------------------------------

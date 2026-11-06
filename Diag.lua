@@ -265,6 +265,29 @@ function ns.BuildDiag()
     return ("v%s, quest list scale %.2f, alpha %.2f"):format(tostring(st.VERSION or "?"),
       tonumber(ns.db.trackerScale) or 1, tonumber(ns.db.trackerAlpha) or 0)
   end)
+  -- (06.11.2026, CurseForge brandonoboikovitz: the quest list gone, Blizzard's tracker back, /qd list did not help)
+  -- everything that decides whether the list shows and where it stands
+  Probe(out, "quest list", function()
+    local db = ns.db or {}
+    local p = ns.TrackerFrame and ns.TrackerFrame()
+    local where = "no frame"
+    if p then
+      local l, t = ns.Value(p.GetLeft, p), ns.Value(p.GetTop, p)
+      local w, h = ns.Value(p.GetWidth, p), ns.Value(p.GetHeight, p)
+      local sw, sh = ns.Value(UIParent.GetWidth, UIParent), ns.Value(UIParent.GetHeight, UIParent)
+      local s, us = ns.Num(ns.Value(p.GetEffectiveScale, p)) or 1, ns.Num(ns.Value(UIParent.GetEffectiveScale, UIParent)) or 1
+      local f = s / us
+      local on = l and t and sw and sh and (l * f) < sw and (l + (w or 0)) * f > 0 and (t * f) > 0 and (t - (h or 0)) * f < sh
+      where = ("shown %s, alpha %.2f, scale %.2f, left %s, top %s, size %sx%s, on screen %s, collapsed %s"):format(
+        tostring(ns.True(ns.Value(p.IsShown, p))), ns.Num(ns.Value(p.GetAlpha, p)) or -1, s,
+        l and ("%.0f"):format(l) or "?", t and ("%.0f"):format(t) or "?", w and ("%.0f"):format(w) or "?",
+        h and ("%.0f"):format(h) or "?", tostring(on), tostring(p.IsCollapsed and p:IsCollapsed() or false))
+    end
+    return ("tracker %s, shown %s, compass %s, hide Blizzard's %s, lines %s, docked %s, guide %s, Blizzard's hidden %s; %s"):format(
+      tostring(db.tracker), tostring(db.trackerShown), tostring(db.trackerCompass), tostring(db.trackerHideBlizz),
+      tostring(db.trackerLines), tostring(ns.TrackerDocked and ns.TrackerDocked()), tostring(ns.GuideActive and ns.GuideActive()),
+      tostring(ns.BlizzTrackerHidden and ns.BlizzTrackerHidden()), where)
+  end)
   Probe(out, "Questie", function()
     if not ns.AddOnLoaded("Questie") then return "not loaded" end
     local get = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata

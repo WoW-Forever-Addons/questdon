@@ -1923,6 +1923,20 @@ local function DungeonInsts()
   return insts
 end
 
+-- (06.11.2026, Daniel: "Starten Quests in der Instanz gerne eine Notiz dazu") true when the quest's giver stands inside
+-- a dungeon: its start on the dungeon's own map, or on any map the game calls a dungeon
+function ns.QuestStartsInside(id)
+  local m = ns.QuestStart(id)
+  m = ns.Num(m)
+  if not m then return false end
+  local inst = ns.QuestDungeon and ns.QuestDungeon(id)
+  local d = inst and ns.ATT_DUNGEONS and ns.ATT_DUNGEONS[inst]
+  if type(d) == "table" and ns.Num(d[2]) == m then return true end
+  local info = C_Map and C_Map.GetMapInfo and ns.Value(C_Map.GetMapInfo, m)
+  local dungeonType = (Enum and Enum.UIMapType and Enum.UIMapType.Dungeon) or 4
+  return type(info) == "table" and ns.Num(info.mapType) == dungeonType or false
+end
+
 -- Your quests of a dungeon: entries (QuestEntry) and how many are done.
 local function DungeonEntries(inst)
   local entries, done = {}, 0
@@ -2092,6 +2106,8 @@ local function DungeonItems()
       local todo = ns.QuestTodo(e.questID)
       if e.group == "log" then
         it.sub = Colorize(L["In your log"], "warning") .. (todo and ("  ·  " .. todo) or "")
+      elseif ns.QuestStartsInside(e.questID) then -- (06.11.2026) the giver waits inside: no zone to walk to
+        it.sub = Colorize(L["Starts inside the dungeon"], "accent")
       else
         it.sub = WithZone(QuestSubText(e) or todo, e.questID)
       end
@@ -2126,6 +2142,7 @@ local function DungeonItems()
       else
         it.sub = e.text or L["not yet"]
       end
+      if ns.QuestStartsInside(e.questID) then it.sub = it.sub .. "  ·  " .. Colorize(L["Starts inside the dungeon"], "accent") end
       items[#items + 1] = it
       local path = DungeonPath(e.questID)
       if path then items[#items + 1] = { kind = "dpath", h = 24, text = path, indent = 52 } end
@@ -2154,15 +2171,20 @@ function ns.QuestBookDungeonChoices()
   local groups = { fits = {}, later = {}, below = {}, done = {} }
   for _, inst in ipairs(DungeonInsts()) do
     local entries, done = DungeonEntries(inst)
-    local ready = 0
-    for _, e in ipairs(entries) do if e.group == "log" or e.group == "available" then ready = ready + 1 end end
+    local ready, inLog = 0, 0
+    for _, e in ipairs(entries) do
+      if e.group == "log" or e.group == "available" then ready = ready + 1 end
+      if e.group == "log" then inLog = inLog + 1 end
+    end
     local fit, n = ns.DungeonFit(inst, player)
     local allDone = #entries > 0 and done == #entries
     local key = allDone and "done" or fit or "later"
     local lo = ns.DungeonLevelRange(inst)
     local sub = L["%d of %d quests done"]:format(done, #entries)
     if fit == "later" and not allDone then sub = Colorize(LevelsToGo(n), "critical") .. "  ·  " .. sub
-    elseif ready > 0 then sub = sub .. "  ·  " .. L["%d ready"]:format(ready) end
+    elseif ready > inLog then sub = sub .. "  ·  " .. L["%d ready"]:format(ready - inLog) end
+    -- (06.11.2026, Daniel: "sollte sichtbar in der Übersicht sein, dass ich die schon im Questlog habe") in yellow
+    if inLog > 0 then sub = sub .. "  ·  " .. Colorize(L["%d in your log"]:format(inLog), "warning") end
     local quiet = key == "below" or key == "done"
     table.insert(groups[key], { kind = "dpick", h = 40, inst = inst, text = ns.DungeonName(inst), minL = lo, ready = ready,
       fitText = RangeOf(inst), fitColor = quiet and "textHint" or (fit == "later" and "critical" or "good"), selected = inst == sel,
@@ -2926,8 +2948,14 @@ function ns.QuestBookDetail(id)
   giver = giver or (learned and learned.start and learned.start.npc) or (qt0 and qt0.s)
   local m, x, y = ns.QuestStart(id)
   local start = {}
-  if giver then start[#start + 1] = { giver, "textPrimary" } end
-  if m then start[#start + 1] = { Where(m, x, y), "textSecondary" } end
+  -- (06.11.2026, Daniel: "den Questgeber (wenn außerhalb) dem namen anklicken ... auf der zonenmap angezeigt") the
+  -- giver's name and place take a click: the zone map opens with the giver marked (and the arrow to it)
+  local inside = m and ns.QuestStartsInside(id)
+  local show = (m and x and not inside) and function() ns.ShowQuestGiver(id) end or nil
+  local tip = show and { giver or L["Quest giver"], { L["Click: show on the zone map"] } } or nil
+  if giver then start[#start + 1] = { giver, show and "accent" or "textPrimary", onClick = show, tip = tip } end
+  if m then start[#start + 1] = { Where(m, x, y), "textSecondary", onClick = show, tip = tip } end
+  if inside then start[#start + 1] = { L["Starts inside the dungeon"], "accent" } end
   -- (1.3.5) from which level it can be taken (the data, or the lowest level it was offered at)
   local minLv = ns.QuestMinLevel(id)
   local offered = learned and ns.Num(learned.offeredAt)
@@ -2967,8 +2995,16 @@ function ns.QuestBookDetail(id)
   if tm then turnin[#turnin + 1] = { Where(tm, tx and tx * 100, ty and ty * 100), "textSecondary" } end
   Section(L["Turn in"], turnin)
   -- (1.3.5) rewards, as the game tells them for a quest in the log
+  -- (06.11.2026, Daniel: "wie bei Geardon ... mit mouse hover und dem richtigen blizzard tooltip") each item its own
+  -- line with symbol (quality edge), name in its quality colour and the game's tooltip; the choices under "Choose one"
   local rewards = {}
-  for _, r in ipairs(ns.QuestRewardLines and ns.QuestRewardLines(id) or {}) do rewards[#rewards + 1] = { r, "textPrimary" } end
+  local parts = ns.QuestRewardParts and ns.QuestRewardParts(id) or { lines = {}, items = {}, choices = {} }
+  for _, r in ipairs(parts.lines) do rewards[#rewards + 1] = { r, "textPrimary" } end
+  for _, it in ipairs(parts.items) do rewards[#rewards + 1] = { it.name, "textPrimary", item = it } end
+  if #parts.choices > 0 then
+    rewards[#rewards + 1] = { L["Choose one"], "textSecondary" }
+    for _, it in ipairs(parts.choices) do rewards[#rewards + 1] = { it.name, "textPrimary", item = it } end
+  end
   Section(L["Rewards"], rewards)
   -- chain: (30.10.2026, L3Hummus) a diagram (Chain.lua) where the quest has a chain of 2 parts or more
   local chain = {}
@@ -3065,6 +3101,24 @@ function UI.DetailInner() return math.max(40, (tonumber(P.detail and P.detail._w
 -- a line of a section: "Kobold Vermin slain: 3/8" as a progress bar, a long sentence as a paragraph
 function UI.DetailLine(d, line)
   local text, color = tostring(line[1] or ""), UI.Tone(line[2]) or "body"
+  -- (06.11.2026) a reward item: symbol, name in its quality colour, the game's tooltip, shift-click links it
+  local it = line.item
+  if type(it) == "table" and d.Item then
+    local qc = it.quality and Kit and Kit.QualityColor and Kit.QualityColor(it.quality) or nil
+    local right = (it.count and it.count > 1) and ("x" .. it.count) or nil
+    local _, ic = d:Item(it.itemID or it.name, text, qc or color, right)
+    if ic then
+      if it.icon then pcall(ic.tex.SetTexture, ic.tex, it.icon) end
+      if it.quality and ic.bd and ic.bd.SetColor and qc then ic.bd:SetColor(qc) end
+      ic.extraTip = it.upgrade and { "|cff1eff00" .. L["upgrade"] .. "|r" } or nil
+    end
+    return
+  end
+  -- (06.11.2026) a line that takes a click (the quest giver: shown on the zone map)
+  if type(line.onClick) == "function" then
+    d:Line(text, color, nil, nil, { onClick = line.onClick, tooltip = line.tip })
+    return
+  end
   local name, have, need = text:match("^(.-):%s*(%d+)%s*/%s*(%d+)$")
   if name and tonumber(need) and tonumber(need) > 0 then
     have, need = tonumber(have), tonumber(need)

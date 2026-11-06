@@ -1,5 +1,12 @@
 # Changes
 
+## 1.5.4
+- **Quest book rewards:** each reward item is its own line with its icon and quality colour; hover shows the game's item tooltip, Shift-click links it. Choices are listed under "Choose one".
+- **Dungeon quests in the quest book:** each dungeon card shows how many of its quests are already in your log; quests whose giver stands inside the dungeon say "Starts inside the dungeon"; click the quest giver's name to see them on the zone map.
+- **OpenMap:** on OpenMap's map, Questdon no longer adds a second icon for dungeon entrances (OpenMap shows them itself).
+- **Quest list gone?** `/qd list reset` turns the quest list on, puts it back in place at full size and hides Blizzard's tracker again; `/qd diag` shows the quest list's state.
+- **Fixed:** with surnames hidden in WoW Forever's options, whispers between Questdon users went to the wrong name.
+
 ## 1.5.3
 - **Fixed:** selling junk and repairing at a merchant work again on WoW Forever (broken in 1.5.2).
 - **Show the way with: None:** no compass in the quest list and no arrow window.

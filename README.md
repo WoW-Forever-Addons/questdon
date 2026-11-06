@@ -1,4 +1,4 @@
-# Questdon 1.5.3 (WoW Forever und WoW Classic Era)
+# Questdon 1.5.4 (WoW Forever und WoW Classic Era)
 
 Quest- und Komforthilfe für World of Warcraft: Forever (Client "Camelot", Interface 16001).
 Questdon bringt eine eigene Questdatenbank mit (umgewandelt aus All The Things) und ergänzt Questie (Kartenmarkierungen), ersetzt es nicht. Questie wird nicht gebraucht.

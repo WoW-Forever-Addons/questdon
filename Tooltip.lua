@@ -272,34 +272,52 @@ local function Marked(name, itemID)
   return name
 end
 
-function ns.QuestRewardLines(questID)
-  local lines = {}
-  if not ns.InQuestLog(questID) then return lines end
+-- (06.11.2026, Daniel: the rewards in the quest book "wie bei Geardon, mit mouse hover und dem richtigen blizzard
+-- tooltip") the rewards as parts: lines (XP, money), items and choices one by one { itemID, name, count, quality, icon,
+-- upgrade }; ns.QuestRewardLines joins them into text lines as before (tooltips, map pins, the quest list)
+function ns.QuestRewardParts(questID)
+  local parts = { lines = {}, items = {}, choices = {} }
+  if not ns.InQuestLog(questID) then return parts end
+  local lines = parts.lines
   local xp = ns.Num(ns.Value(GetQuestLogRewardXP, questID))
   if xp and xp > 0 then
     lines[#lines + 1] = L["%s XP"]:format(BreakUpLargeNumbers and BreakUpLargeNumbers(xp) or xp)
   end
   local money = ns.Num(ns.Value(GetQuestLogRewardMoney, questID))
   if money and money > 0 then lines[#lines + 1] = ns.Money(money) end
-  local items = {}
+  local function Part(ok, name, tex, count, quality, _, itemID) -- pcall of Get...Info: name, texture, count, quality, isUsable, itemID
+    if not (ok and type(name) == "string" and ns.Usable(name)) then return nil end
+    itemID = ns.Num(itemID)
+    return { itemID = itemID, name = name, count = ns.Num(count), quality = ns.Num(quality),
+      icon = ns.Usable(tex) and tex or nil, upgrade = itemID and ns.GeardonUpgrade(itemID) and true or nil }
+  end
   if GetQuestLogRewardInfo then
     for i = 1, math.min(ns.Num(ns.Value(GetNumQuestLogRewards, questID)) or 0, 10) do
-      local ok, name, _, count, _, _, itemID = pcall(GetQuestLogRewardInfo, i, questID)
-      if ok and type(name) == "string" and ns.Usable(name) then
-        count = ns.Num(count)
-        name = Marked(name, ns.Num(itemID))
-        items[#items + 1] = (count and count > 1) and ("%dx %s"):format(count, name) or name
-      end
+      local it = Part(pcall(GetQuestLogRewardInfo, i, questID))
+      if it then parts.items[#parts.items + 1] = it end
     end
+  end
+  if GetQuestLogChoiceInfo then
+    for i = 1, math.min(ns.Num(ns.Value(GetNumQuestLogChoices, questID, true)) or 0, 10) do
+      local it = Part(pcall(GetQuestLogChoiceInfo, i, questID))
+      if it then parts.choices[#parts.choices + 1] = it end
+    end
+  end
+  return parts
+end
+
+function ns.QuestRewardLines(questID)
+  local parts = ns.QuestRewardParts(questID)
+  local lines = {}
+  for _, l in ipairs(parts.lines) do lines[#lines + 1] = l end
+  local items = {}
+  for _, it in ipairs(parts.items) do
+    local name = Marked(it.name, it.itemID)
+    items[#items + 1] = (it.count and it.count > 1) and ("%dx %s"):format(it.count, name) or name
   end
   if #items > 0 then lines[#lines + 1] = table.concat(items, ", ") end
   local choices = {}
-  if GetQuestLogChoiceInfo then
-    for i = 1, math.min(ns.Num(ns.Value(GetNumQuestLogChoices, questID, true)) or 0, 10) do
-      local ok, name, _, _, _, _, itemID = pcall(GetQuestLogChoiceInfo, i, questID)
-      if ok and type(name) == "string" and ns.Usable(name) then choices[#choices + 1] = Marked(name, ns.Num(itemID)) end
-    end
-  end
+  for _, it in ipairs(parts.choices) do choices[#choices + 1] = Marked(it.name, it.itemID) end
   if #choices > 0 then lines[#lines + 1] = L["Choice: %s"]:format(table.concat(choices, " / ")) end
   return lines
 end

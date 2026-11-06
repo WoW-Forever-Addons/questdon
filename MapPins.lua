@@ -107,6 +107,15 @@ function BuildPins(mapID)
   end
   return pins
 end
+-- (06.11.2026) OpenMap's stitched world map is up: it shows the dungeon entrances itself (OpenMapAPI.IsStitched)
+local lastOpenMap = false
+function ns.OpenMapEntrances()
+  local api = rawget(_G, "OpenMapAPI")
+  if type(api) ~= "table" or type(api.IsStitched) ~= "function" then return false end
+  local ok, on = pcall(api.IsStitched)
+  return ok and on == true
+end
+
 function BuildBase(mapID)
   local pins = {}
   if not mapID then return pins end
@@ -1422,6 +1431,7 @@ function Setup()
     local pins, sig, pre = PinsOf(mapID)
     curMap, curPins, curSig = mapID, pins, sig
     if pre or not lastSig then return false end
+    if ns.OpenMapEntrances() ~= lastOpenMap then return false end -- (06.11.2026) OpenMap's stitched map came or went
     local scale, canvas = Scales(map)
     if ns.ClusterBucket(scale) ~= clusterBucket or ns.ClusterBucket(canvas) ~= objBucket then return false end
     curSig = ns.PinsSignature(mapID, pins)
@@ -1465,9 +1475,13 @@ function Setup()
     end
     for _, area in ipairs(areas or {}) do prov:Acquire(AREA_TEMPLATE, area) end
     ns.QueueClearGamePOIs() -- (17.10.) option hideGamePOIs
+    -- (06.11.2026, Daniel: "Wenn dungeon Eingänge durch z.b. openmaps schon da sind. Keine doppelten machen") OpenMap
+    -- draws every dungeon entrance on its stitched map (its Map/Dungeons.lua, always on): ours stay away there; the
+    -- marked entrance (kind "entrance") and the minimap's stay
+    lastOpenMap = ns.OpenMapEntrances()
     for _, pin in ipairs(display) do
       -- (1.3.5) dungeon entrances only with their option (the minimap has its own)
-      if not (pin.kind == "dungeon" and ns.db.dungeonPins == false) then
+      if not (pin.kind == "dungeon" and (ns.db.dungeonPins == false or lastOpenMap)) then
         prov:Acquire(pin.kind == "objective" and OBJECTIVE_TEMPLATE or QUEST_TEMPLATE, pin)
       end
     end

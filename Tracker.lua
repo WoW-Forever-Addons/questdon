@@ -1503,6 +1503,22 @@ local function Dock()
 end
 ns.TrackerDock = Dock
 function ns.ResetTrackerPosition() if panel then panel:ResetPosition() Dock() end end
+-- (06.11.2026, CurseForge brandonoboikovitz: the list gone, /qd list did not bring it back) /qd list reset: on, shown,
+-- not folded, its place, size and lines as new, Blizzard's tracker hidden again
+function ns.RescueTracker()
+  local db = DB()
+  db.tracker, db.trackerShown, db.trackerHideBlizz, db.trackerLines = true, true, true, nil
+  db.trackerScale = nil
+  if panel then
+    panel:ResetPosition()
+    if panel.SetCollapsed then panel:SetCollapsed(false) end
+    if panel.ApplySettings then panel:ApplySettings() end
+    Dock()
+  end
+  ns.SyncArrowWithList()
+  ns.UpdateTracker(true)
+  ns.Print(L["Quest list reset: on, at its place, full size."])
+end
 function ns.TrackerDocked() return docked end -- (tests)
 
 function ns.UpdateTracker(force)
