@@ -349,22 +349,20 @@ end
 local box
 function ns.WayBox() return box end
 function ns.OpenWayBox()
-  local Kit = LibStub("DonCore-1.0"):Get("Kit", 3)
-  if not box then
-    box = Kit.Dialog("QuestdonWayBox", { width = 520, height = 340, onLayout = function(self, w, h)
-      if not self.hint then return end
-      self.hint:ClearAllPoints()
-      self.hint:SetPoint("TOPLEFT", self.body, "TOPLEFT", 0, 0)
-      if self.hint.SetWidth then self.hint:SetWidth(w) end
-      self.text:ClearAllPoints()
-      self.text:SetPoint("TOPLEFT", self.body, "TOPLEFT", 0, -22)
-      self.text:Layout(w, math.max(40, h - 22))
-    end })
-    box.hint = box.body:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    if box.hint.SetJustifyH then box.hint:SetJustifyH("LEFT") end
-    box.text = Kit.TextBox(box.body, { maxLetters = 20000, placeholder = "/way #1413 62.7, 36.3 Text" })
-    if type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "QuestdonWayBox" end
+  -- (16.11.2026, Blizzard look as in Luredon 1.7.0) with the option blizzLook the game's own dialog (ns.LookKit); a box
+  -- that fails to build that way is built with the Kit
+  local Kit, blizz = LibStub("DonCore-1.0"):Get("Kit", 3), false
+  if ns.LookKit then Kit, blizz = ns.LookKit() end
+  if not box and blizz then
+    local ok, err = pcall(ns.BuildWayBox, Kit, "QuestdonWayBoxBlizz")
+    if not ok then
+      if box and box.Hide then pcall(box.Hide, box) end
+      box = nil
+      if ns.RecordError then ns.RecordError("way box blizz look", err) end
+      Kit = LibStub("DonCore-1.0"):Get("Kit", 3)
+    end
   end
+  if not box then ns.BuildWayBox(Kit, "QuestdonWayBox") end
   box:SetTitle(ns.Style.Wordmark("Quest", "don") .. ": " .. L["Waypoints"], nil)
   box.hint:SetText(L["One waypoint per line: [zone or #map] x y [text]"])
   box:SetButtons({
@@ -378,6 +376,27 @@ function ns.OpenWayBox()
   box:Show()
   box:Layout()
   if box.text.edit.SetFocus then box.text.edit:SetFocus() end
+  return box
+end
+-- the option blizzLook changed: a closed box is built again in the other look when it opens next
+function ns.WayBoxReset()
+  if box and not box:IsShown() then box = nil end
+end
+-- builds the box with the blocks of Kit (DonCore's Kit or the game's look) under the frame name given
+function ns.BuildWayBox(Kit, name)
+  box = Kit.Dialog(name, { width = 520, height = 340, onLayout = function(self, w, h)
+    if not self.hint then return end
+    self.hint:ClearAllPoints()
+    self.hint:SetPoint("TOPLEFT", self.body, "TOPLEFT", 0, 0)
+    if self.hint.SetWidth then self.hint:SetWidth(w) end
+    self.text:ClearAllPoints()
+    self.text:SetPoint("TOPLEFT", self.body, "TOPLEFT", 0, -22)
+    self.text:Layout(w, math.max(40, h - 22))
+  end })
+  box.hint = box.body:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  if box.hint.SetJustifyH then box.hint:SetJustifyH("LEFT") end
+  box.text = Kit.TextBox(box.body, { maxLetters = 20000, placeholder = "/way #1413 62.7, 36.3 Text" })
+  if not box.blizz and type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "QuestdonWayBox" end
   return box
 end
 

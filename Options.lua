@@ -124,10 +124,19 @@ local PAGES = {
     { key = "trackerScale", kind = "slider", name = "Text size", tip = "Size of the quest list and its text. Ctrl + mouse wheel over the title bar does it too.", min = SMIN, max = SMAX, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then f:SetPanelScale(ns.db.trackerScale, true) end if ns.UpdateTracker then ns.UpdateTracker(true) end end },
     -- (12.11.2026, Daniel: the list as an option "mehr wie blizzards eigene") one choice instead of the switch "No background
     -- and frame": Don (trackerPlain false), Don without background (trackerPlain), like the game (trackerPlain and trackerGame)
-    { key = "trackerLook", kind = "choice", name = "Look of the quest list", choices = { "Don", "Don, no background", "Like the game" }, covers = { "trackerPlain", "trackerGame" }, parent = "tracker",
-      tip = "Don: Questdon's own window with background and frame. Don, no background: the same without background, frame and the quest card's gold box. Like the game: reads like the game's own quest list, plain text in the game's colours with the objectives under each quest. Click to switch.",
-      get = function() return ns.TrackerLook and ns.TrackerLook() or 1 end,
-      set = function(i) if ns.SetTrackerLook then ns.SetTrackerLook(i) end end },
+    -- (18.11.2026) shown in the order of ns.LOOK_ORDER: the choice's position is not the saved number
+    { key = "trackerLook", kind = "choice", name = "Look of the quest list", choices = { "Questdon", "Questdon, transparent", "Blizzard", "Blizzard, transparent" }, covers = { "trackerPlain", "trackerGame" }, parent = "tracker",
+      tip = "Questdon: Questdon's own window with background and frame. Blizzard: reads like the game's own quest list, plain text in the game's colours with the objectives under each quest, on the game's dark box with its frame. Transparent: the same without background and frame. Click to switch.",
+      get = function()
+        local cur = ns.TrackerLook and ns.TrackerLook() or 1
+        for pos, n in ipairs(ns.LOOK_ORDER or {}) do if n == cur then return pos end end
+        return 1
+      end,
+      set = function(pos) if ns.SetTrackerLook then ns.SetTrackerLook(ns.LOOK_ORDER and ns.LOOK_ORDER[pos] or pos) end end,
+      -- (17.11.2026, DonCore Settings 5) in the game's settings a dropdown on db.trackerLook
+      -- the value is the saved number, the list in the shown order
+      options = function() local out = {} for pos, n in ipairs(ns.LOOK_ORDER) do local c = ns.LOOK_NAMES[n] out[pos] = { n, L[c] or c } end return out end,
+      onChange = function(v) if ns.SetTrackerLook then ns.SetTrackerLook(v) end end },
     { header = "Direction arrow" },
     { key = "arrow", name = "Show window", status = GuideStatus, tip = "Arrow with distance to the quest you picked in the quest list or track in the quest log (nearest objective spot, or the turn-in when it is finished). Left click a Questdon map pin to point the arrow there. Drag to move, right click to drop a clicked target. /qd arrow toggles it.", onChange = function(...) ns.db.arrowAuto = nil if ns.db.arrow then ns.db.noWay = nil end ArrowLook(...) end }, -- (review 4) your choice
     { key = "arrowPlain", name = "No background and frame", tip = "Hides the plate behind the arrow's text and its frame: only the arrow and the writing stay. The background opacity below then does nothing.", parent = "arrow", onChange = ArrowLook },
@@ -141,6 +150,13 @@ local PAGES = {
     { kind = "button", name = "Reset position", button = "Reset", tip = "Puts the XP bar back to its default place.", onClick = function() if ns.ResetXPBarPosition then ns.ResetXPBarPosition() end end },
     { key = "xpBarText", name = "Text under the bar", tip = "Level, percent, quest XP, rested XP, XP per hour and time to the next level as text.", parent = "xpBar", onChange = UpdateXPBar },
     { key = "xpBarWidth", kind = "slider", name = "Width", tip = "Width of the XP bar.", min = 200, max = 1600, step = 10, format = Pixels, parent = "xpBar", onChange = UpdateXPBar },
+    -- (16.11.2026, Daniel: "Sollte Standart sein", Blizzard look for all Don addons as in Luredon 1.7.0) the quest book
+    -- and the dialogs from the game's own templates (DonCore Blizz); the quest list keeps its own look choice
+    { header = "Windows" },
+    { key = "blizzLook", name = "Windows in the game's look", tip = "Questdon's windows look like the game's own: the quest book and the dialogs with the game's frame, tabs, buttons and lists. The quest list keeps its own look (above). The options then open in the game's settings (Options > AddOns > Questdon) after a /reload.", onChange = function()
+      if ns.QuestBookReset then ns.QuestBookReset() end
+      if ns.DialogsReset then ns.DialogsReset() end
+    end },
   } },
   { title = "Signals", tip = "Sound and message when something is done, and the nearest quest (/qd next).", items = {
     { header = "When something is done" },
@@ -326,10 +342,25 @@ for _, t in ipairs(TOOLS) do t[3] = ns.Guard("tool", t[3]) end
 -- (01.11.2026, STYLEKIT_PLAN.md "Schritt 3") that page is DonCore's (Settings minor 2): status plus "Options / Open",
 -- the same for every Don addon. ownWindow: Questdon registers its tabs itself (OptionsWindow.lua), Settings adds none.
 ns.OPTION_PAGES, ns.OPTION_TOOLS, ns.OptionStatus = PAGES, TOOLS, Status
+-- (16.11.2026, DonCore Settings 3) with the option blizzLook the options are the game's own settings pages, built in
+-- full at login (only where the client has the templates: without them the windows are Don's and so are the options)
+local fullPages = false
 local function Build()
-  category = ns.BuildSettings({ name = "Questdon", status = Status, pages = {}, ownWindow = true })
+  local spec = { name = "Questdon", status = Status, pages = {}, ownWindow = true }
+  if ns.db and ns.db.blizzLook and ns.LookKit and select(2, ns.LookKit()) then
+    spec.pages, spec.tools, spec.fullPages, fullPages = PAGES, TOOLS, true, true
+  end
+  category = ns.BuildSettings(spec)
   ns.settingsCategory = category ~= nil
 end
+-- true when the game's settings were opened at Questdon (option blizzLook, pages built in full at login, not in combat)
+function ns.OpenGameOptions()
+  if not (ns.db and ns.db.blizzLook and fullPages and category and Settings and Settings.OpenToCategory) then return false end
+  if InCombatLockdown() then ns.Print(L["Options cannot be opened in combat."]) return true end
+  Settings.OpenToCategory(category:GetID())
+  return true
+end
+function ns.OptionsLook() return fullPages and "game settings" or "don window" end
 
 -- (17.10.) an option changed outside the settings (the setup window): its own onChange as if clicked there
 function ns.OptionChanged(key)
@@ -342,6 +373,7 @@ function ns.OptionChanged(key)
 end
 
 function ns.OpenOptions(tab)
+  if ns.OpenGameOptions and ns.OpenGameOptions() then return end -- (16.11.2026) the game's look: the game's settings
   if ns.OpenOptionsWindow then ns.OpenOptionsWindow(tab) else ns.Print(ns.HELP) end
 end
 

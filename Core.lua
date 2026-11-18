@@ -6,6 +6,24 @@ ns.Style = LibStub("DonCore-1.0"):Get("Style", 6):ForAddon() -- (02.11.2026) min
 LibStub("DonCore-1.0"):Get("Settings", 1):Attach(addonName, ns)
 ns.HOST = addonName -- (L3) the addon the engine of DonData serves (ns.Version, exports)
 
+-- (16.11.2026, Daniel: "Sollte Standart sein", Blizzard look for all Don addons as in Luredon 1.7.0) Questdon's windows
+-- (quest book, dialogs, text window): DonCore's Kit, or with the option blizzLook (on by default) the same blocks from
+-- the game's own templates (DonCore module Blizz). Second value true when it is the game's; without the client's
+-- templates (Classic Era, an older client) quietly the Kit. The quest list keeps its own look (trackerLook).
+if type(ns.defaults) == "table" and ns.defaults.blizzLook == nil then ns.defaults.blizzLook = true end
+-- (17.11.2026) the look of the quest list as one number for the dropdown in the game's settings (Tracker.lua
+-- ns.TrackerLook; set from trackerPlain/trackerGame/trackerGameBox at every start)
+if type(ns.defaults) == "table" and ns.defaults.trackerLook == nil then ns.defaults.trackerLook = 1 end
+function ns.LookKit()
+  local Core = LibStub("DonCore-1.0")
+  local Kit = Core:Get("Kit", 16)
+  if not (ns.db and ns.db.blizzLook) then return Kit, false end
+  local Bz = Core:Get("Blizz", 5)
+  local kit = Bz and Bz.Kit()
+  if kit then return kit, true, Bz end
+  return Kit, false
+end
+
 -- (05.11.2026, as Guildon b8dc89d9, Daniel's /gn names on WoW Forever) Forever has surnames
 -- (C_PlayerInfo.ShouldDisplaySurname() true): UnitName and UnitFullName give the surname where other clients give the
 -- realm ("Mae", "Wipeborn"); the roster and the senders of addon messages say "Ratloff Ashbloom" (no realm), and a
@@ -75,6 +93,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if QuestdonDB == nil and type(QuestKompassDB) == "table" then QuestdonDB = QuestKompassDB end -- data from QuestKompass
     QuestKompassDB = nil
     QuestdonDB = QuestdonDB or {}
+    -- (18.11.2026) a new install: nothing saved yet (the look of the quest list starts as "Blizzard, transparent")
+    local freshInstall = next(QuestdonDB) == nil
     -- (30.10.2026, DONCORE_PLAN.md "DonData Lese-Engine" L2) what Questdon learns is kept in DonData (DonDataDB, Store.lua):
     -- once taken over from QuestdonDB; ns.db is a view, learned keys there, the settings here. Without DonData as before.
     local learnKeys = type(ns.LEARN_KEYS) == "table" and ns.StoreView and ns.MoveLearned and ns.LEARN_KEYS or nil
@@ -125,6 +145,12 @@ frame:SetScript("OnEvent", function(_, event, ...)
       if not QuestdonDB.plainV1311 then
         QuestdonDB.trackerPlain, QuestdonDB.arrowPlain, QuestdonDB.plainV1311 = true, true, true
       end
+      -- (18.11.2026, Daniel for the UI launch: "Blizzard transparent" ab Werk fuer ganz neue Spieler) only a new install;
+      -- who has settings keeps their look
+      if freshInstall then QuestdonDB.trackerPlain, QuestdonDB.trackerGame = true, true end
+      -- (17.11.2026) the dropdown's number follows the switches the look really uses
+      QuestdonDB.trackerLook = QuestdonDB.trackerPlain == true and (QuestdonDB.trackerGame == true
+        and (QuestdonDB.trackerGameBox == true and 4 or 3) or 2) or 1
       -- (04.11.2026, Era-Test, Daniel: "questdon die einstellungen für die größe als standart") pin sizes 60 % on the
       -- world map and 85 % on the minimap by default; the old default 100 % was written into the saved settings at the
       -- first start, so once: who still has exactly 100 % gets the new size, a size moved on the slider stays

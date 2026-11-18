@@ -418,7 +418,17 @@ end
 -- (1.17) Difficulty colour for a quest level against the player level, own
 -- rules (no Blizzard helper): red +5, orange +3, yellow +-2, green inside the
 -- green range, grey below.
+-- (18.11.2026, player's picture: Blizzard's list green, ours grey) for your own level the game's colour decides
+-- (DonCore Kit.QuestDifficulty asks GetQuestDifficultyColor); the codes stay ours, grey stays |cff808080.
+local LEVEL_CODE = { impossible = "|cffff2020", verydifficult = "|cffff8040", difficult = "|cffffff00",
+  standard = "|cff40c040", trivial = "|cff808080" }
 function ns.LevelColor(level, player)
+  if player == nil and ns.Num(level) and type(GetQuestDifficultyColor) == "function" then
+    local Kit = LibStub and LibStub("DonCore-1.0", true)
+    Kit = Kit and Kit.Get and Kit:Get("Kit", 28)
+    local code = Kit and LEVEL_CODE[Kit.QuestDifficulty(level)]
+    if code then return code end
+  end
   player = player or ns.PlayerLevel()
   if not (ns.Num(level) and ns.Num(player)) then return "|cffffffff" end
   local d = level - player
@@ -1108,7 +1118,9 @@ local function ScaleBy(self, base)
   local s = self.GetScale and self:GetScale() or 1
   local m = ns.MapPinMult()
   local k = type(self.qdPin) == "table" and self.qdPin.kind
-  if k == "available" or k == "turnin" then m = m * ns.QUEST_MARK_FACTOR end
+  local mark = k == "available" or k == "turnin"
+  if mark then m = m * ns.QUEST_MARK_FACTOR end
+  self.qdMarkScaled = mark -- (15.11.2026) what this frame was last sized for (QuestPin:OnAcquired)
   self:SetScale((tonumber(s) or 1) * m)
   -- (02.11.2026, Daniel's video: with the pin size at 75 % all pins jumped to the top left once the map rescaled them)
   -- the map places a pin for its scale (the offset divided by it); with ours on top it is placed again for the final one
@@ -1171,7 +1183,12 @@ function Setup()
   function QuestPin:OnAcquired(pin)
     self.qdPin = nil
     Acquire(self, pin)
-    if self.ApplyCurrentScale and self.GetMap and self:GetMap() then pcall(self.ApplyCurrentScale, self) end
+    -- (15.11.2026, CurseForge Neidhardt: "when I open my map, there's a micro-freeze") only when the frame was last sized
+    -- for the other kind (! and ? against the rest): before, every pin was sized and placed a second time on every rebuild
+    local k = type(pin) == "table" and pin.kind
+    if self.qdMarkScaled ~= (k == "available" or k == "turnin") and self.ApplyCurrentScale and self.GetMap and self:GetMap() then
+      pcall(self.ApplyCurrentScale, self)
+    end
   end
   function Acquire(self, pin)
     WayAnchor(self, false)

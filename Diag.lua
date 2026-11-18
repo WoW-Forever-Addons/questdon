@@ -257,6 +257,14 @@ function ns.BuildDiag()
       p.built and "built" or p.built == false and "chat" or "not built yet",
       Template("UIPanelScrollFrameTemplate"), Template("UIPanelCloseButton"))
   end)
+  -- (16.11.2026, Blizzard look as in Luredon 1.7.0) option blizzLook, which kit built the quest book (and why the Kit when
+  -- the option is on), the dialogs, where the options open
+  Probe(out, "book look", function()
+    local _, blizz = ns.LookKit and ns.LookKit()
+    return ("option %s, game's kit %s, quest book %s, dialogs %s, options %s"):format(tostring(ns.db.blizzLook),
+      blizz and "ready" or "no", tostring(ns.QuestBookLook and ns.QuestBookLook() or "?"),
+      tostring(ns.DialogLook and ns.DialogLook() or "?"), tostring(ns.OptionsLook and ns.OptionsLook() or "?"))
+  end)
   Probe(out, "style kit", function()
     local st = ns.Style or {}
     -- (29.10.2026) the old panel is gone: the quest list's look instead
@@ -281,11 +289,12 @@ function ns.BuildDiag()
         l and ("%.0f"):format(l) or "?", t and ("%.0f"):format(t) or "?", w and ("%.0f"):format(w) or "?",
         h and ("%.0f"):format(h) or "?", tostring(on), tostring(p.IsCollapsed and p:IsCollapsed() or false))
     end
-    return ("tracker %s, shown %s, compass %s, hide Blizzard's %s, lines %s, docked %s, guide %s, Blizzard's hidden %s; %s"):format(
+    return ("tracker %s, shown %s, compass %s, hide Blizzard's %s, lines %s, docked %s, guide %s, Blizzard's hidden %s (only its quests %s); %s"):format(
       tostring(db.tracker), tostring(db.trackerShown), tostring(db.trackerCompass), tostring(db.trackerHideBlizz),
       tostring(db.trackerLines) .. (ns.TrackerScreenCap and ns.TrackerScreenCap() and (" (screen " .. ns.TrackerScreenCap() .. ")") or ""),
       tostring(ns.TrackerDocked and ns.TrackerDocked()), tostring(ns.GuideActive and ns.GuideActive()),
-      tostring(ns.BlizzTrackerHidden and ns.BlizzTrackerHidden()), where)
+      tostring(ns.BlizzTrackerHidden and ns.BlizzTrackerHidden()),
+      tostring(ns.BlizzQuestPartsHidden and ns.BlizzQuestPartsHidden()), where)
   end)
   Probe(out, "Questie", function()
     if not ns.AddOnLoaded("Questie") then return "not loaded" end

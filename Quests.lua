@@ -211,16 +211,24 @@ OnNpc("GOSSIP_SHOW", function()
   if ns.IsPaused() or not C_GossipInfo then return end
   local db = ns.db
 
-  if ns.Active("autoTurnIn") and C_GossipInfo.GetActiveQuests then
+  -- (18.11.2026, Neidhardt on CurseForge: "if an NPC has both an available quest and a completed quest ready to be
+  -- turned in, the quest pickup prompt takes priority") complete also by the quest log (the NPC's list may not say so),
+  -- and while something is ready to hand in here, auto accept opens nothing (the turn-in is yours if auto turn-in is off)
+  local readyHere = false
+  if C_GossipInfo.GetActiveQuests then
     for _, q in ipairs(ns.Value(C_GossipInfo.GetActiveQuests) or {}) do
       -- (1.23) secret flags count as "no" (like everywhere else)
-      local id = type(q) == "table" and ns.True(q.isComplete) and ns.Num(q.questID)
-      if id and id > 0 and not Repeatable(id, q.repeatable) then
-        ns.NoteAutoStep("C_GossipInfo.SelectActiveQuest(id)") C_GossipInfo.SelectActiveQuest(id)
-        return
+      local id = type(q) == "table" and ns.Num(q.questID)
+      if id and id > 0 and (ns.True(q.isComplete) or ns.IsQuestComplete and ns.IsQuestComplete(id) == true) then
+        readyHere = true
+        if ns.Active("autoTurnIn") and not Repeatable(id, q.repeatable) then
+          ns.NoteAutoStep("C_GossipInfo.SelectActiveQuest(id)") C_GossipInfo.SelectActiveQuest(id)
+          return
+        end
       end
     end
   end
+  if readyHere then return end
 
   -- Quest log full: keep the dialog usable instead of opening a quest that cannot be taken.
   if ns.Active("autoAccept") and C_GossipInfo.GetAvailableQuests and not ns.QuestLogFull() then
@@ -244,15 +252,20 @@ OnNpc("QUEST_GREETING", function()
   if ns.IsPaused() then return end
   local db = ns.db
 
-  if ns.Active("autoTurnIn") then
-    for i = 1, ns.Num(ns.Value(GetNumActiveQuests)) or 0 do
-      local ok, _, isComplete = pcall(GetActiveTitle, i)
-      if ok and ns.True(isComplete) and not Repeatable(ns.Value(GetActiveQuestID, i)) then
+  -- (18.11.2026, Neidhardt) as in the gossip list: a turn-in ready here goes first, auto accept waits for it
+  local readyHere = false
+  for i = 1, ns.Num(ns.Value(GetNumActiveQuests)) or 0 do
+    local ok, _, isComplete = pcall(GetActiveTitle, i)
+    local id = ns.Num(ns.Value(GetActiveQuestID, i))
+    if ok and (ns.True(isComplete) or id and ns.IsQuestComplete and ns.IsQuestComplete(id) == true) then
+      readyHere = true
+      if ns.Active("autoTurnIn") and not Repeatable(id) then
         ns.NoteAutoStep("SelectActiveQuest(i)") SelectActiveQuest(i)
         return
       end
     end
   end
+  if readyHere then return end
 
   if ns.Active("autoAccept") and not ns.QuestLogFull() then
     for i = 1, ns.Num(ns.Value(GetNumAvailableQuests)) or 0 do

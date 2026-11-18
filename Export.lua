@@ -591,9 +591,18 @@ function ns.ShowText(heading, note, body)
   body = body or ""
   local K = Kit()
   local ok, d = false, nil
-  if K and K.ShowCopy then
-    ok, d = pcall(K.ShowCopy, ns.Style.Wordmark("Quest", "don") .. ": " .. tostring(heading or ""), note or "", body,
-      { selectAll = L["Select all"], close = L["Close"] })
+  local words = { selectAll = L["Select all"], close = L["Close"] }
+  local title = ns.Style.Wordmark("Quest", "don") .. ": " .. tostring(heading or "")
+  -- (16.11.2026, Blizzard look as in Luredon 1.7.0) with the option blizzLook the game's own copy dialog (ns.LookKit);
+  -- if that fails, the Kit's
+  local LK, blizz = nil, false
+  if ns.LookKit then LK, blizz = ns.LookKit() end
+  if blizz and LK and LK.ShowCopy then
+    ok, d = pcall(LK.ShowCopy, title, note or "", body, words)
+    if not (ok and d) and ns.RecordError then ns.RecordError("text window blizz look", d) end
+  end
+  if not (ok and d) and K and K.ShowCopy then
+    ok, d = pcall(K.ShowCopy, title, note or "", body, words)
   end
   if not (ok and d) then
     ns.windowParts.built = false
@@ -636,6 +645,16 @@ function ns.OpenExport(all)
         buttons[1] = { text = L["Marked as sent: %d entries."]:format(n), disabled = true }
         dd:SetButtons(buttons)
       end) },
+      -- (18.11.2026, a player did not find the address in the hint) the address marked in the box, to copy; again: the data
+      { text = L["Copy link"], tooltip = { L["Copy link"], ISSUE_URL }, onClick = function(dd)
+        local url = dd.text ~= ISSUE_URL
+        dd.text = url and ISSUE_URL or body
+        dd.edit:SetText(dd.text)
+        dd.edit:SetFocus()
+        dd.edit:HighlightText()
+        buttons[2].text = url and L["Back to the data"] or L["Copy link"]
+        dd:SetButtons(buttons)
+      end },
       { text = L["Select all"], onClick = SelectAll },
       { text = L["Close"], kind = "primary", onClick = Close },
     }

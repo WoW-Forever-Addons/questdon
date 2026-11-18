@@ -1,5 +1,20 @@
 # Changes
 
+## 1.8.0
+
+- **Pick the look of your quest list:** four looks with clear names, Questdon or Blizzard, each with or without background and frame, and a screenshot of each to choose from. Everybody is asked once after the update; new players get it as the second step of the start window, right after the look of the map. New installs start with Blizzard without background.
+- **Group progress in the quest list:** hover a quest in any tab of the quest list to see every party member's progress, and for members with Questdon whether you can share it with them (already done, requirements not met, quest log full). Contributed by Djulio (pull request on GitHub), thank you!
+- **Quest book and dialogs look like the game:** the quest book, the start window, the quest list look window, the `/way` window and the copy windows now use the game's own frames. Switch it in the Appearance tab of the options (on by default).
+- **Options in the game's settings:** the options are now pages in the game's own Options > AddOns, with a dropdown for the look of the quest list and a checkbox that shows whether "Only collect and share data" is on. The gear button and `/qd` open them there.
+- **Tracked recipes stay visible:** while you track a recipe, the game's tracker stays on screen for it and only its quest part is hidden, so the recipe list no longer disappears.
+- **Quest level colours like the game:** the colour of a quest's level (grey, green, yellow, orange, red) now comes from the game itself, so it matches the game's own quest list in the list, the tooltips, the map and the quest book.
+- **Copy link in the export window:** the link to share your data now has a button that puts it in the field to copy, and the hint above it no longer cuts the address off.
+- **Fixed:** an NPC with a quest to hand in and a new quest offered the new quest first; now the turn-in comes first and auto accept waits until nothing is left to hand in.
+- **Fixed:** the "ready to turn in" party line named a party member who had already finished as still open.
+- **Fixed:** an error when the options switched the game's map markers back before the world map had ever been opened.
+- **Fixed:** every quest pin on the world map was scaled and placed twice whenever the map was drawn; now once, so opening the map does half the work.
+- **Fixed in the quest book:** the zone filters ran out of the window, the dungeon cards showed a doubled "fits your level" and an empty "prerequisites" button for dungeons without quests for you, and long names on cards did not fit.
+
 ## 1.7.0
 
 - **Three looks for the quest list:** Don, Don without background and frame, or like the game's own quest list (one line per quest with its level, the objectives below, the distance on the right). A small window asks once which one you like; change it any time in the new **Appearance** tab of the options, which also holds the pin sizes, the arrow and the XP bar.

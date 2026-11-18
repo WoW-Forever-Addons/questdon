@@ -6,7 +6,7 @@ local _, ns = ...
 -- only from what the game itself can draw, no helper outside the game:
 --   1. the map of the zone around the place, a gold dot on the spot
 --   2. the character as a 3D model in the gear worn at the screenshot
---   3. the targeted creature as a model beside it
+--   3. the targeted creature as a model beside it (until 17.11.2026; now the whole zone and only the character)
 --   4. a tint by the time of day (morning, day, evening, night)
 -- Recorded with the screenshot (Journal.lua, ns.PostcardCapture):
 --   eq "slot:item,slot:item" (visible gear), tn creature ID of the target,
@@ -16,7 +16,9 @@ local _, ns = ...
 ---------------------------------------------------------------------------
 local SLOTS = { 1, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 17, 18, 19 }
 local HEAD, BACK = 1, 15
-local ZOOM = 2.6      -- the card shows 1 / ZOOM of the zone's width
+-- (17.11.2026, Daniel: "links die Karte oder NPC ist immer kacke"; picked "Ganze Zone, Figur rechts") the whole zone's
+-- width, sharp, instead of a blurred cut 2.6 times larger; no target creature any more
+local ZOOM = 1        -- the card shows 1 / ZOOM of the zone's width
 local DOT_X = 0.30    -- the place sits at 30 % of the card's width
 local MAX_EQ = 220    -- bytes of the gear string (14 slots fit easily)
 
@@ -242,6 +244,10 @@ function ns.PostcardShow(c, e, w, h)
     c.model:SetPoint("BOTTOMRIGHT", c, "BOTTOMRIGHT", -2, 2)
     c.model:SetWidth(math.floor(w * 0.34))
     c.model:Show()
+    -- (17.11.2026, Daniel: "das portraet blinkt auf, verschwindet kurz und kommt wieder") the journal draws its detail
+    -- again on every refresh: the same entry keeps its dressed model, only a new entry loads and dresses it anew
+    if c.dressedFor == e then return ns.PostcardTarget(c, e, w, h) end
+    c.dressedFor = e
     DressModel(c, e)
     -- the client loads the model a moment later: dress again when it is there
     if c.model.SetScript then
@@ -253,29 +259,24 @@ function ns.PostcardShow(c, e, w, h)
       end)
     end
   end
+  ns.PostcardTarget(c, e, w, h)
+end
+
+-- the targeted creature beside the player; the same creature is not loaded again (no blinking)
+function ns.PostcardTarget(c, e, w, h)
+  -- (17.11.2026) the target creature is no longer shown (Daniel: "links die Karte oder NPC ist immer kacke");
+  -- it stays recorded (e.tn) in the journal
   c.targetShown = false
   if c.target then
-    local tn = ns.Num(e.tn)
-    if tn then
-      c.target:ClearAllPoints()
-      c.target:SetPoint("BOTTOMRIGHT", c, "BOTTOMRIGHT", -math.floor(w * 0.26), 4)
-      c.target:SetSize(math.floor(w * 0.30), math.floor(h * 0.80))
-      c.target:Show()
-      Call(c.target, "SetCreature", tn)
-      Call(c.target, "SetFacing", 0.45)
-      c.target.creature = tn
-      c.targetShown = true
-    else
-      Call(c.target, "ClearModel")
-      c.target.creature = nil
-      c.target:Hide()
-    end
+    if c.target.creature then Call(c.target, "ClearModel") end
+    c.target.creature = nil
+    c.target:Hide()
   end
 end
 
 function ns.PostcardClear(c)
   if not c then return end
-  c.entry = nil
+  c.entry, c.dressedFor = nil, nil
   if c.model then Call(c.model, "ClearModel") c.model.items = nil end
   if c.target then Call(c.target, "ClearModel") c.target.creature = nil end
 end

@@ -165,9 +165,9 @@ function ns.PartySend(msg)
   if not channel or Locked() then return false end
   return Send(msg, channel)
 end
-function Send(msg, channel)
+function Send(msg, channel, target)
   if not (C_ChatInfo and type(C_ChatInfo.SendAddonMessage) == "function") then return false end
-  local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, channel)
+  local ok, result = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, channel, target)
   if not ok then return false end
   -- modern clients return a result code (0 = success), older ones nothing
   local code = ns.Num(result)
@@ -254,15 +254,146 @@ local function Changed()
     refreshQueued = false
     if ns.RefreshPinsIfChanged then ns.RefreshPinsIfChanged() end
     if ns.UpdateTracker then ns.UpdateTracker() end -- (12.11.2026) the group line of the quest card (signature: partyGen)
+    if ns.RefreshPartyQuestTooltip then ns.RefreshPartyQuestTooltip() end
   end)
 end
 
-local function OnMessage(_, prefix, text, _, sender)
+-- Optional sharing-status extension. Older Questdon clients ignore H2/J2.
+-- H2:<request>:<questID> asks the party; J2:<request>:<questID>:<state>
+-- replies by whisper. No history lists, names or quest text are transmitted.
+local SHARE_AGE, SHARE_WAIT = 10, 3
+local sharing = { pending = {}, replies = {}, inbound = {}, seen = {}, serial = math.random(1, 999999), lastQuery = -100 }
+
+local function ResetSharing()
+  wipe(sharing.pending) wipe(sharing.replies) wipe(sharing.inbound)
+  wipe(sharing.seen)
+  sharing.lastQuery = -100
+end
+
+local function ShareNumber(text)
+  local n = tonumber(text)
+  return n and n > 0 and n <= 2147483647 and n == math.floor(n) and n or nil
+end
+
+-- The recipient checks its own character. Data requirements are a preflight,
+-- not a promise that the server will accept a share.
+local function OwnSharingState(questID)
+  if ns.Value(ns.InQuestLog, questID) == true then
+    if ns.Value(ns.IsQuestFailed, questID) == true then return "F" end
+    return ns.Value(ns.IsQuestComplete, questID) == true and "R" or "A"
+  end
+  local ql = ns.QL or C_QuestLog
+  local done = ql and ns.Value(ql.IsQuestFlaggedCompleted, questID)
+  if done ~= true then done = ns.Value(ns.IsQuestDone, questID) end
+  if done == true then
+    return ns.Value(ns.IsRepeatableQuest, questID) == true and "P" or "C"
+  end
+  if ns.Value(ns.QuestLogFull) == true then return "L" end
+  if ns.Value(ns.QuestInData, questID) ~= true then return "U" end
+  local eligible = ns.Value(ns.DataCanTakeQuest, questID)
+  if eligible == true then return "E" end
+  if eligible == false then return "B" end
+  return "U"
+end
+
+local function RequestSharing(questID)
+  if not (Enabled() and registered and Channel()) or Locked() then return end
+  if not ShareNumber(questID) or ns.Value(ns.InQuestLog, questID) ~= true then return end
+  local now = Now()
+  local pending = sharing.pending[questID]
+  if pending and now >= pending.at and now - pending.at < SHARE_AGE then return end
+  local since = now - sharing.lastQuery
+  if since >= 0 and since < 1 then return end
+  local count = 0
+  for id, request in pairs(sharing.pending) do
+    if now < request.at or now - request.at >= SHARE_AGE or ns.Value(ns.InQuestLog, id) ~= true then
+      sharing.pending[id] = nil
+      for _, replies in pairs(sharing.replies) do replies[id] = nil end
+    else count = count + 1 end
+  end
+  if count >= MAX_QUESTS then return end
+  sharing.serial = sharing.serial % 2147483647 + 1
+  if Send(("H2:%d:%d"):format(sharing.serial, questID), Channel()) then
+    local request = { token = sharing.serial, at = now }
+    sharing.pending[questID] = request
+    sharing.lastQuery = now
+    ns.After(SHARE_WAIT, function()
+      if sharing.pending[questID] == request and Enabled() and Channel() then Changed() end
+    end)
+  end
+end
+
+local function OnSharingMessage(name, text, channel, sender)
+  if text:sub(1, 3) ~= "H2:" and text:sub(1, 3) ~= "J2:" then return false end
+  if not (registered and Channel()) or Locked() or #text > 80 then return true end
+  local token, id = text:match("^H2:(%d+):(%d+)$")
+  token, id = ShareNumber(token), ShareNumber(id)
+  local now = Now()
+  if token and id then
+    if channel ~= Channel() then return true end
+    local last = sharing.inbound[name]
+    if last and now >= last and now - last < 1 then return true end
+    sharing.inbound[name] = now
+    sharing.seen[name] = true
+    local state = OwnSharingState(id)
+    Send(("J2:%d:%d:%s"):format(token, id, state), "WHISPER", sender)
+    if state == "A" or state == "R" or state == "F" then force = true Queue(1) end
+    return true
+  end
+  local state
+  token, id, state = text:match("^J2:(%d+):(%d+):([ARFCEBLUP])$")
+  token, id = ShareNumber(token), ShareNumber(id)
+  local pending = id and sharing.pending[id]
+  if channel ~= "WHISPER" or not token or not pending or token ~= pending.token
+      or now < pending.at or now - pending.at >= SHARE_AGE or ns.Value(ns.InQuestLog, id) ~= true then return true end
+  sharing.replies[name] = sharing.replies[name] or {}
+  sharing.replies[name][id] = { state = state, at = now }
+  sharing.seen[name] = true
+  Changed()
+  return true
+end
+
+-- A silent client may have no addon, a disabled addon or blocked messages.
+-- Only show this after waiting, and never hide available native progress.
+local function MissingProgressText(name, questID)
+  if members[name] or sharing.seen[name] then return nil end
+  local pending, now = sharing.pending[questID], Now()
+  if pending and now >= pending.at and now - pending.at >= SHARE_WAIT then
+    return L["Questdon not detected or not responding; progress unavailable"]
+  end
+end
+
+local function SharingText(name, questID, pushable)
+  local reply = sharing.replies[name] and sharing.replies[name][questID]
+  local now = Now()
+  if reply and now >= reply.at and now - reply.at < SHARE_AGE then
+    local state = reply.state
+    if state == "C" then return L["Already completed"], "good" end
+    if state == "P" then return L["Completed before; repeatable"], "textHint" end
+    if state == "B" then return L["Quest requirements not met"], "critical" end
+    if state == "L" then return L["Quest log full"], "critical" end
+    if state == "R" then return L["Ready to turn in"], "good" end
+    if state == "F" then return L["failed"], "critical" end
+    if state == "A" then return L["in log"], "textPrimary" end
+    if state == "E" then
+      if pushable == false then return L["Quest cannot be shared"], "textHint" end
+      if pushable == true then return L["Can share; known requirements met"], "good" end
+      return L["Requirements met; shareability unknown"], "textHint"
+    end
+  end
+  local pending = sharing.pending[questID]
+  if not reply and pending and now >= pending.at and now - pending.at < SHARE_WAIT then
+    return L["Checking sharing eligibility..."], "textHint"
+  end
+end
+
+local function OnMessage(_, prefix, text, channel, sender)
   if prefix ~= PREFIX or not Enabled() then return end
   if type(text) ~= "string" or not ns.Usable(text) then return end
   local name = Short(sender)
   if not name or name == UnitFullName("player") then return end
   if not Roster()[name] then stats.dropped = stats.dropped + 1 return end
+  if OnSharingMessage(name, text, channel, sender) then return end
   if text == "R1" then
     stats.requests = stats.requests + 1
     force = true
@@ -354,6 +485,24 @@ local function GameLines(questID)
   if not ok or type(data) ~= "table" or not ns.Usable(data) or type(data.lines) ~= "table" then return nil end
   return data.lines
 end
+-- (15.11.2026, Daniel to "[Down the Coast] is ready to turn in. Still open: Valentinos 0/1" for a quest with two
+-- kill counters that Valentinos had finished too: "Er hatte die quest auch fertig, das irritiert") for a member who
+-- is done the game writes one line of text instead of the objectives (no counter, no tick). Such a line was read as
+-- an open objective "0/1". A line without numbers and without a tick is an objective only if it is one of the
+-- objectives of your own log; otherwise it is the member's state: done (or failed).
+local function Norm(text)
+  text = Plain(text)
+  text = text and text:gsub("^[%-%s]+", ""):lower()
+  return text ~= "" and text or nil
+end
+local function OwnObjectiveTexts(questID)
+  local set = {}
+  for _, o in ipairs(ns.ClientObjectives and ns.ClientObjectives(questID) or {}) do
+    local t = type(o) == "table" and Norm(o.text)
+    if t then set[t] = true end
+  end
+  return set
+end
 local function GameProgress(questID)
   local now = Now()
   local c = gameCache[questID]
@@ -361,6 +510,7 @@ local function GameProgress(questID)
   local list = {}
   local lines = GameLines(questID)
   if lines then
+    local own
     local T = type(Enum) == "table" and Enum.TooltipDataLineType or nil
     local PLAYER, OBJECTIVE = T and T.QuestPlayer or 18, T and T.QuestObjective or 8
     local cur
@@ -374,15 +524,27 @@ local function GameProgress(questID)
           local f, r = (text or ""):match("(%d+)%s*/%s*(%d+)")
           f, r = tonumber(f), tonumber(r)
           local done = line.completed == true
-          if not (f and r and r > 0) then f, r = done and 1 or 0, 1 end
-          if done and f < r then f = r end
-          cur.objectives[#cur.objectives + 1] = { math.min(f, 9999), math.min(r, 9999) }
+          local key = Norm(text)
+          if not (f and r and r > 0) and not done and key then
+            own = own or OwnObjectiveTexts(questID)
+            if not own[key] then
+              cur.state = (type(FAILED) == "string" and key:find(FAILED:lower(), 1, true)) and "failed" or "done"
+              key = false
+            end
+          end
+          if key ~= false then
+            if not (f and r and r > 0) then f, r = done and 1 or 0, 1 end
+            if done and f < r then f = r end
+            cur.objectives[#cur.objectives + 1] = { math.min(f, 9999), math.min(r, 9999) }
+          end
         end
       end
     end
     for _, m in ipairs(list) do
       m.complete = #m.objectives > 0
       for _, o in ipairs(m.objectives) do if o[1] < o[2] then m.complete = false end end
+      -- only the state line, no objective: the member is done (or failed)
+      if #m.objectives == 0 and m.state then m.complete, m.failed = m.state == "done", m.state == "failed" end
     end
   end
   gameCache[questID] = { at = now, list = list }
@@ -426,7 +588,7 @@ function ns.PartyProgress(questID)
           have[name] = true
           local objs = {}
           for i, o in ipairs(m.objectives) do objs[i] = { o[1], o[2] } end
-          out[#out + 1] = { name = name, text = ns.PartyNameText(name), complete = m.complete, failed = false,
+          out[#out + 1] = { name = name, text = ns.PartyNameText(name), complete = m.complete, failed = m.failed == true,
             objectives = objs, source = "game" }
           added = true
         end
@@ -524,6 +686,89 @@ function ns.PartyStateText(p)
   return #parts > 0 and table.concat(parts, ", ") or L["in log"]
 end
 
+-- All party members, including those without the quest. Preserve the game's
+-- sharing/completion explanations; absence from a quest log proves neither.
+function ns.PartyQuestTooltipLines(questID)
+  local out = {}
+  if not Enabled() or not Channel() then return out end
+  RequestSharing(questID)
+  local roster, units, guids, names = Roster(), {}, {}, {}
+  for i = 1, math.max(GroupSize() - 1, 0) do
+    local unit = "party" .. i
+    local name = UnitFullName(unit)
+    if name and roster[name] then
+      units[name] = unit
+      local guid = ns.Value(UnitGUID, unit)
+      if type(guid) == "string" and ns.Usable(guid) then guids[guid] = name end
+    end
+  end
+  for name in pairs(roster) do names[#names + 1] = name end
+  table.sort(names)
+  local progress = {}
+  for _, p in ipairs(ns.PartyProgress(questID)) do progress[p.name] = p end
+  local native, current = {}, nil
+  local T = type(Enum) == "table" and Enum.TooltipDataLineType or nil
+  local PLAYER, OBJECTIVE = T and T.QuestPlayer or 18, T and T.QuestObjective or 8
+  for _, line in ipairs(GameLines(questID) or {}) do
+    if type(line) == "table" and ns.Usable(line) then
+      if line.type == PLAYER then
+        local shown = Plain(line.leftText)
+        local guid = ns.Usable(line.guid) and line.guid
+        local name = (guid and guids[guid]) or (shown and RosterName(shown, roster))
+        current = name and roster[name] and { status = Plain(line.rightText), details = {}, objectives = {} } or nil
+        if current then native[name] = current end
+      elseif current then
+        local left, right = Plain(line.leftText), Plain(line.rightText)
+        if left or right then
+          local target = line.type == OBJECTIVE and current.objectives or current.details
+          target[#target + 1] = { left or "", right }
+          if line.type == OBJECTIVE and (left or ""):match("%d+%s*/%s*%d+") then current.counted = true end
+        end
+      end
+    end
+  end
+  local pushable = C_QuestLog and ns.Value(C_QuestLog.IsPushableQuest, questID)
+  for _, name in ipairs(names) do
+    local p, game, unit = progress[name], native[name], units[name]
+    local state, color
+    local connected = unit and ns.Value(UnitIsConnected, unit)
+    local onQuest = C_QuestLog and unit and ns.Value(C_QuestLog.IsUnitOnQuest, unit, questID)
+    local active = p and (p.source == "questdon" or (onQuest ~= false and (onQuest == true or (game and game.counted))))
+    local shared, sharedColor = SharingText(name, questID, pushable)
+    if connected == false then
+      state, color = L["Offline"], "textHint"
+    elseif active then
+      state = p.complete and L["Ready to turn in"] or ns.PartyStateText(p)
+      color = p.complete and "good" or p.failed and "critical" or "textPrimary"
+    elseif shared and shared ~= L["Checking sharing eligibility..."] then
+      state, color = shared, sharedColor
+    elseif game and (game.status or #game.details > 0 or #game.objectives > 0) then
+      state = game.status or ""
+    else
+      if onQuest == true then state = L["in log"]
+      elseif shared then state = shared
+      elseif pushable == false then state = L["Quest cannot be shared"]
+      elseif onQuest == false or (members[name] and not members[name].quests[questID]) then
+        state = L["Not in log; sharing eligibility unknown"]
+      else state = L["Quest status unknown"] end
+      color = "textHint"
+    end
+    out[#out + 1] = { ns.PartyNameText(name), state, color }
+    local nativeInfo = game and (game.status or #game.details > 0 or #game.objectives > 0)
+    local unavailable = not active and not nativeInfo and connected ~= false and MissingProgressText(name, questID)
+    if unavailable then out[#out + 1] = { "  " .. unavailable } end
+    if game and connected ~= false then
+      if game.status and game.status ~= state then out[#out + 1] = { "  " .. game.status } end
+      for _, detail in ipairs(game.details) do out[#out + 1] = { "  " .. detail[1], detail[2] } end
+      if not active then
+        for _, detail in ipairs(game.objectives) do out[#out + 1] = { "  " .. detail[1], detail[2] } end
+      end
+    end
+  end
+  if #out > 0 then table.insert(out, 1, { header = L["Group progress"] }) end
+  return out
+end
+
 -- (12.11.2026) One short word for a member's state: "done", "failed", or all counters as one "5/8".
 -- plain: for the chat ("5/8" as typed, no thin spaces).
 function ns.PartyShortState(p, plain)
@@ -613,6 +858,7 @@ end
 
 -- Option switched: start (request the others) or forget everything.
 function ns.ApplyPartyProgress()
+  ResetSharing()
   if Enabled() then
     lastSent = nil
     force = true
@@ -640,6 +886,7 @@ ns.On("CHAT_MSG_ADDON", OnMessage)
 
 local lastRoster = {}
 ns.On("GROUP_ROSTER_UPDATE", function()
+  ResetSharing()
   local roster = Prune()
   if not roster then lastRoster = {} return end
   local newMember = false
@@ -654,6 +901,7 @@ ns.On("GROUP_ROSTER_UPDATE", function()
 end)
 
 ns.On("PLAYER_ENTERING_WORLD", function(_, isLogin, isReload)
+  ResetSharing()
   lastRoster = Prune() or {}
   if (isLogin or isReload) and Channel() then
     force = true

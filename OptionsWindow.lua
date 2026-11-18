@@ -45,7 +45,9 @@ local TABS = {
     -- the three that change the picture most up front; sizes and the arrow under "More settings" (10.11.: short main pages)
     main = { "header:Quest list", "trackerLook",
       "header:Map", "objectiveIcons",
-      "header:XP bar", "xpBarText" },
+      "header:XP bar", "xpBarText",
+      -- (16.11.2026, Blizzard look as in Luredon 1.7.0, on by default) the quest book and the dialogs in the game's look
+      "header:Windows", "blizzLook" },
     more = { "header:Quest list", "trackerScale",
       "header:Map", "mapPinScale", "minimapPinScale", "wayPinScale",
       "header:Direction arrow", "arrowPlain", "arrowScale",
@@ -121,6 +123,9 @@ local QD = NewWindow({
   T = function(s) return L[s] end,
   status = function() return ns.OptionStatus and ns.OptionStatus() or {} end, help = function() return ns.HELP end,
   buttonKey = function(section) return (section == "XP bar") and "button:xp" or "button:arrow" end,
+  -- (16.11.2026, DonCore Options 6) with the option blizzLook the options are the game's own settings pages: every cog
+  -- and /qd options ends there (the pages are built in full at login, Options.lua Build)
+  redirect = function() return ns.OpenGameOptions and ns.OpenGameOptions() or false end,
 })
 if Opt then Opt.onError = function(where, err) if ns.RecordError then ns.RecordError("options " .. tostring(where), err) end end end
 ns.NewOptionsWindow = NewWindow

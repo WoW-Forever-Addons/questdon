@@ -33,8 +33,13 @@ local Style = ns.Style
 -- right with the chain as a path from left to right (Chain.lua). Every text one line, cut with "..." and the whole text
 -- in the tooltip; under 960 px the focus card goes over the list, under 800 px the zone list becomes an icon rail. What
 -- only Questdon draws (the zone map, the round map of the journal, the dungeon pictures) uses the kit's colours and helpers.
-local Kit = LibStub("DonCore-1.0"):Get("Kit", 3)
-local KC, KS = Kit.C, Kit.SIZE
+-- (16.11.2026, Daniel: "Sollte Standart sein", Blizzard look for all Don addons as in Luredon 1.7.0) the book takes its
+-- blocks from Kit: DonCore's Kit (DonKit), or with the option blizzLook the same blocks from the game's own templates
+-- (DonCore module Blizz, ns.LookKit). Picked when the book is built (PickUI); a build that fails with Blizzard's blocks
+-- is done again with the Kit. ns.QuestBookLook() says which one runs and why. (The file's UI is the book's state.)
+local DonKit = LibStub("DonCore-1.0"):Get("Kit", 3)
+local Kit = DonKit
+local KC, KS = DonKit.C, DonKit.SIZE
 local ROW_H, HEAD_H, SMALL_H = 36, 28, 28 -- (draft 4) quest and journal lines, group heads, small lines
 local HERO_H = 76
 local MEDIA = "Interface\\AddOns\\Questdon\\Media\\"
@@ -485,8 +490,7 @@ end }
 -- ready, what needs quests first, what opens later) on the right.
 UI.KINDS.dsum = { h = 84, make = function(list)
   local f = CreateFrame("Frame", nil, list)
-  f.bg = Kit.Fill(f, KC.card)
-  f.bd = Kit.Border(f, KC.divider)
+  if not Kit.blizzLook then f.bg = Kit.Fill(f, KC.card) f.bd = Kit.Border(f, KC.divider) end -- (16.11.2026) own ground only in the Don look
   f.big = Kit.Text(f, "hero", KC.txGold, "CENTER")
   f.big:SetPoint("TOP", f, "TOPLEFT", 70, -12)
   f.label = Kit.Text(f, "sub", KC.muted, "CENTER")
@@ -499,7 +503,7 @@ UI.KINDS.dsum = { h = 84, make = function(list)
   f.sep:SetPoint("TOPLEFT", f, "TOPLEFT", 140, -10)
   f.sep:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 140, 10)
   f.fit = Kit.Text(f, "sub", KC.green)
-  f.fit:SetPoint("TOPLEFT", f, "TOPLEFT", 154, -10)
+  f.fit:SetPoint("TOPLEFT", f, "TOPLEFT", 154, -14)
   f.lines = {}
   for i = 1, 4 do
     local t = Kit.Text(f, "row", KC.body)
@@ -513,9 +517,18 @@ UI.KINDS.dsum = { h = 84, make = function(list)
     local frac = (it.total or 0) > 0 and ((it.ready or 0) + (it.done or 0)) / it.total or 0
     self.bar:Layout(100)
     self.bar:SetValue(math.min(1, frac))
-    self.fit:SetText((it.fitText or "") .. ((it.done or 0) > 0 and Colorize("  ·  " .. L["%d of %d done"]:format(it.done, it.total), "textHint") or ""))
-    Kit.TextColor(self.fit, UI.FIT[it.fitColor] or "quiet")
-    for i, t in ipairs(self.lines) do t:SetText(it.lines and it.lines[i] or "") end
+    -- (17.11.2026, Daniel's picture: "fits your level" twice, cut at the top) how it fits you stands in the head above;
+    -- here only how many are done, and the sentences move up without it
+    local doneText = (it.done or 0) > 0 and L["%d of %d done"]:format(it.done, it.total) or ""
+    self.fit:SetText(doneText)
+    Kit.TextColor(self.fit, "quiet")
+    if doneText == "" then self.fit:Hide() else self.fit:Show() end
+    local top = doneText == "" and 0 or 1
+    for i, t in ipairs(self.lines) do
+      t:ClearAllPoints()
+      t:SetPoint("TOPLEFT", self, "TOPLEFT", 154, -14 - 18 * (i - 1 + top))
+      t:SetText(it.lines and it.lines[i] or "")
+    end
     self:Layout(self._w or self:GetWidth())
   end
   function f:Layout(w)
@@ -881,9 +894,9 @@ function Pic.Create()
   if v.SetFrameStrata then v:SetFrameStrata("DIALOG") end
   if v.SetToplevel then v:SetToplevel(true) end
   if v.SetClampedToScreen then v:SetClampedToScreen(true) end
-  Kit.Fill(v, KC.window)
-  Kit.Border(v, KC.outer, 0)
-  Kit.Border(v, KC.gold, 1)
+  DonKit.Fill(v, KC.window)
+  DonKit.Border(v, KC.outer, 0)
+  DonKit.Border(v, KC.gold, 1)
   v:EnableMouse(true)
   v:SetMovable(true)
   v:RegisterForDrag("LeftButton")
@@ -894,38 +907,38 @@ function Pic.Create()
     local i = self.i - (ns.Num(delta) or 0)
     if self.set[i] then self.i = i Pic.Show() end
   end)
-  v.title = Kit.Text(v, "title", KC.hero)
+  v.title = DonKit.Text(v, "title", KC.hero)
   v.title:SetPoint("TOPLEFT", v, "TOPLEFT", 20, -16)
-  v.count = Kit.Text(v, "sub", KC.muted, "RIGHT")
+  v.count = DonKit.Text(v, "sub", KC.muted, "RIGHT")
   v.count:SetPoint("TOPRIGHT", v, "TOPRIGHT", -46, -19)
-  v.close = Kit.IconButton(v, "close", { tooltip = L["Close"], onClick = function() v:Hide() end })
+  v.close = DonKit.IconButton(v, "close", { tooltip = L["Close"], onClick = function() v:Hide() end })
   v.close:SetPoint("TOPRIGHT", v, "TOPRIGHT", -12, -12)
-  v.stage = Kit.Tex(v, "BORDER", KC.input)
+  v.stage = DonKit.Tex(v, "BORDER", KC.input)
   v.stage:SetPoint("TOPLEFT", v, "TOPLEFT", 16, -44)
   v.stage:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -16, 76)
   v.pic = v:CreateTexture(nil, "ARTWORK")
   v.pic:SetPoint("CENTER", v.stage, "CENTER", 0, 0)
-  v.prev = Kit.IconButton(v, "back", { tooltip = L["Newer picture"], onClick = function() if v.set[v.i - 1] then v.i = v.i - 1 Pic.Show() end end })
+  v.prev = DonKit.IconButton(v, "back", { tooltip = L["Newer picture"], onClick = function() if v.set[v.i - 1] then v.i = v.i - 1 Pic.Show() end end })
   v.prev:SetPoint("LEFT", v.stage, "LEFT", 10, 0)
-  v.next = Kit.IconButton(v, "forward", { tooltip = L["Older picture"], onClick = function() if v.set[v.i + 1] then v.i = v.i + 1 Pic.Show() end end })
+  v.next = DonKit.IconButton(v, "forward", { tooltip = L["Older picture"], onClick = function() if v.set[v.i + 1] then v.i = v.i + 1 Pic.Show() end end })
   v.next:SetPoint("RIGHT", v.stage, "RIGHT", -10, 0)
-  v.info = Kit.Text(v, "row", KC.body)
+  v.info = DonKit.Text(v, "row", KC.body)
   v.info:SetPoint("BOTTOMLEFT", v, "BOTTOMLEFT", 20, 50)
-  v.quest = Kit.Text(v, "sub", KC.muted)
+  v.quest = DonKit.Text(v, "sub", KC.muted)
   v.quest:SetPoint("BOTTOMLEFT", v, "BOTTOMLEFT", 20, 30)
-  v.entry = Kit.Button(v, L["Show in the journal"], { small = true, onClick = function()
+  v.entry = DonKit.Button(v, L["Show in the journal"], { small = true, onClick = function()
     local e = v.shot and ns.AlbumEntryFor(v.shot)
     if not e then return end
     if ns.OpenQuestBook then ns.OpenQuestBook("journal") end
     ns.QuestBookShowEntry(e)
   end })
   v.entry:SetPoint("BOTTOMRIGHT", v, "BOTTOMRIGHT", -16, 14)
-  v.map = Kit.Button(v, L["World map"], { small = true, onClick = function()
+  v.map = DonKit.Button(v, L["World map"], { small = true, onClick = function()
     local e = v.shot and ns.AlbumEntryFor(v.shot)
     if e then EntryToMap(e, true) end
   end })
   v.map:SetPoint("RIGHT", v.entry, "LEFT", -KS.gap, 0)
-  v.adopt = Kit.Button(v, L["Add to this journal"], { small = true, kind = "primary", onClick = function()
+  v.adopt = DonKit.Button(v, L["Add to this journal"], { small = true, kind = "primary", onClick = function()
     if not v.shot then return end
     ns.AlbumAdopt(v.shot)
     if Refresh then Refresh(true) end
@@ -950,7 +963,7 @@ function Pic.Show()
   v.pic:SetTexCoord(0, 1, 0, 1)
   local e = ns.AlbumEntryFor(shot)
   v.title:SetText(e and e.note or L["Picture"])
-  Kit.Fit(v.title, Pic.W - 160)
+  DonKit.Fit(v.title, Pic.W - 160)
   v.count:SetText(ns.Fraction(v.i, #v.set))
   local parts = { Fmt.DayTitle(shot.t) .. "  " .. Fmt.Clock(shot.t) }
   if e then
@@ -964,10 +977,10 @@ function Pic.Show()
     parts[#parts + 1] = Colorize(L["Not in this journal"], "textHint")
   end
   v.info:SetText(table.concat(parts, "  ·  "))
-  Kit.Fit(v.info, Pic.W - 40)
+  DonKit.Fit(v.info, Pic.W - 40)
   local rq = e and e.rq
   v.quest:SetText(rq and (L["Quest"] .. ": " .. (ns.QuestTitle(rq) or ("#" .. tostring(rq)))) or "")
-  Kit.Fit(v.quest, Pic.W - 360)
+  DonKit.Fit(v.quest, Pic.W - 360)
   if v.set[v.i - 1] then v.prev:Show() else v.prev:Hide() end
   if v.set[v.i + 1] then v.next:Show() else v.next:Hide() end
   if e then
@@ -1093,8 +1106,7 @@ end }
 -- Numbers in a row: big value, small label below.
 UI.KINDS.nums = { h = 52, make = function(list)
   local f = CreateFrame("Frame", nil, list)
-  f.bg = Kit.Fill(f, KC.card)
-  f.bd = Kit.Border(f, KC.divider)
+  if not Kit.blizzLook then f.bg = Kit.Fill(f, KC.card) f.bd = Kit.Border(f, KC.divider) end -- (16.11.2026) own ground only in the Don look
   f.cells = {}
   for i = 1, 6 do f.cells[i] = { value = Kit.Text(f, "hero", KC.hero, "CENTER"), label = Kit.Text(f, "sub", KC.muted, "CENTER") } end
   function f:SetItem(it) self.item = it self:Layout(self._w or self:GetWidth()) end
@@ -1715,7 +1727,7 @@ local function SelectZone(m)
   if lists.zone then lists.zone.offset = 0 end
   -- (02.11.2026, Daniel: "shift+klick auf eine quest in der liste öffnet das questbuch nicht") the book starts on Zones now:
   -- a closed book is opened here too, not only drawn again
-  if tab ~= "zone" or not (book and book:IsShown()) then ns.OpenQuestBook("zone") else Refresh() end
+  if tab ~= "zone" or not (book and book:IsShown()) then ns.OpenQuestBook("zone") else Refresh(true) end -- (16.11.2026) reset: the game's list has no offset field
 end
 ns.QuestBookSelectZone = SelectZone
 
@@ -2318,6 +2330,8 @@ function UI.CreateZonePage(page)
 end
 
 -- the two chip bars on one line: the segments as wide as they need (at most half), the filters scroll in the rest
+-- (17.11.2026, Daniel's picture: the filters ran out of the window, "Later" cut) when the filters do not fit beside the
+-- segments they take a line of their own under them, and the list moves down; returns the list's top
 function UI.ZoneChips()
   local mw = UI.zoneW or 600
   local y = HERO_H + KS.gap
@@ -2326,8 +2340,24 @@ function UI.ZoneChips()
   P.seg:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", KS.gap, -y)
   P.seg:Layout(math.max(1, segW))
   P.zChips:ClearAllPoints()
-  P.zChips:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", segW + 3 * KS.gap, -y)
-  P.zChips:Layout(math.max(1, mw - segW - 4 * KS.gap))
+  local besideW = mw - segW - 4 * KS.gap
+  local twoLines = P.zChips:IsShown() and P.zChips:ContentWidth() > besideW
+  if twoLines then
+    P.zChips:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", KS.gap, -(y + KS.chip + KS.gap))
+    P.zChips:Layout(math.max(1, mw - 2 * KS.gap))
+  else
+    P.zChips:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", segW + 3 * KS.gap, -y)
+    P.zChips:Layout(math.max(1, besideW))
+  end
+  UI.zoneChipLines = twoLines and 2 or 1
+  local top = y + UI.zoneChipLines * (KS.chip + KS.gap)
+  if lists.zone and UI.zoneH and UI.zoneListTop ~= top then
+    UI.zoneListTop = top
+    lists.zone:ClearAllPoints()
+    lists.zone:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", 0, -top)
+    lists.zone:Resize(mw, math.max(1, UI.zoneH - top))
+  end
+  return top
 end
 
 function UI.LayoutZone(w, h, mode)
@@ -2339,11 +2369,13 @@ function UI.LayoutZone(w, h, mode)
   P.zoneMain:SetPoint("TOPLEFT", P.pages.zone, "TOPLEFT", sw, 0)
   P.zoneMain:SetSize(mw, h)
   P.hero:Layout(mw)
-  UI.ZoneChips()
-  local y = HERO_H + KS.gap + KS.chip + KS.gap
-  lists.zone:ClearAllPoints()
-  lists.zone:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", 0, -y)
-  lists.zone:Resize(mw, math.max(1, h - y))
+  UI.zoneH, UI.zoneListTop = h, nil
+  local y = UI.ZoneChips()
+  if UI.zoneListTop == nil then -- (17.11.2026) ZoneChips placed nothing (no list yet)
+    lists.zone:ClearAllPoints()
+    lists.zone:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", 0, -y)
+    lists.zone:Resize(mw, math.max(1, h - y))
+  end
   if UI.heroMap then UI.HeroArt(UI.heroMap) end
 end
 
@@ -2660,7 +2692,7 @@ function UI.CreateDungeonPage(page)
   lists.dungrid = Kit.List(page, { kinds = UI.KINDS })
   local bar = CreateFrame("Frame", nil, page)
   bar:SetHeight(UI.DUN_BAR_H)
-  Kit.Fill(bar, KC.card)
+  if not Kit.blizzLook then Kit.Fill(bar, KC.card) end -- (16.11.2026) own ground only in the Don look
   bar.lineB = Kit.Tex(bar, "ARTWORK", KC.divider)
   bar.lineB:SetPoint("BOTTOMLEFT") bar.lineB:SetPoint("BOTTOMRIGHT") bar.lineB:SetHeight(1)
   -- back to the cards (and from the cards to the dungeon shown)
@@ -2828,13 +2860,19 @@ function UI.CardData(c)
   local sub = c.fitText or ""
   if zname then sub = sub ~= "" and (sub .. "  ·  " .. zname) or zname end
   local markText = on and L["Remove mark"] or L["Mark entrance"]
+  -- (17.11.2026, Daniel's picture of the cards) the ring shows the count, so the button only says "Prerequisites" (the
+  -- count made it wider than the button); a dungeon without quests for you has no ring and no such button
+  local none = (c.total or 0) == 0
+  local preWord = L["Prerequisites (%s)"]:gsub("%s*[%(（]%%s[%)）]%s*$", "")
+  if preWord == "" or preWord:find("%%s") then preWord = L["Prerequisites (%s)"]:format(ns.Fraction(c.ready or 0, c.total or 0)) end
   return { inst = inst, minL = c.minL, quiet = c.quiet, fitColor = c.fitColor, title = c.text, sub = sub,
-    ring = { c.done and c.total or (c.ready or 0), c.total or 0 }, status = c.sub, statusColor = c.done and "green" or UI.FIT[c.fitColor] or "grey",
+    ring = not none and { c.done and c.total or (c.ready or 0), c.total or 0 } or nil,
+    status = none and L["No quests of this dungeon for you."] or c.sub, statusColor = none and "grey" or c.done and "green" or UI.FIT[c.fitColor] or "grey",
     selected = c.selected, art = UI.CardArt,
     buttons = {
       { text = markText, disabled = not known, onClick = function() ns.ToggleEntranceMark(inst) Refresh() end,
         tooltip = { markText, { known and L["The arrow points to the entrance, and a mark stands on the world map and the minimap. It goes away when you get there, after 30 minutes, or with a right-click on it."] or L["No entrance known for this dungeon."] } } },
-      { text = L["Prerequisites (%s)"]:format(ns.Fraction(c.ready or 0, c.total or 0)), kind = "primary", onClick = c.onClick },
+      not none and { text = preWord, kind = "primary", onClick = c.onClick } or nil,
     } }
 end
 -- the grid: the groups of the choices (your level, coming up, below, all done) as heads, the cards in rows
@@ -3353,9 +3391,40 @@ function UI.Footer()
   if book.status then Kit.Fit(book.status, math.max(20, room)) end
 end
 
-local function Create()
-  book = Kit.Window("QuestdonQuestBook", { title = "Questdon", subtitle = L["Quest book"], logo = TAB_ICON.zone,
-    options = "Questdon", hint = L["/qd opens them too."], footer = true, store = UI.Store(), width = 980, height = 640,
+local lookNote = "not built yet" -- (16.11.2026) which kit built the book and why (diag)
+local said
+function ns.SayBookLook()
+  if said or not ns.Print then return end
+  said = true
+  ns.Print(L["The quest book could not be built in the game's look, it opens in the Don look. /qd diag says why."])
+end
+
+local function PickUI()
+  Kit, lookNote = DonKit, "kit"
+  if not (ns.db and ns.db.blizzLook) then return end
+  -- (the option is on by default: a client that lacks the templates keeps the Don look without a word; only a build
+  -- that fails speaks up, Create)
+  local Bz = LibStub("DonCore-1.0"):Get("Blizz", 5)
+  if not Bz then lookNote = "kit (no DonCore Blizz)" return end
+  local kit, miss = Bz.Kit()
+  if not kit then lookNote = "kit (missing: " .. tostring(miss) .. ")" return end
+  Kit, lookNote = kit, "blizzard"
+end
+
+-- the book's state that belongs to its frames (built again in the other look)
+local function ForgetFrames()
+  book = nil
+  for k in pairs(P) do P[k] = nil end
+  for k in pairs(lists) do lists[k] = nil end
+  UI.lastTab, UI.gridCols, UI.albumW = nil, nil, nil
+end
+
+local function Build()
+  local blizz = Kit ~= DonKit
+  -- the Kit's windows show at 80 %, the game's frame at 100 %: about the same size on the screen
+  book = Kit.Window(blizz and "QuestdonQuestBookBlizz" or "QuestdonQuestBook", { title = "Questdon", subtitle = L["Quest book"], logo = TAB_ICON.zone,
+    options = "Questdon", hint = L["/qd opens them too."], footer = true, store = UI.Store(),
+    width = blizz and 860 or 980, height = blizz and 560 or 640, min = blizz and { 720, 420 } or nil,
     onLayout = function(_, w, h, mode) UI.w, UI.h, UI.mode = w, h, mode UI.Place() UI.Footer() end,
     onTab = function(key) ns.OpenQuestBook(key) end })
   book:Hide()
@@ -3392,6 +3461,20 @@ local function Create()
     end
   end)
   book:Layout()
+end
+
+local function Create()
+  PickUI()
+  if Kit == DonKit then Build() return end
+  -- Blizzard's blocks: any error while building leaves the half-built window hidden and the Kit builds the book
+  local ok, err = pcall(Build)
+  if ok then return end
+  if book and book.Hide then pcall(book.Hide, book) end
+  ForgetFrames()
+  Kit, lookNote = DonKit, "kit (error: " .. tostring(err) .. ")"
+  if ns.RecordError then ns.RecordError("quest book blizz look", err) end
+  ns.SayBookLook() -- once per session in the chat
+  Build()
 end
 
 ---------------------------------------------------------------------------
@@ -3471,8 +3554,7 @@ local function RenderDungeons(reset)
   UI.LayoutDungeons(UI.cw, UI.h)
 end
 
-function Refresh(reset)
-  if not book or not book:IsShown() then return end
+local function Draw(reset)
   for _, t in ipairs(book.tabs) do t:SetSelected(t.key == tab) end
   for key, page in pairs(P.pages) do if key == tab then page:Show() else page:Hide() end end
   if tab ~= UI.lastTab then reset = true UI.lastTab = tab UI.Place() end
@@ -3482,6 +3564,27 @@ function Refresh(reset)
   else RenderSearch(reset) end
   UI.Footer()
   if UI.DetailOpen() then UI.RenderDetail() end
+end
+
+-- (16.11.2026) the game's look: an error while drawing (a block of the game's look that does not do what the Kit's
+-- does) builds the book again with the Kit, as a build that fails (Create); the chat says so once per session
+function UI.LookFailed(err)
+  if book and book.Hide then pcall(book.Hide, book) end
+  ForgetFrames()
+  if ns.RecordError then ns.RecordError("quest book blizz look", err) end
+  ns.SayBookLook()
+  Kit, lookNote = DonKit, "kit (error: " .. tostring(err) .. ")"
+  Build()
+  stats = {}
+  book:Show()
+  Draw(true)
+end
+
+function Refresh(reset)
+  if not book or not book:IsShown() then return end
+  if not Kit.blizzLook then Draw(reset) return end
+  local ok, err = pcall(Draw, reset)
+  if not ok then UI.LookFailed(err) end
 end
 
 ---------------------------------------------------------------------------
@@ -3578,6 +3681,16 @@ function ns.ToggleZoneQuests() Toggle("zone") end
 function ns.ToggleJournal() Toggle("journal") end
 function ns.ToggleQuestBook() Toggle(nil) end
 function ns.ZoneQuestsFrame() return book end
+-- (16.11.2026) "blizzard" or "kit", with the reason when the option is on and the Kit had to build (diag)
+function ns.QuestBookLook() return lookNote end
+-- the option blizzLook changed: the book is built again in the other look the next time it opens (it was open: now)
+function ns.QuestBookReset()
+  if not book then return end
+  local open = book:IsShown()
+  book:Hide()
+  ForgetFrames()
+  if open then ns.OpenQuestBook() end
+end
 function ns.QuestBookTab() return tab end
 function ns.QuestBookGear() return P.gear end -- (tests)
 function ns.QuestBookDungeonBar() return P.dunBar, P.dunMark, P.dunShow end -- (tests)
@@ -3593,6 +3706,7 @@ function ns.QuestBookArt()
 end
 function ns.QuestBookFilter(key) if key then jfilter = key Refresh(true) end return jfilter end
 function ns.QuestBookChips() return P.chips end -- (1.3.11, tests)
+function ns.QuestBookZoneChipLines() return UI.zoneChipLines, P.zChips, UI.zoneListTop end -- (17.11.2026, tests)
 function ns.QuestBookSegment(key) if key then zoneSeg = key Refresh(true) end return zoneSeg end
 function ns.QuestBookZoneFilter(key) if key then zFilter = key Refresh(true) end return zFilter end
 function ns.QuestBookNearest(on) if on ~= nil then zNear = on and true or false Refresh(true) end return zNear end
@@ -3618,7 +3732,12 @@ function ns.QuestBookLines(which)
   return out, l
 end
 -- (Stufe 3, tests) the text of the footer button "Copy as text"
-function ns.QuestBookFooterText() return P.footText and P.footText.text:GetText() end
+function ns.QuestBookFooterText()
+  local b = P.footText
+  if not b then return nil end
+  if b.text then return b.text:GetText() end -- the Kit's button
+  return b.GetText and b:GetText() -- (16.11.2026) the game's button
+end
 -- Built items of a list (all, not only the visible ones).
 function ns.QuestBookItems(which)
   local l = lists[which or tab]

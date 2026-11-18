@@ -75,12 +75,54 @@ local function BlizzTracker()
     if type(f) == "table" and type(f.SetAlpha) == "function" then return f end
   end
 end
+-- (15.11.2026, Daniel: "wenn ich ein rezept tracken möchte erscheint keine liste") tracked recipes live in the same
+-- frame as Blizzard's quest list. While a recipe is tracked the frame stays visible and only its quest parts are
+-- hidden (invisible and folded); without a tracked recipe the whole frame is hidden as before.
+local QUEST_PARTS = { "QuestObjectiveTracker", "CampaignQuestObjectiveTracker" }
+local recipeFlag -- nil: ask the game again (TRACKED_RECIPE_UPDATE, entering the world)
+local partsHidden, partsFolded = false, {}
+local function TrackedList(get, recraft)
+  local ok, t = pcall(get, recraft)
+  return ok and type(t) == "table" and next(t) ~= nil
+end
+local function RecipesTracked()
+  if recipeFlag == nil then
+    local c = rawget(_G, "C_TradeSkillUI")
+    local get = type(c) == "table" and c.GetRecipesTracked
+    recipeFlag = type(get) == "function" and (TrackedList(get, false) or TrackedList(get, true)) or false
+  end
+  return recipeFlag
+end
+local function ApplyQuestParts(hide)
+  if not hide and not partsHidden then return end
+  for _, n in ipairs(QUEST_PARTS) do
+    local m = rawget(_G, n)
+    if type(m) == "table" and type(m.SetAlpha) == "function" then
+      if hide then
+        local a = ns.Num(ns.Value(m.GetAlpha, m))
+        if not a or a > 0 then pcall(m.SetAlpha, m, 0) end
+        if type(m.SetCollapsed) == "function" and type(m.IsCollapsed) == "function" then
+          local ok, folded = pcall(m.IsCollapsed, m)
+          if ok and not folded then partsFolded[n] = true pcall(m.SetCollapsed, m, true) end
+        end
+      else
+        pcall(m.SetAlpha, m, 1)
+        if partsFolded[n] and type(m.SetCollapsed) == "function" then pcall(m.SetCollapsed, m, false) end
+        partsFolded[n] = nil
+      end
+    end
+  end
+  partsHidden = hide
+end
 local function ApplyBlizzTracker()
   local f = BlizzTracker()
   if not f then return end
   if ns.True(ns.Value(InCombatLockdown)) then return end
   local db = DB()
   local hide = db.tracker ~= false and db.trackerHideBlizz ~= false and panel ~= nil and panel:IsShown()
+  local parts = hide and RecipesTracked() or false
+  ApplyQuestParts(parts)
+  if parts then hide = false end
   if hide then
     local a = ns.Num(ns.Value(f.GetAlpha, f))
     if blizzHidden ~= f or (a and a > 0) then
@@ -98,6 +140,7 @@ local function ApplyBlizzTracker()
 end
 ns.ApplyBlizzTracker = ApplyBlizzTracker
 function ns.BlizzTrackerHidden() return blizzHidden ~= nil end -- (tests)
+function ns.BlizzQuestPartsHidden() return partsHidden end -- (diag, tests)
 
 ---------------------------------------------------------------------------
 -- The quest log with its zone headings, and what we need per quest
@@ -1074,6 +1117,30 @@ local function TitleRow(row, e)
   if Game() then return GameRow(row, e) end
   return DonRow(row, e)
 end
+-- Shared by the nearby, zone, level, grey and hidden quest rows.
+function ns.TrackerQuestTooltip(row, e)
+  ns.partyTooltipRow, ns.partyTooltipQuest = row, e
+  if ns.HoverQuestRow then ns.HoverQuestRow(row, e.questID) end
+  local lines = {}
+  for _, o in ipairs(e.objs) do lines[#lines + 1] = (o.done and "|cff66cc73" or "") .. o.text .. (o.done and "|r" or "") end
+  if e.dist then lines[#lines + 1] = { L["Distance"], Yards(e.dist) } end
+  local hint = ns.QuestHint and ns.QuestHint(e.questID)
+  if hint then lines[#lines + 1] = "|cffdcc17f" .. L["Hint"] .. ":|r " .. hint end
+  if ns.PartyQuestTooltipLines then
+    for _, line in ipairs(ns.PartyQuestTooltipLines(e.questID)) do lines[#lines + 1] = line end
+  end
+  return e.title, lines, L["Click: pick it. Shift-click: the game's quest log. Shift-right-click: the quest book."] .. " " .. L["Right-click: abandon or hide."]
+end
+-- Replies can arrive while the mouse stays on the quest row.
+function ns.RefreshPartyQuestTooltip()
+  local row, e = ns.partyTooltipRow, ns.partyTooltipQuest
+  if not (row and e and row.IsShown and row:IsShown() and row.IsMouseOver and row:IsMouseOver()) then return end
+  if not (GameTooltip and ns.Value(GameTooltip.IsOwned, GameTooltip, row) == true) then return end
+  local title, lines, hint = ns.TrackerQuestTooltip(row, e)
+  local panel = row._panel
+  local anchor = row._ttAnchor or (panel and (panel._tooltipAnchor or (panel._opts and panel._opts.tooltipAnchor))) or "auto"
+  Style.Tooltip(row, title, lines, hint, anchor)
+end
 local GAME_GAP = 6
 local function RowFor(e, focusID)
   local row = Style.Row(panel):SetGapBefore(Game() and GAME_GAP or QUEST_GAP)
@@ -1087,13 +1154,7 @@ local function RowFor(e, focusID)
     Pick(e.questID)
   end)
   row:SetTooltip(function()
-    if ns.HoverQuestRow then ns.HoverQuestRow(row, e.questID) end -- (20.10.) its marks on the maps stand out
-    local lines = {}
-    for _, o in ipairs(e.objs) do lines[#lines + 1] = (o.done and "|cff66cc73" or "") .. o.text .. (o.done and "|r" or "") end
-    if e.dist then lines[#lines + 1] = { L["Distance"], Yards(e.dist) } end
-    local hint = ns.QuestHint and ns.QuestHint(e.questID)
-    if hint then lines[#lines + 1] = "|cffdcc17f" .. L["Hint"] .. ":|r " .. hint end
-    return e.title, lines, L["Click: pick it. Shift-click: the game's quest log. Shift-right-click: the quest book."] .. " " .. L["Right-click: abandon or hide."]
+    return ns.TrackerQuestTooltip(row, e)
   end)
   return row
 end
@@ -1790,7 +1851,7 @@ local function Build()
         row:SetMark(MarkRGB(e.questID))
       end
       ns.TrackerItemSpot(row, e.questID)
-      row:SetTooltip(function() if ns.HoverQuestRow then ns.HoverQuestRow(row, e.questID) end end) -- (20.10.) marks stand out on the maps
+      row:SetTooltip(function() return ns.TrackerQuestTooltip(row, e) end)
       row:SetOnClick(function(_, button)
         if ns.TrackerShiftClick(e.questID, button) then return end
         if button == "RightButton" then ShowQuestMenu(e) return end
@@ -2052,6 +2113,18 @@ function ns.ApplyTrackerChrome()
     if panel.SetGameLook then panel:SetGameLook(game, plain) elseif panel.SetChromeHidden then panel:SetChromeHidden(plain) end
     if panel.SetButtonsFaded and not game then panel:SetButtonsFaded(false) end
     panel:SetTitle(game and (rawget(_G, "QUESTS_LABEL") or L["Quests"]) or "QUESTDON")
+    -- (17.11.2026, Daniel: "eine blizzard option fuer mit und ohne hintergrund und frame") look 4: the game look on the
+    -- game's tooltip box (DonCore Blizz PanelLook, as Dropdon's small window); the box follows the background opacity
+    local box = game and DB().trackerGameBox == true
+    local Bz = box and LibStub("DonCore-1.0"):Get("Blizz", 5)
+    -- without the game's templates (an older client) the box fails: the game look without it, no error
+    if box and Bz and Bz.PanelLook and pcall(Bz.PanelLook, panel, true) then
+      panel:SetGameLook(true, plain)
+      panel:SetBackgroundAlpha(tonumber(DB().trackerAlpha) or Style.DEFAULT_ALPHA)
+    elseif panel.bzBox then
+      panel.bzBox:Hide()
+      panel.blizzLook = nil
+    end
   end
   if card then
     for _, t in ipairs({ card.bg, card.edge[1], card.edge[2], card.edge[3], card.edge[4] }) do
@@ -2065,14 +2138,27 @@ function ns.ApplyTrackerChrome()
   gameApplied = game
 end
 -- (12.11.2026) the look as one number for the options and the start window: 1 Don, 2 Don without background, 3 like the game
+-- (17.11.2026) 4 like the game with background and frame (trackerGameBox); db.trackerLook keeps the number for the
+-- dropdown in the game's settings (DonCore Settings 5 shows a choice with options there)
+-- (18.11.2026, Daniel zum Dropdown: "Die Optionen wirken so undurchdacht"; gewaehlt: Questdon / Blizzard, je mit und
+-- ohne) the names say the style and whether it has its box, and every place lists them in the same order: Questdon,
+-- Questdon transparent, Blizzard, Blizzard transparent. The numbers stay (saved settings): LOOK_ORDER is the order
+-- shown, LOOK_NAMES[number] the name.
+ns.LOOK_ORDER = { 1, 2, 4, 3 }
+ns.LOOK_NAMES = { "Questdon", "Questdon, transparent", "Blizzard, transparent", "Blizzard" }
 function ns.TrackerLook()
   local db = DB()
-  return db.trackerPlain == true and (db.trackerGame == true and 3 or 2) or 1
+  if db.trackerPlain == true and db.trackerGame == true then return db.trackerGameBox == true and 4 or 3 end
+  return db.trackerPlain == true and 2 or 1
 end
 function ns.SetTrackerLook(i)
   local db = ns.db
   if not db then return end
-  db.trackerPlain, db.trackerGame = (i == 2 or i == 3), (i == 3) or nil
+  i = tonumber(i) or 1
+  if i < 1 or i > 4 then i = 1 end
+  db.trackerPlain, db.trackerGame = (i >= 2), (i >= 3) or nil
+  db.trackerGameBox = (i == 4) or nil
+  db.trackerLook = i
   ns.ApplyTrackerChrome()
   ns.UpdateTracker(true)
   if ns.RefreshSettingsUI then ns.RefreshSettingsUI() end
@@ -2081,6 +2167,15 @@ end
 local function FadeButtons()
   if not (panel and panel.SetButtonsFaded and Game()) then return end
   panel:SetButtonsFaded(not ns.True(ns.Value(panel.IsMouseOver, panel)))
+end
+
+-- (17.11.2026) the X of the list (was inline in Create; a gamepad test module that used it was withdrawn the same day:
+-- reporting the list to the game's GamepadMode tainted the game's gamepad code, docs/handover doncore.md)
+local function CloseList(p)
+  ns.db.trackerShown = false
+  ns.SyncArrowWithList() -- (review 4) closed with its X: the arrow shows the way meanwhile
+  p:FadeOut()
+  ns.After(0.3, function() ApplyBlizzTracker() if ns.ApplyArrowLook then ns.ApplyArrowLook() end end)
 end
 
 local function Create()
@@ -2108,12 +2203,7 @@ local function Create()
       if ns.ApplyArrowLook then ns.ApplyArrowLook() end
       ns.QueueRefresh("tracker")
     end,
-    onClose = function(p)
-      ns.db.trackerShown = false
-      ns.SyncArrowWithList() -- (review 4) closed with its X: the arrow shows the way meanwhile
-      p:FadeOut()
-      ns.After(0.3, function() ApplyBlizzTracker() if ns.ApplyArrowLook then ns.ApplyArrowLook() end end)
-    end,
+    onClose = CloseList,
   })
   if panel._header and panel._header.EnableMouseWheel then
     panel._header:EnableMouseWheel(true)
@@ -2145,6 +2235,8 @@ ns.RegisterRefresh("tracker", function() ns.UpdateTracker() end)
 local function Queue() ns.QueueRefresh("tracker") end
 
 ns.OnInit(function()
+  -- (17.11.2026) the gamepad test module is gone: its saved switch with it
+  if ns.db then ns.db.gamepad, ns.db.gamepadOffV1117 = nil, nil end
   Create()
   ns.NewTicker(1, function() ns.UpdateTracker() end)     -- distances
   ns.NewTicker(0.2, function()
@@ -2166,3 +2258,7 @@ ns.On("PLAYER_XP_UPDATE", Queue)
 ns.On("BAG_UPDATE_DELAYED", Queue) -- (1.3.8) quest items without quest
 ns.On("GROUP_ROSTER_UPDATE", Queue) -- (1.3.8) group progress
 ns.On("PLAYER_REGEN_ENABLED", function() ApplyBlizzTracker() end)
+-- (15.11.2026) a recipe tracked or untracked: Blizzard's frame back with its recipes, or hidden again
+local function RecipesChanged() recipeFlag = nil ApplyBlizzTracker() end
+ns.On("TRACKED_RECIPE_UPDATE", function() RecipesChanged() ns.After(0.3, RecipesChanged) end)
+ns.On("PLAYER_ENTERING_WORLD", function() ns.After(1, RecipesChanged) end)
