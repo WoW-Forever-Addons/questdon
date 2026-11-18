@@ -25,6 +25,8 @@ local PAGES = {
     { header = "Accept and turn in" },
     { key = "autoAccept", name = "Auto accept quests", tip = "Accepts offered quests and escort confirmations. Hold Shift to pause." },
     { key = "autoTurnIn", name = "Auto turn in quests", tip = "Turns in completed quests. Quests with several reward choices or a gold cost, and repeatable quests, are left to you." },
+    -- (18.11.2026, Daniel) Quests.lua GOSSIP_SHOW
+    { key = "skipVendorGossip", name = "Skip the greeting of vendors", tip = "Opens the goods of a vendor right away when browsing them is the only choice in the dialog. Hold Shift to see the greeting." },
     { header = "Chains and group" },
     { key = "shareQuests", name = "Share new quests with group", tip = "Shares every quest you accept with your group, if it can be shared." },
     -- (12.11.2026, CurseForge comment, Daniel: on by default, one line per quest) Announce.lua

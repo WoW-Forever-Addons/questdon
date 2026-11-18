@@ -161,7 +161,7 @@ local DATA_ONLY = {
   tracker = false, arrow = false, arrowNext = false, pathDots = false, arrowCorpse = false, xpBar = false,
   ownRepBar = false, questItemButton = false, trackerItemButtons = false, targetButton = false, exportTomTom = false,
   -- automation, hints and sounds
-  autoAccept = false, autoTurnIn = false, highlightBest = false, suggestReward = false,
+  autoAccept = false, autoTurnIn = false, skipVendorGossip = false, highlightBest = false, suggestReward = false,
   chainHint = false, shareQuests = false, partyAnnounce = false, dungeonHint = false, notifySound = false, notifyText = false,
   sellJunk = false, autoRepair = false, fastLoot = false, journalShots = false, journalLevelShot = false,
 }

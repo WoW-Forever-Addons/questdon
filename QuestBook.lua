@@ -31,7 +31,8 @@ local Style = ns.Style
 -- ns.db.questBook), the zones as a Sidebar of ZoneRows, a Hero with the zone's map, ChipBars, Lists, four Tiles on the
 -- journal, the dungeons as index cards (Kit.Card) with their prerequisites a click away, the focus card (Kit.Detail) on the
 -- right with the chain as a path from left to right (Chain.lua). Every text one line, cut with "..." and the whole text
--- in the tooltip; under 960 px the focus card goes over the list, under 800 px the zone list becomes an icon rail. What
+-- in the tooltip; under 960 px the focus card goes over the list, under 800 px (or beside a docked card that leaves the
+-- zone's middle too narrow, 18.11.2026) the zone list becomes an icon rail. What
 -- only Questdon draws (the zone map, the round map of the journal, the dungeon pictures) uses the kit's colours and helpers.
 -- (16.11.2026, Daniel: "Sollte Standart sein", Blizzard look for all Don addons as in Luredon 1.7.0) the book takes its
 -- blocks from Kit: DonCore's Kit (DonKit), or with the option blizzLook the same blocks from the game's own templates
@@ -356,6 +357,10 @@ function UI.QuestView(it)
   it.done = it.group == "done" or nil
   it.pill = (it.group == "log" and it.stateColor == "good" and it.stateText) and { it.stateText, "ready" } or nil
   if it.step then it.chain = tostring(it.step) end
+  -- (18.11.2026, Daniel's picture: "Fight for Warsong G..." beside empty room) nothing on the right (no count, pill,
+  -- ring or dots): the right column's room goes to the name and the line below
+  local bare = (it.right or "") == "" and (it.right2 or "") == "" and not it.pill and not it.dots and not it.ring
+  it.rightWidth = bare and 0 or nil
   it.tooltipFn = UI.TipOf
 end
 UI.KINDS.quest = { h = ROW_H, make = function(list)
@@ -2329,27 +2334,49 @@ function UI.CreateZonePage(page)
   lists.zone = Kit.List(P.zoneMain, { kinds = UI.KINDS })
 end
 
--- the two chip bars on one line: the segments as wide as they need (at most half), the filters scroll in the rest
+-- (18.11.2026, Daniel's picture: the card open, "Your journal here" cut to "Your", the filters after "Available" gone)
+-- the shown chips of a bar in lines of at most w px from its top left: they wrap instead of being cut. The bar as high as
+-- its lines and without wheel scrolling (everything is in sight). Only the bar's chips and its own size are touched.
+function UI.FlowChips(bar, w)
+  local x, line, step = 0, 1, KS.chip + KS.gap
+  for _, c in ipairs(bar.chips or {}) do
+    c:ClearAllPoints()
+    if c:IsShown() then
+      local cw = tonumber(c:GetWidth()) or 0
+      if x > 0 and x + cw > w then line, x = line + 1, 0 end
+      c:SetPoint("TOPLEFT", bar, "TOPLEFT", x, -(line - 1) * step)
+      x = x + cw + KS.unit
+    end
+  end
+  bar._w, bar.offset = w, 0
+  bar:SetSize(w, line * KS.chip + (line - 1) * KS.gap)
+  if bar.EnableMouseWheel then bar:EnableMouseWheel(false) end
+  return line
+end
+
+-- the two chip bars on one line when both fit: the segments as wide as they need, the filters beside them
 -- (17.11.2026, Daniel's picture: the filters ran out of the window, "Later" cut) when the filters do not fit beside the
--- segments they take a line of their own under them, and the list moves down; returns the list's top
+-- segments they take a line of their own under them, and the list moves down; (18.11.2026) either bar wraps into more
+-- lines when one is not enough; returns the list's top
 function UI.ZoneChips()
   local mw = UI.zoneW or 600
   local y = HERO_H + KS.gap
-  local segW = math.min(P.seg:ContentWidth(), math.floor(mw * 0.5))
+  local room = math.max(1, mw - 2 * KS.gap)
+  local segW = math.min(P.seg:ContentWidth(), room)
   P.seg:ClearAllPoints()
   P.seg:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", KS.gap, -y)
-  P.seg:Layout(math.max(1, segW))
+  local segLines = UI.FlowChips(P.seg, math.max(1, segW))
+  local lines = segLines
   P.zChips:ClearAllPoints()
   local besideW = mw - segW - 4 * KS.gap
-  local twoLines = P.zChips:IsShown() and P.zChips:ContentWidth() > besideW
-  if twoLines then
-    P.zChips:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", KS.gap, -(y + KS.chip + KS.gap))
-    P.zChips:Layout(math.max(1, mw - 2 * KS.gap))
-  else
+  if not P.zChips:IsShown() or (segLines == 1 and P.zChips:ContentWidth() <= besideW) then
     P.zChips:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", segW + 3 * KS.gap, -y)
-    P.zChips:Layout(math.max(1, besideW))
+    UI.FlowChips(P.zChips, math.max(1, besideW))
+  else
+    P.zChips:SetPoint("TOPLEFT", P.zoneMain, "TOPLEFT", KS.gap, -(y + segLines * (KS.chip + KS.gap)))
+    lines = segLines + UI.FlowChips(P.zChips, room)
   end
-  UI.zoneChipLines = twoLines and 2 or 1
+  UI.zoneChipLines = lines
   local top = y + UI.zoneChipLines * (KS.chip + KS.gap)
   if lists.zone and UI.zoneH and UI.zoneListTop ~= top then
     UI.zoneListTop = top
@@ -2360,14 +2387,25 @@ function UI.ZoneChips()
   return top
 end
 
+-- (18.11.2026, Daniel's picture: the card docked on the right left the zone's middle 300 px, "Stormwin...", the quests'
+-- names and the chips cut) the card docked and the middle beside the full zone list narrower than this: the zone list
+-- becomes the icon rail (as under 800 px) while the card is open, the full list comes back when it closes
+UI.ZONE_MID_MIN = 440
+function UI.ZoneRail(w, mode)
+  if mode == "rail" then return true end
+  return mode == "full" and UI.DetailOpen() and w - (KS.sidebar or 220) < UI.ZONE_MID_MIN
+end
+
 function UI.LayoutZone(w, h, mode)
-  P.side:Layout(h, mode == "rail")
+  P.side:Layout(h, UI.ZoneRail(w, mode))
   local sw = P.side:Width()
   local mw = w - sw
   UI.zoneW = mw
   P.zoneMain:ClearAllPoints()
   P.zoneMain:SetPoint("TOPLEFT", P.pages.zone, "TOPLEFT", sw, 0)
   P.zoneMain:SetSize(mw, h)
+  -- (18.11.2026) a narrow middle: the count on the right of the hero takes less, the zone's name and path more
+  P.hero.colW = mw < 560 and 104 or 150
   P.hero:Layout(mw)
   UI.zoneH, UI.zoneListTop = h, nil
   local y = UI.ZoneChips()
@@ -2557,15 +2595,88 @@ function UI.CreateJournalPage(page)
   lists.journal = Kit.List(page, { kinds = UI.KINDS })
 end
 
-function UI.LayoutJournal(w, h)
-  local each = math.floor((w - 5 * KS.gap) / 4)
-  for i, t in ipairs(P.tiles) do
-    t:ClearAllPoints()
-    t:SetPoint("TOPLEFT", P.pages.journal, "TOPLEFT", KS.gap + (i - 1) * (each + KS.gap), -KS.gap)
-    t:Layout(each)
+-- (18.11.2026, Daniel's picture of the journal in the game's look: "Today 0...", "Ex...", "40 min on this le...") the
+-- tiles share their row by what they show: a tile is at least as wide as its widest text plus its picture or chart, the
+-- rest is shared out evenly (four alike when all fit, as before); when the four do not fit side by side, two rows of two.
+-- The width of a text on one line (the game's measure, else 6 px a letter).
+local function TextNeed(fs)
+  if not (fs and fs.GetText) then return 0 end
+  local text = fs:GetText()
+  if type(text) ~= "string" or text == "" then return 0 end
+  for _, m in ipairs({ "GetUnboundedStringWidth", "GetStringWidth" }) do
+    local f = fs[m]
+    if type(f) == "function" then
+      local ok, v = pcall(f, fs)
+      if ok and type(v) == "number" and v == v and v > 0 then return math.ceil(v) end
+    end
   end
+  local plain = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", "WWW")
+  return #plain * 6
+end
+UI.TILE_H = 72
+function UI.TileNeed(t)
+  local text = math.max(TextNeed(t.label), TextNeed(t.value), TextNeed(t.line))
+  return 20 + 2 + text + ((t.artSize or 0) > 0 and t.artSize + 8 or 0) + ((t.sideW or 0) > 0 and t.sideW + 8 or 0)
+end
+-- the widths of a row of tiles: everyone its need, the rest evenly (too narrow for the needs: in their proportion)
+local function ShareRow(needs, room)
+  local n, sum = #needs, 0
+  for _, v in ipairs(needs) do sum = sum + v end
+  local out = {}
+  if sum >= room then
+    for i, v in ipairs(needs) do out[i] = math.floor(room * v / math.max(1, sum)) end
+  else
+    local fixed = {}
+    repeat
+      local free, left, changed = room, 0, false
+      for i, v in ipairs(needs) do if fixed[i] then free = free - v else left = left + 1 end end
+      local each = left > 0 and free / left or 0
+      for i, v in ipairs(needs) do if not fixed[i] and v > each then fixed[i] = true changed = true end end
+    until not changed
+    local free, left = room, 0
+    for i, v in ipairs(needs) do if fixed[i] then free = free - v else left = left + 1 end end
+    for i, v in ipairs(needs) do out[i] = fixed[i] and v or math.floor(free / math.max(1, left)) end
+  end
+  local used = 0
+  for i = 1, n - 1 do used = used + out[i] end
+  out[n] = math.max(1, room - used) -- the last one ends at the edge
+  return out
+end
+-- the plan for a page width: rows of { tile, x, width }, and a key to see a change
+function UI.TilePlan(w)
+  local gap, needs, sum = KS.gap, {}, 0
+  for i, t in ipairs(P.tiles) do needs[i] = UI.TileNeed(t) sum = sum + needs[i] end
+  local groups = (sum + 5 * gap <= w) and { { 1, 2, 3, 4 } } or { { 1, 2 }, { 3, 4 } }
+  local rows, key = {}, {}
+  for r, g in ipairs(groups) do
+    local nd = {}
+    for k, i in ipairs(g) do nd[k] = needs[i] end
+    local widths = ShareRow(nd, math.max(#g, w - (#g + 1) * gap))
+    local x, row = gap, {}
+    for k, i in ipairs(g) do
+      row[k] = { tile = P.tiles[i], x = x, w = widths[k] }
+      key[#key + 1] = r .. ":" .. i .. ":" .. widths[k]
+      x = x + widths[k] + gap
+    end
+    rows[r] = row
+  end
+  return rows, table.concat(key, " ")
+end
+
+function UI.LayoutJournal(w, h)
+  UI.jw, UI.jh = w, h
+  local rows, key = UI.TilePlan(w)
+  UI.tileKey = key
+  for r, row in ipairs(rows) do
+    for _, c in ipairs(row) do
+      c.tile:ClearAllPoints()
+      c.tile:SetPoint("TOPLEFT", P.pages.journal, "TOPLEFT", c.x, -(KS.gap + (r - 1) * (UI.TILE_H + KS.gap)))
+      c.tile:Layout(c.w)
+    end
+  end
+  UI.tileRows = #rows
   P.cols:Layout(P.tiles[2].sideW, 30)
-  local y = KS.gap + 72 + KS.gap
+  local y = KS.gap + #rows * (UI.TILE_H + KS.gap)
   P.jchips:ClearAllPoints()
   P.jchips:SetPoint("TOPLEFT", P.pages.journal, "TOPLEFT", KS.gap, -y)
   P.jchips:Layout(math.max(1, w - 2 * KS.gap))
@@ -2618,6 +2729,8 @@ local function UpdateTiles()
   t[4]:SetData(L["Level %d to %d"]:format(level, level + 1), frac and ("%d %%"):format(math.floor(frac * 100)) or "-",
     since and L["%s on this level"]:format(since) or "")
   t[4]:SetProgress(frac, "blue")
+  -- (18.11.2026) new texts may need other widths or a second row
+  if UI.jw and select(2, UI.TilePlan(UI.jw)) ~= UI.tileKey then UI.LayoutJournal(UI.jw, UI.jh) end
 end
 
 -- The journal's round map: the zone you are in. (1.3.11) A clicked moment
@@ -3269,7 +3382,12 @@ function UI.RenderEntryDetail()
     ns.PostcardHide(d)
   end
   d:Section(L["When and where"])
-  if e.t then d:Line(L["Date"], "muted", Fmt.DayTitle(e.t) .. "  " .. Fmt.Clock(e.t), "body") end
+  -- (18.11.2026, Daniel's picture: the date was cut) the day short (today, yesterday, else without the weekday) and
+  -- the time on a line of its own; the list's group head above says the whole day
+  if e.t then
+    d:Line(L["Date"], "muted", Fmt.DayShort(e.t), "body")
+    d:Line(L["Time"], "muted", Fmt.Clock(e.t), "body")
+  end
   local zone = e.m and MapName(e.m)
   if zone then d:Line(L["Zone"], "muted", zone, "body") end
   if e.l and e.k ~= "l" then d:Line(L["Your level"], "muted", tostring(e.l), "body") end

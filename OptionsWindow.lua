@@ -55,7 +55,7 @@ local TABS = {
   { key = "accept", title = "Accept and turn in", pic = "opt_accept",
     text = "Quests taken and turned in for you, the reward that suits you marked, a sound when something is done.",
     main = { "autoAccept", "autoTurnIn", "notifySound", "partyAnnounce" },
-    more = { "notifyText", "shareQuests" } },
+    more = { "notifyText", "shareQuests", "skipVendorGossip" } },
   { key = "xp", title = "XP bar", pic = "opt_xp",
     text = "Questdon's experience bar: XP, rested XP, finished quests, XP per hour and the time to the next level.",
     main = { "xpBar" },

@@ -603,6 +603,18 @@ local function DayTitle(t)
   return s
 end
 
+-- (18.11.2026, Daniel's picture: "Today, November 18, 2..." cut in the card) the day short: today, yesterday, else the
+-- date without the weekday
+local function DayShort(t)
+  local d = DateTable(t)
+  if not d then return L["Unknown date"] end
+  local today = DayKey(Now())
+  if DayKey(t) == today then return L["Today"] elseif DayKey(t + 86400) == today then return L["Yesterday"] end
+  local s = L["{mon} {d}, {y}"]
+  s = s:gsub("{mon}", L[MONTHS[d.month] or "?"]):gsub("{d}", tostring(d.day)):gsub("{y}", tostring(d.year))
+  return s
+end
+
 local function Clock(t) return t and ns.Value(date, "%H:%M", t) or "--:--" end
 
 local function Span(sec)
@@ -822,7 +834,7 @@ end
 -- (1.3) For the quest book window (QuestBook.lua): formatting and lists
 ---------------------------------------------------------------------------
 ns.JournalFmt = {
-  DayTitle = DayTitle, DayKey = DayKey, Clock = Clock, Span = Span, Money = Money,
+  DayTitle = DayTitle, DayShort = DayShort, DayKey = DayKey, Clock = Clock, Span = Span, Money = Money,
   EntryTitle = EntryTitle, EntryTooltip = EntryTooltip, OldDone = OldDone, Now = Now,
   KIND_TEXT = KIND_TEXT, KIND_COLOR = KIND_COLOR, MomentLines = MomentLines, MOMENT = MOMENT, MapName = MapName,
 }

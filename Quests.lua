@@ -207,6 +207,8 @@ end
 
 
 -- Gossip window (modern NPC dialog with quest list)
+local VENDOR_ICON = 132060 -- Interface\GossipFrame\VendorGossipIcon, the bag of "I want to browse your goods"
+if type(ns.defaults) == "table" and ns.defaults.skipVendorGossip == nil then ns.defaults.skipVendorGossip = true end
 OnNpc("GOSSIP_SHOW", function()
   if ns.IsPaused() or not C_GossipInfo then return end
   local db = ns.db
@@ -242,6 +244,22 @@ OnNpc("GOSSIP_SHOW", function()
           ns.NoteAutoStep("C_GossipInfo.SelectAvailableQuest(id)") C_GossipInfo.SelectAvailableQuest(id)
           return
         end
+      end
+    end
+  end
+
+  -- (18.11.2026, Daniel with a picture of a vendor's greeting: "kann questdon bei händlern das bitte überspringen?")
+  -- the only choice is "I want to browse your goods" and the NPC has no quest here: open the goods right away
+  if db.skipVendorGossip and C_GossipInfo.GetOptions then
+    local quests = #(ns.Value(C_GossipInfo.GetActiveQuests) or {}) + #(ns.Value(C_GossipInfo.GetAvailableQuests) or {})
+    local opts = ns.Value(C_GossipInfo.GetOptions)
+    local o = quests == 0 and type(opts) == "table" and #opts == 1 and opts[1]
+    if type(o) == "table" and (ns.Num(o.overrideIconID) or ns.Num(o.icon)) == VENDOR_ICON then
+      local id, index = ns.Num(o.gossipOptionID), ns.Num(o.orderIndex)
+      if id and C_GossipInfo.SelectOption then
+        ns.NoteAutoStep("C_GossipInfo.SelectOption(id)") C_GossipInfo.SelectOption(id)
+      elseif index and C_GossipInfo.SelectOptionByIndex then
+        ns.NoteAutoStep("C_GossipInfo.SelectOptionByIndex(index)") C_GossipInfo.SelectOptionByIndex(index)
       end
     end
   end

@@ -1,5 +1,12 @@
 # Changes
 
+## 1.8.1
+
+- **Straight to the goods:** when browsing the goods is the only choice in a vendor's greeting and the vendor has no quest for you, Questdon opens the goods at once. Hold Shift to see the greeting; switch it off in the options ("Skip the greeting of vendors").
+- **Quest book, journal:** the four tiles at the top show their texts in full; in a narrow book they sit in two rows. The quest card names the day as Today, Yesterday or the date, and the time in a line of its own.
+- **Quest book, zones with a quest open:** in a narrow book the zone list folds into a slim bar while a quest card is open, so the zone name, the filter buttons and the quest names stay readable. The filter buttons wrap into a second row instead of being cut.
+- **Data of 18 November:** more than 300 new quests from All The Things (Mount Hyjal and others) through DonData.
+
 ## 1.8.0
 
 - **Pick the look of your quest list:** four looks with clear names, Questdon or Blizzard, each with or without background and frame, and a screenshot of each to choose from. Everybody is asked once after the update; new players get it as the second step of the start window, right after the look of the map. New installs start with Blizzard without background.
