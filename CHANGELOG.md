@@ -1,5 +1,12 @@
 # Changes
 
+## 1.9.0
+
+- **Finished quests on the continent map:** zoom the world map out to Kalimdor or the Eastern Kingdoms and every quest that is ready to turn in shows its "?" there too, not only on the map of its zone. A click points the arrow to the exact spot.
+- **Quest objectives before you accept:** hold Shift over a "!" on the world map or the minimap to read what the quest asks for.
+- **Fixed:** an NPC with a quest to hand in and a new quest showed only the "!" on the world map. The marker now shows the "?" first, and Questdon's "?" lies above a "!" the game draws at the same spot.
+- **Data of 19 November:** more quest levels, objective places and gathering finds through DonData.
+
 ## 1.8.1
 
 - **Straight to the goods:** when browsing the goods is the only choice in a vendor's greeting and the vendor has no quest for you, Questdon opens the goods at once. Hold Shift to see the greeting; switch it off in the options ("Skip the greeting of vendors").

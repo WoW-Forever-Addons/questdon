@@ -1,4 +1,4 @@
-local Kit = LibStub("DonCore-1.0"):NewModule("Kit", 29)
+local Kit = LibStub("DonCore-1.0"):NewModule("Kit", 30)
 
 ---------------------------------------------------------------------------
 -- DonCore module "Kit" (minor 1, 01.11.2026, STYLEKIT_PLAN.md "Schritt 2"; minor 2, 02.11.2026: Kit.IconButton, the symbols from
@@ -82,7 +82,7 @@ local Kit = LibStub("DonCore-1.0"):NewModule("Kit", 29)
 ---------------------------------------------------------------------------
 if not Kit then return end -- the same or a newer Kit is loaded already
 local Core = LibStub("DonCore-1.0")
-Kit.VERSION = 29
+Kit.VERSION = 30
 
 local WHITE = "Interface\\Buttons\\WHITE8x8"
 local floor, ceil, max, min, abs, pi, sin, cos = math.floor, math.ceil, math.max, math.min, math.abs, math.pi, math.sin, math.cos
@@ -4107,8 +4107,98 @@ end
 KIND_H.trow, KIND_H.note = S.row, S.sub
 ROW_MAKER.trow, ROW_MAKER.note = Kit.ItemRow, Kit.NoteRow
 
+-- (minor 30, Daniel 18.11.2026, Profitdon: "dass man die Spalten mit einem Linksklick verschieben kann ... so anpassen
+-- kann, wie man das braucht") a column head held with the left button and dragged onto another head moves its column
+-- there: onMove(fromKey, toKey). The first column (the title) neither moves nor takes one. A right click on a head calls
+-- onMove(nil, nil): back to the list's own order. A plain left click still sorts; the click that ends a drag is dropped
+-- (Kit.HeadDragged). While dragging, the dragged head is dimmed and a gold bar marks where it lands.
+-- b: the head button (b.col its column), head: the frame of the heads (head.btns), first(): the title column.
+function Kit.HeadDrag(b, head, first, onMove)
+  if not (b and head and onMove) then return end
+  if b.RegisterForDrag then b:RegisterForDrag("LeftButton") end
+  local function Movable(x) return x and x.col and x:IsShown() and x.col ~= first() end
+  local function Target(self)
+    for _, o in ipairs(head.btns or {}) do
+      if o ~= self and Movable(o) and o:IsMouseOver() then return o end
+    end
+  end
+  local function Mark(self, o)
+    local m = head.dropMark
+    if not m then
+      m = head:CreateTexture(nil, "OVERLAY")
+      m:SetColorTexture(1, 0.82, 0, 0.9)
+      m:SetWidth(2)
+      head.dropMark = m
+    end
+    if not o then m:Hide() return end
+    m:ClearAllPoints()
+    -- the column lands left of the target when it comes from the right, else right of it
+    local left = (self:GetLeft() or 0) > (o:GetLeft() or 0)
+    m:SetPoint("TOP", o, left and "TOPLEFT" or "TOPRIGHT", 0, 0)
+    m:SetPoint("BOTTOM", o, left and "BOTTOMLEFT" or "BOTTOMRIGHT", 0, 0)
+    m:Show()
+  end
+  b:SetScript("OnDragStart", function(self)
+    if not Movable(self) then return end
+    self._dragging = true
+    self:SetAlpha(0.5)
+    self:SetScript("OnUpdate", function(me) Mark(me, Target(me)) end)
+  end)
+  b:SetScript("OnDragStop", function(self)
+    if not self._dragging then return end
+    self._dragging = nil
+    self:SetScript("OnUpdate", nil)
+    self:SetAlpha(1)
+    self._dragEnd = type(GetTime) == "function" and GetTime() or 0
+    local o = Target(self)
+    Mark(self, nil)
+    if o then Safe("table move", onMove, self.col.key, o.col.key) end
+  end)
+end
+-- true for the click that ends a drag (the game may send it after OnDragStop)
+function Kit.HeadDragged(b)
+  local t = type(GetTime) == "function" and GetTime() or 0
+  return b and b._dragEnd and t - b._dragEnd < 0.2 or false
+end
+-- the order of columns after a move: cols (the list's own, cols[1] the title), order (keys as saved, or nil), from/to
+-- keys. Returns the columns in the order to show and the new order of keys (nil from/to: only applies the order).
+-- Keys in order that the list lacks are left out, columns the order lacks keep their place after their neighbour.
+function Kit.ColumnOrder(cols, order, from, to)
+  if type(cols) ~= "table" or #cols < 2 then return cols, order end
+  local byKey, keys = {}, {}
+  for i = 2, #cols do byKey[cols[i].key] = cols[i] end
+  for _, k in ipairs(type(order) == "table" and order or {}) do
+    if byKey[k] then keys[#keys + 1] = k byKey[k] = false end
+  end
+  -- new columns (not in the saved order): after the column before them in the list's own order
+  for i = 2, #cols do
+    local k = cols[i].key
+    if byKey[k] then
+      local at = #keys + 1
+      local prev = i > 2 and cols[i - 1].key
+      for j, x in ipairs(keys) do if x == prev then at = j + 1 end end
+      if i == 2 then at = 1 end
+      table.insert(keys, at, k)
+      byKey[k] = false
+    end
+  end
+  if from and to and from ~= to then
+    local fi, ti
+    for j, x in ipairs(keys) do if x == from then fi = j end if x == to then ti = j end end
+    if fi and ti then
+      table.remove(keys, fi)
+      table.insert(keys, ti, from)
+    end
+  end
+  local all = {}
+  for i = 2, #cols do all[cols[i].key] = cols[i] end
+  local out = { cols[1] }
+  for _, k in ipairs(keys) do out[#out + 1] = all[k] end
+  return out, keys
+end
+
 -- the head of a table: titles over the columns, a click on a sortable one calls onSort(key)
-local function ItemTableHead(parent, onSort)
+local function ItemTableHead(parent, onSort, onMove)
   local h = CreateFrame("Frame", nil, parent)
   h:SetHeight(24)
   Fill(h, C.group)
@@ -4125,7 +4215,12 @@ local function ItemTableHead(parent, onSort)
     b.arrow:SetSize(9, 8)
     Call(b.arrow, "SetTexture", "Interface\\Buttons\\UI-SortArrow")
     b.arrow:Hide()
-    Clickable(b, function(self) if self.col and self.col.sort then Safe("table sort", onSort, self.col.key) end end)
+    Clickable(b, function(self, button)
+      if Kit.HeadDragged(self) then return end
+      if button == "RightButton" then if onMove then Safe("table move", onMove) end return end
+      if self.col and self.col.sort then Safe("table sort", onSort, self.col.key) end
+    end)
+    Kit.HeadDrag(b, h, function() return h.cols and h.cols[1] end, onMove)
     Stateful(b, function(self, st)
       local on = self.col and h.sortKey == self.col.key
       TextColor(self.text, (on or (st == "hover" and self.col and self.col.sort)) and C.txGold or (self.col and self.col.color) or C.muted)
@@ -4186,7 +4281,9 @@ end
 function Kit.Table(parent, opts)
   opts = opts or {}
   local t = CreateFrame("Frame", nil, parent)
-  t.head = ItemTableHead(t, function(key) Safe("table sort", opts.onSort, key, t) end)
+  -- (minor 30) opts.onMove(fromKey, toKey, t): a head dragged onto another; (nil, nil): a right click, the own order back
+  t.head = ItemTableHead(t, function(key) Safe("table sort", opts.onSort, key, t) end,
+    opts.onMove and function(a, b) Safe("table move", opts.onMove, a, b, t) end or nil)
   t.head:SetPoint("TOPLEFT", 0, 0)
   t.list = Kit.List(t, { kinds = opts.kinds, onClick = opts.onClick, onToggle = opts.onToggle, zebra = opts.zebra })
   t.list:SetPoint("TOPLEFT", 0, -24)

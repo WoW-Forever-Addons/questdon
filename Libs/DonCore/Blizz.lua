@@ -1,4 +1,4 @@
-local Bz = LibStub("DonCore-1.0"):NewModule("Blizz", 7)
+local Bz = LibStub("DonCore-1.0"):NewModule("Blizz", 8)
 if not Bz then return end
 
 ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ local K = setmetatable({}, { __index = Kit or {} })
 Bz.kit = K
 Bz.K = K -- (Profitdon's name for the kit)
 K.blizzLook = true -- a caller can tell the two kits apart
-Bz.VERSION = 7
+Bz.VERSION = 8
 Bz.ROW_H = 24 -- the row height of Bz.List without opts.rowHeight (Profitdon's craft and sell lists)
 if Bz.light == nil then Bz.light = true end
 
@@ -978,7 +978,17 @@ function K.Table(parent, opts)
     b.arrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
     b.arrow:SetVertexColor(1, 0.82, 0)
     b.arrow:SetPoint("LEFT", b.text, "RIGHT", 3, 0)
-    b:SetScript("OnClick", function(self) if self.col and self.col.sort and opts.onSort then Try(opts.onSort, self.col.key, t) end end)
+    -- (minor 8, Kit 30: Kit.HeadDrag) opts.onMove(fromKey, toKey, t): a head dragged onto another moves its column; a right
+    -- click calls onMove(nil, nil, t), the list's own order back. The click that ends a drag does not sort.
+    if b.RegisterForClicks then b:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
+    b:SetScript("OnClick", function(self, button)
+      if Kit.HeadDragged and Kit.HeadDragged(self) then return end
+      if button == "RightButton" then if opts.onMove then Try(opts.onMove, nil, nil, t) end return end
+      if self.col and self.col.sort and opts.onSort then Try(opts.onSort, self.col.key, t) end
+    end)
+    if opts.onMove and Kit.HeadDrag then
+      Kit.HeadDrag(b, t.head, function() return t.columns[1] end, function(a, c) Try(opts.onMove, a, c, t) end)
+    end
     t.head.btns[i] = b
     return b
   end

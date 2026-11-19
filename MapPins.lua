@@ -89,10 +89,37 @@ local function GameQuestPinCount(map, ids)
   return n, tagged
 end
 ns.gameMissesTurnIn = {}
+-- (19.11.2026, Daniel: "dass Questdon die fertigen Quests auf der Weltkarte anzeigt. Nicht nur in der Zonenkarte")
+-- the continent map shows the "?" of every finished quest of its zones too (TurnIns). ns.gameWideTurnIns: the quests
+-- the game pins itself on the continent shown last (no second "?" there, option skipGameGivers).
+local CONTINENT = 2 -- Enum.UIMapType.Continent
+function ns.IsContinentMap(mapID)
+  local info = mapID and C_Map and C_Map.GetMapInfo and ns.Value(C_Map.GetMapInfo, mapID)
+  return type(info) == "table" and ns.Num(info.mapType) == CONTINENT
+end
+ns.gameWideTurnIns = { ids = {} }
 function ns.CheckGameQuestPins()
   local map = WorldMapFrame
   if not (map and map.IsShown and ns.True(ns.Value(map.IsShown, map))) then return end
   local mapID = ns.Num(ns.Value(map.GetMapID, map))
+  if not mapID then return end
+  -- (19.11.2026) a continent map: only which finished quests the game marks there itself (TurnIns); what it draws on
+  -- a continent says nothing about the zone maps
+  if ns.IsContinentMap(mapID) then
+    local ids = {}
+    GameQuestPinCount(map, ids)
+    local old = ns.gameWideTurnIns
+    local same = old.map == mapID
+    if same then
+      for id in pairs(ids) do if not old.ids[id] then same = false break end end
+      for id in pairs(old.ids) do if not ids[id] then same = false break end end
+    end
+    if not same then
+      ns.gameWideTurnIns = { map = mapID, ids = ids }
+      if ns.QueueRefresh then ns.QueueRefresh("map") end
+    end
+    return
+  end
   local fn = C_QuestLog and C_QuestLog.GetQuestsOnMap
   if not mapID or type(fn) ~= "function" then return end
   local ok, list = pcall(fn, mapID)
@@ -132,24 +159,68 @@ function ns.CheckGameQuestPins()
   if changed and ns.QueueRefresh then ns.QueueRefresh("map") end
 end
 
+-- (19.11.2026, Daniel: "für den Fall Spiel Ausrufezeichen und Questdon Fragezeichen, wo das Ausrufezeichen liegt vom
+-- Spiel") the game's own "!" (QuestOfferPinTemplate) and our "?" cannot share a marker: our "?" goes one frame level
+-- above the highest "!" of the game on the shown map, so a turn-in is never under a "!". Read from the game's pins
+-- once the map is drawn (nothing assumed about its levels); a pin used again gets its level back (QuestPin:OnAcquired).
+function ns.RaiseTurnInPins()
+  local pools = WorldMapFrame and WorldMapFrame.pinPools
+  local offer = type(pools) == "table" and pools.QuestOfferPinTemplate
+  local ours = type(pools) == "table" and pools[QUEST_TEMPLATE]
+  if not (type(offer) == "table" and type(offer.activeObjects) == "table"
+          and type(ours) == "table" and type(ours.activeObjects) == "table") then return 0 end
+  local top
+  for pin in pairs(offer.activeObjects) do
+    local lv = type(pin) == "table" and ns.Num(ns.Value(pin.GetFrameLevel, pin))
+    if lv and (not top or lv > top) then top = lv end
+  end
+  if not top then return 0 end
+  local n = 0
+  for pin in pairs(ours.activeObjects) do
+    local p = type(pin) == "table" and pin.qdPin
+    if type(p) == "table" and p.kind == "turnin" and pin.SetFrameLevel then
+      local lv = ns.Num(ns.Value(pin.GetFrameLevel, pin))
+      if lv and lv <= top and pcall(pin.SetFrameLevel, pin, top + 1) then
+        pin.qdLevelWas = pin.qdLevelWas or lv
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+
 -- (1.3.5, Daniel 10.10.) The "?" of a finished quest: not only where you turned it in before,
 -- also what other players reported and the turn-in NPC of the data (ns.KnownTurnIn), as long as
 -- the game does not mark the turn-in itself. Quests that complete from the log get none.
+-- (19.11.2026, CurseForge Neidhardt: "the exclamation mark icon was covering the question mark") second list: the
+-- turn-ins the game marks itself (gameToo). Where Questdon draws a "!" at that spot, its marker takes them in
+-- (BuildBase, ns.GroupQuestPins), else the game's "?" lay under our "!"
 local function TurnIns(mapID)
-  local list = {}
-  if not ns.db.learnPins then return list end
+  local list, game = {}, {}
+  if not ns.db.learnPins then return list, game end
+  local wide = ns.IsContinentMap(mapID)
+  local gameWide = wide and ns.db.skipGameGivers and ns.gameWideTurnIns.map == mapID and ns.gameWideTurnIns.ids or {}
   for _, info in ipairs(ns.QuestLogEntries()) do
     local questID = info.questID
     if ns.IsQuestComplete(questID) and not (ns.IsAutoComplete and ns.IsAutoComplete(questID))
         and not (ns.db.pinsOnlyUnknown and ns.QuestieOn() and ns.QuestieKnows(questID) == true and ns.QuestieDrawsMarks("turnin")) -- (review 1) only while Questie draws
-        and not GameShowsTurnIn(questID) then
+        then
       local m, x, y, npc, source, npcID = ns.KnownTurnIn(questID)
-      if m == mapID and x and y then
-        list[#list + 1] = { kind = "turnin", questID = questID, x = x, y = y, npc = npc, source = source, npcID = npcID }
+      if wide and m and m ~= mapID and x and y then
+        -- the zone's point on the continent, through the world position; nil on another continent or in an instance
+        local c, n, w = ns.WorldPos(m, x, y)
+        local wx, wy
+        if c then wx, wy = ns.MapFromWorld(mapID, c, n, w) end
+        if wx and wy and wx >= 0 and wx <= 1 and wy >= 0 and wy <= 1 and not gameWide[questID] then
+          list[#list + 1] = { kind = "turnin", questID = questID, x = wx, y = wy, npc = npc, source = source, npcID = npcID, zoneMap = m, zx = x, zy = y }
+        end
+      elseif m == mapID and x and y then
+        local t = { kind = "turnin", questID = questID, x = x, y = y, npc = npc, source = source, npcID = npcID }
+        if GameShowsTurnIn(questID) then t.gameToo = true game[#game + 1] = t else list[#list + 1] = t end
       end
     end
   end
-  return list
+  return list, game
 end
 
 -- Everything for one map (also used by the tests).
@@ -195,7 +266,14 @@ function BuildBase(mapID)
       end
     end
   end
-  for _, t in ipairs(TurnIns(mapID)) do pins[#pins + 1] = t end
+  local own, game = TurnIns(mapID)
+  for _, t in ipairs(game) do
+    -- only where one of our "!" stands at its spot (the marker then shows the "?"); alone it stays the game's
+    for _, a in ipairs(pins) do
+      if a.kind == "available" and a.x and a.y and ns.TurnInJoins(a, t) then pins[#pins + 1] = t break end
+    end
+  end
+  for _, t in ipairs(own) do pins[#pins + 1] = t end
   -- (1.2) the quest picked in the zone quest list (ZoneQuests.lua)
   local focus = ns.ZoneFocusPin and ns.ZoneFocusPin(mapID)
   if focus then pins[#pins + 1] = focus end
@@ -267,8 +345,16 @@ local function SameSpot(a, b, cluster)
   return false, false
 end
 ns.SameQuestGiverSpot = SameSpot
+-- A turn-in and a quest marker in one marker: the same NPC a bit apart, or (19.11.2026) the very same spot, where
+-- one symbol hides the other whoever stands there (a turn-in whose NPC is not known)
+local function TurnInJoins(a, b)
+  local dx, dy = math.abs(a.x - b.x), math.abs(a.y - b.y)
+  if dx < GROUP_DIST and dy < GROUP_DIST then return true end
+  return dx < GIVER_DIST and dy < GIVER_DIST and SameGiver(a, b)
+end
+ns.TurnInJoins = TurnInJoins
 function ns.GroupQuestPins(pins, cluster)
-  local out, heads = {}, {}
+  local out, heads, dropped = {}, {}, false
   dupStats.lastMerged = 0
   for _, p in ipairs(pins or {}) do
     local head
@@ -281,7 +367,7 @@ function ns.GroupQuestPins(pins, cluster)
         local same, byGiver
         if p.kind == "turnin" or h.pin.kind == "turnin" then
           for _, m in ipairs(h.members) do
-            if math.abs(m.x - p.x) < GIVER_DIST and math.abs(m.y - p.y) < GIVER_DIST and SameGiver(m, p) then same = true break end
+            if TurnInJoins(m, p) then same = true break end
           end
         else
           same, byGiver = SameSpot(h.pin, p, cluster)
@@ -308,6 +394,7 @@ function ns.GroupQuestPins(pins, cluster)
       -- a pin passed through (also an objective bundle, which has members of its own)
     elseif #e.members == 1 then
       out[i] = e.pin
+      if e.pin.gameToo then out[i], dropped = false, true end -- (19.11.2026) alone it is the game's "?": no second one
     else
       table.sort(e.members, function(a, b)
         -- (16.10.) the turn-ins first: the marker shows the "?" of what is ready to hand in
@@ -322,7 +409,16 @@ function ns.GroupQuestPins(pins, cluster)
       for k, v in pairs(e.members[1]) do g[k] = v end
       g.group = e.members
       out[i] = g
+      -- only turn-ins the game marks itself: its "?" stand there already
+      local all = true
+      for _, m in ipairs(e.members) do if not m.gameToo then all = false break end end
+      if all then out[i], dropped = false, true end
     end
+  end
+  if dropped then
+    local kept = {}
+    for _, e in ipairs(out) do if e then kept[#kept + 1] = e end end
+    out = kept
   end
   return out
 end
@@ -593,6 +689,14 @@ function ns.QuestPinTooltip(pin)
   -- (1.3.4) Daniel 08.10.: compact. The "!" already says "quest available" and the
   -- title carries the level; source and confirmation only with Shift held.
   local details = Details()
+  -- (19.11.2026, CurseForge Neidhardt: "if I hold Shift while hovering over an unaccepted quest ... it shows the quest
+  -- objectives before I accept it") what the quest asks for (Data/Quest_Texts.lua), first, with Shift only
+  if details and pin.kind ~= "turnin" then
+    local text = ns.QuestText and ns.QuestText(pin.questID)
+    if type(text) == "table" and type(text.o) == "string" and text.o ~= "" then
+      lines[#lines + 1] = "|cffdcc17f" .. L["Objective"] .. ":|r " .. text.o
+    end
+  end
   if pin.kind == "turnin" then
     -- (1.3.6) the card's "?" and green stripe say "turn in here"; the line stays only when nothing else follows
     for _, r in ipairs(ns.QuestRewardLines and ns.QuestRewardLines(pin.questID) or {}) do KV(L["Reward"], r) end
@@ -643,6 +747,7 @@ local GROUP_LINES = 10
 function ns.QuestGroupTooltip(pin)
   local lines = {}
   local group = pin.group or { pin }
+  local details = Details()
   for i, p in ipairs(group) do
     if i > GROUP_LINES then
       lines[#lines + 1] = L["and %d more"]:format(#group - GROUP_LINES)
@@ -655,6 +760,11 @@ function ns.QuestGroupTooltip(pin)
       lines[#lines + 1] = { title, L["Turn in here"], "good" } -- (16.10.) a turn-in in the giver's marker
     else
       lines[#lines + 1] = { title }
+      -- (19.11.2026) with Shift: what each quest asks for
+      local text = details and ns.QuestText and ns.QuestText(p.questID)
+      if type(text) == "table" and type(text.o) == "string" and text.o ~= "" then
+        lines[#lines + 1] = "   |cffb0b4bc" .. text.o .. "|r"
+      end
     end
     local dungeon = ns.QuestDungeon and ns.QuestDungeon(p.questID)
     if dungeon then lines[#lines + 1] = { "   " .. L["Dungeon"], ns.DungeonName(dungeon), "accent" } end
@@ -1182,6 +1292,11 @@ function Setup()
   -- (12.11.2026) the size depends on what the pin shows: set again once that is known (a pooled pin showed something else)
   function QuestPin:OnAcquired(pin)
     self.qdPin = nil
+    -- (19.11.2026) raised above the game's "!" for a turn-in (ns.RaiseTurnInPins): back to its own level
+    if self.qdLevelWas then
+      if self.SetFrameLevel then pcall(self.SetFrameLevel, self, self.qdLevelWas) end
+      self.qdLevelWas = nil
+    end
     Acquire(self, pin)
     -- (15.11.2026, CurseForge Neidhardt: "when I open my map, there's a micro-freeze") only when the frame was last sized
     -- for the other kind (! and ? against the rest): before, every pin was sized and placed a second time on every rebuild
@@ -1268,7 +1383,10 @@ function Setup()
     end
     if button == "LeftButton" and self.qdPin then
       local label = self.qdPin.group and ns.QuestGroupTitle(self.qdPin) or ns.QuestTitle(self.qdPin.questID)
-      ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), self.qdPin.x, self.qdPin.y, label, nil, self.qdPin)
+      local q = self.qdPin
+      -- (19.11.2026) a "?" on the continent map: the arrow goes to its point on the zone map
+      if q.zoneMap and q.zx then ns.PointArrowFromPin(q.zoneMap, q.zx, q.zy, label, nil, q)
+      else ns.PointArrowFromPin(ns.Num(self:GetMap():GetMapID()), q.x, q.y, label, nil, q) end
     end
   end
   -- (1.3.5, Daniel 10.10.: "right-click on a dungeon entrance zooms out of the map") The map canvas lets
@@ -1600,7 +1718,10 @@ function Setup()
     end
     lastSig = sig
     -- (07.11.2026) does the game draw its own ? here (after its providers and DonMap's clearing ran)
-    if ns.After then ns.After(0.3, function() ns.SafeCall("game quest pins", ns.CheckGameQuestPins) end) end
+    if ns.After then ns.After(0.3, function()
+      ns.SafeCall("game quest pins", ns.CheckGameQuestPins)
+      ns.SafeCall("turn-in above the game's !", ns.RaiseTurnInPins) -- (19.11.2026)
+    end) end
     return true
   end)
   -- (1.3.5) zoomed: only when objective dots were thinned for another zoom step (the budget follows the zoom), and
