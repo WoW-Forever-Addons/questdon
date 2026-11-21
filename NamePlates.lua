@@ -287,7 +287,11 @@ end)
 ns.On("QUEST_LOG_UPDATE", Queue)
 ns.On("QUEST_TURNED_IN", Queue)
 ns.On("PLAYER_LEVEL_UP", Queue)
-ns.On("QUEST_DATA_LOAD_RESULT", Queue)
+-- (21.11.2026, Ruckler) not for the answers of DonData's background level walk (ns.LevelScanAsked, DonData/Engine/Levels.lua)
+ns.On("QUEST_DATA_LOAD_RESULT", function(_, questID)
+  if ns.LevelScanAsked and ns.LevelScanAsked(questID) == true then return end
+  Queue()
+end)
 ns.On("PLAYER_ENTERING_WORLD", function()
   for _, unit in ipairs(Units()) do Release(unit) end
   units = {}

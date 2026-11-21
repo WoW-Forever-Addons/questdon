@@ -1,5 +1,9 @@
 # Changes
 
+## 1.10.1
+
+- **Smoother play:** fixed short stutters. In a dungeon the quest list no longer works out all dungeons after every kill or loot, only your dungeon when your quests change; the group line of a quest, the item buttons and the continent map do less work; the background check of quest levels no longer redraws the map twice a second.
+
 ## 1.10.0
 
 - **Skip the talk before a quest:** when an NPC first wants to chat and has a quest for you, Questdon clicks through the talk for you, also several steps in a row. It stops when there is more than one answer to choose. Hold Shift to read the talk; switch it off under Accept and turn in > More ("Skip the talk before a quest").

@@ -94,9 +94,17 @@ end
 -- (12.11.2026, Daniel: "Partyabgleich in Klassenfarben der Spieler und nur den Vornamen, das muss dann kurz gehalten
 -- werden") the class of each member, read with the roster; shown names are the first name in the class colour
 local classOf = {}
+-- (21.11.2026, Ruckler) what is read from the group's data (PartyProgress, PartyQuestLine, PartyOverview) is kept until
+-- the data changes (cacheGen: new data, roster, a member's quest log, a class learned, the option); the game's part
+-- still after GAME_AGE. They were worked out again every second for the quest list's signature.
+local cacheGen = 0
+local function Stale() cacheGen = cacheGen + 1 end
 local function NoteClass(unit, name)
   local ok, _, class = pcall(UnitClass, unit)
-  if ok and type(class) == "string" and ns.Usable(class) and class ~= "" then classOf[name] = class end
+  if ok and type(class) == "string" and ns.Usable(class) and class ~= "" and classOf[name] ~= class then
+    classOf[name] = class
+    Stale()
+  end
 end
 
 local function Roster()
@@ -247,6 +255,7 @@ ns.partyGen = 0 -- (12.11.2026) counts every change of the group's data: part of
 local gameCache -- (12.11.2026) the game's own data, read below
 local function Changed()
   ns.partyGen = ns.partyGen + 1
+  Stale()
   if gameCache and next(gameCache) then wipe(gameCache) end
   if refreshQueued then return end
   refreshQueued = true
@@ -503,6 +512,18 @@ local function OwnObjectiveTexts(questID)
   end
   return set
 end
+local function SameGameList(a, b)
+  if #a ~= #b then return false end
+  for i, m in ipairs(a) do
+    local o = b[i]
+    if m.shown ~= o.shown or m.complete ~= o.complete or m.failed ~= o.failed or m.state ~= o.state
+        or #m.objectives ~= #o.objectives then return false end
+    for j, x in ipairs(m.objectives) do
+      if x[1] ~= o.objectives[j][1] or x[2] ~= o.objectives[j][2] then return false end
+    end
+  end
+  return true
+end
 local function GameProgress(questID)
   local now = Now()
   local c = gameCache[questID]
@@ -547,6 +568,11 @@ local function GameProgress(questID)
       if #m.objectives == 0 and m.state then m.complete, m.failed = m.state == "done", m.state == "failed" end
     end
   end
+  -- (21.11.2026, Ruckler) the same data as last time: the old list stays (PartyProgress keeps its result with it)
+  if c and SameGameList(c.list, list) then
+    c.at = now
+    return c.list
+  end
   gameCache[questID] = { at = now, list = list }
   return list
 end
@@ -561,9 +587,17 @@ end
 
 -- { { name, text, complete, failed, objectives = { {fulfilled, required}, ... }, doneAt, source }, ... }
 -- source: "questdon" (the member's addon sent it) or "game".
+-- (21.11.2026, Ruckler) the result is kept (progCache) and shared by the callers: read it, do not change it
+-- (QuestdonAPI.PartyProgress hands out copies).
+local progCache, progGen = {}, -1 -- [questID] = { inLog, game list, out }
 function ns.PartyProgress(questID)
+  if not Enabled() then return {} end
+  if progGen ~= cacheGen then wipe(progCache) progGen = cacheGen end
+  local inLog = Channel() and ns.InQuestLog and ns.InQuestLog(questID) and true or false
+  local glist = inLog and GameProgress(questID) or nil
+  local c = progCache[questID]
+  if c and c[1] == inLog and c[2] == glist then return c[3] end
   local out = {}
-  if not Enabled() then return out end
   local have = {}
   if next(members) ~= nil then -- (1.23) no group data: nothing to sort
     for _, name in ipairs(SortedNames()) do
@@ -578,8 +612,8 @@ function ns.PartyProgress(questID)
     end
   end
   -- the game's data for the members without Questdon
-  if Channel() and ns.InQuestLog and ns.InQuestLog(questID) then
-    local list = GameProgress(questID)
+  if inLog then
+    local list = glist
     if #list > 0 then
       local roster, me, added = Roster(), UnitFullName("player"), false
       for _, m in ipairs(list) do
@@ -596,6 +630,9 @@ function ns.PartyProgress(questID)
       if added then table.sort(out, function(a, b) return a.name < b.name end) end
     end
   end
+  if questID ~= nil then progCache[questID] = { inLog, glist, out } end
+  -- (NoteClass in Roster above may have learned a class: that wiped nothing here yet, the next call reads again)
+  if progGen ~= cacheGen and questID ~= nil then progCache[questID] = nil end
   return out
 end
 
@@ -781,9 +818,25 @@ function ns.PartyShortState(p, plain)
 end
 -- The members with a quest in one short line: "Mae 5/8  Tova done" (class colours), nil if none.
 -- plain: "Mae 5/8, Tova done" without colours, for the chat; openOnly: only who is not done.
+local lineCache, lineGen = {}, -1 -- [questID][variant] = { PartyProgress result, line }
 function ns.PartyQuestLine(questID, plain, openOnly)
+  -- (21.11.2026, Ruckler) the same group data: the same line (it was put together every second)
+  local pp = ns.PartyProgress(questID)
+  if lineGen ~= cacheGen then wipe(lineCache) lineGen = cacheGen end
+  local v = (plain and 2 or 1) + (openOnly and 2 or 0)
+  local byQuest = lineCache[questID]
+  local c = byQuest and byQuest[v]
+  if c and c[1] == pp then return c[2] end
+  local line = ns.PartyQuestLineRead(pp, plain, openOnly)
+  if type(questID) == "number" then
+    if not byQuest then byQuest = {} lineCache[questID] = byQuest end
+    byQuest[v] = { pp, line }
+  end
+  return line
+end
+function ns.PartyQuestLineRead(pp, plain, openOnly)
   local parts = {}
-  for _, p in ipairs(ns.PartyProgress(questID)) do
+  for _, p in ipairs(pp) do
     if not (openOnly and p.complete) then
       parts[#parts + 1] = (plain and ns.PartyFirstName(p.name) or p.text) .. " " .. ns.PartyShortState(p, plain)
     end
@@ -794,7 +847,25 @@ end
 
 -- For the panel: quests in your log that members have too, and quests members
 -- have that you could pick up. { shared = { questIDs }, takeable = { questIDs } }
+-- (21.11.2026, Ruckler) kept until the group's data, the log's state or the level change, at most OVERVIEW_SECS; shared
+-- by the callers (read only)
+local OVERVIEW_SECS = 10
+local overview = { gen = -1 }
 function ns.PartyOverview()
+  if ns.PartyMemberCount() == 0 then return { shared = {}, takeable = {} } end
+  local h, n
+  if ns.QuestLogState then h, n = ns.QuestLogState() end
+  local level, now = ns.PlayerLevel and ns.PlayerLevel(), Now()
+  local o = overview
+  if o.result and o.gen == cacheGen and o.h == h and o.n == n and o.level == level and h ~= nil
+      and now - o.at >= 0 and now - o.at < OVERVIEW_SECS and not QD_TEST_FRESH_LOG then
+    return o.result
+  end
+  o.result = ns.PartyOverviewRead()
+  o.gen, o.h, o.n, o.level, o.at = cacheGen, h, n, level, now
+  return o.result
+end
+function ns.PartyOverviewRead()
   local shared, takeable, seen = {}, {}, {}
   if ns.PartyMemberCount() == 0 then return { shared = shared, takeable = takeable } end
   local log = {}
@@ -868,6 +939,7 @@ function ns.ApplyPartyProgress()
     wipe(members) wipe(incoming)
     Changed()
   end
+  Stale()
 end
 
 ---------------------------------------------------------------------------
@@ -886,6 +958,7 @@ ns.On("CHAT_MSG_ADDON", OnMessage)
 
 local lastRoster = {}
 ns.On("GROUP_ROSTER_UPDATE", function()
+  Stale()
   ResetSharing()
   local roster = Prune()
   if not roster then lastRoster = {} return end
@@ -901,6 +974,7 @@ ns.On("GROUP_ROSTER_UPDATE", function()
 end)
 
 ns.On("PLAYER_ENTERING_WORLD", function(_, isLogin, isReload)
+  Stale()
   ResetSharing()
   lastRoster = Prune() or {}
   if (isLogin or isReload) and Channel() then
@@ -911,6 +985,10 @@ ns.On("PLAYER_ENTERING_WORLD", function(_, isLogin, isReload)
 end)
 
 local function OnLog() if Enabled() and Channel() then Queue(1) end end
+-- (21.11.2026, Ruckler) a member's quest log changed: what was read from the group is read again
+ns.On("UNIT_QUEST_LOG_CHANGED", function(_, unit)
+  if type(unit) == "string" and (unit:find("^party") or unit:find("^raid")) then Stale() end
+end)
 ns.On("QUEST_LOG_UPDATE", OnLog)
 ns.On("QUEST_ACCEPTED", OnLog)
 ns.On("QUEST_TURNED_IN", OnLog)

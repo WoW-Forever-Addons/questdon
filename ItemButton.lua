@@ -190,6 +190,7 @@ ns.On("QUEST_FINISHED", function()
     -- (Questdon review 3) not when the full log refused it: the starter comes back once a slot is free
     if not ns.InQuestLog(id) and not ns.IsQuestDone(id) and not ns.QuestLogFull() then
       declined[id] = true
+      listStale = true
       ns.QueueRefresh("itembutton")
     end
   end)
@@ -260,14 +261,28 @@ local function CreateButton()
 end
 
 -- (1.3.8, F4) Charges count too (an item with 5 uses shows 5), like the game's own buttons.
+-- (21.11.2026, Ruckler) kept until the bags change, at most a second (the list's buttons ask five times a second); read
+-- directly outside a protected call (tests)
+local usesOf, usesAt = {}, nil
+ns.On("BAG_UPDATE_DELAYED", function() wipe(usesOf) end)
+ns.On("BAG_UPDATE", function() wipe(usesOf) end)
+local ReadUses
 local function ItemUses(itemID)
+  if not (itemID and ns.InScope and ns.InScope()) then return ReadUses(itemID) end
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if not usesAt or now - usesAt < 0 or now - usesAt >= 1 then wipe(usesOf) usesAt = now end
+  local n = usesOf[itemID]
+  if n == nil then n = ReadUses(itemID) or false usesOf[itemID] = n end
+  return n or nil
+end
+function ReadUses(itemID)
   local n = ns.Num(ns.Value(C_Item.GetItemCount, itemID, false, true))
   local stack = ns.Num(ns.Value(C_Item.GetItemCount, itemID))
   if stack and (not n or stack > n) then n = stack end
   return n
 end
 local function ShowCount(itemID)
-  button:SetCount(ItemUses(itemID))
+  button:SetCount(ReadUses(itemID)) -- (21.11.2026) on its events only: read as it is
 end
 
 -- (1.3.8, F4) Far from where the item is used (the item's quest's nearest known spot): the icon is dimmed. Unknown
@@ -277,7 +292,10 @@ local function LookOf(b)
   if not (b and b.itemID and b:IsShown()) then return end
   local far = false
   if b.questID and ns.QuestNearestPoint then
-    local _, dist = ns.QuestNearestPoint(b.questID)
+    -- (21.11.2026, Ruckler) the quest list measured it this second already (the same nearest point)
+    local known, dist = false, nil
+    if ns.TrackerQuestDistance then known, dist = ns.TrackerQuestDistance(b.questID) end
+    if not known then dist = select(2, ns.QuestNearestPoint(b.questID)) end
     far = type(dist) == "number" and dist > FAR_YARDS
   end
   b:SetFar(far)
@@ -329,6 +347,11 @@ end
 local function SamePlace(b, s)
   return b.spotPoint == s[5] and math.abs((b.spotX or 0) - s[3]) < 1 and math.abs((b.spotY or 0) - s[4]) < 1
 end
+-- (21.11.2026, Ruckler) count and alpha only when they changed (five times a second for every button)
+local function SetCountAlpha(b, n, alpha)
+  if b.shownCount ~= n or b.shownItem ~= b.itemID then b.shownCount, b.shownItem = n, b.itemID b:SetCount(n) end
+  if alpha and b.shownAlpha ~= alpha then b.shownAlpha = alpha b:SetAlpha(alpha) end
+end
 local function SyncList()
   if not (Kit and Kit.ItemButton) then return end
   spotN = 0
@@ -344,8 +367,7 @@ local function SyncList()
       end
       b:SetWaiting(not match)
       if not match then off = true end
-      b:SetCount(ItemUses(b.itemID))
-      if alpha then b:SetAlpha(alpha) end
+      SetCountAlpha(b, ItemUses(b.itemID), alpha)
     end
     listPending = off
     return
@@ -362,8 +384,7 @@ local function SyncList()
       b:SetPoint(s[5], UIParent, "BOTTOMLEFT", s[3], s[4])
     end
     b:SetWaiting(false)
-    b:SetCount(ItemUses(s[1]))
-    if alpha then b:SetAlpha(alpha) end
+    SetCountAlpha(b, ItemUses(s[1]), alpha)
     if not b:IsShown() then b:Show() LookOf(b) end
   end
   for i = spotN + 1, used do
@@ -380,7 +401,7 @@ function ns.ListItemButtons() return pool, used, listPending end -- (tests, /qd 
 
 local function Refresh()
   if not button then return end
-  listStale = true -- log or bags changed: the list's items are worked out again
+  -- (21.11.2026, Ruckler) the list's items are marked stale by their own events below (ListStale), not by every refresh
   -- (12.11.2026) with the buttons in the quest list the single button is off by default; it keeps its item all the
   -- same, hidden, so its key binding (CLICK QuestdonItemButton) goes on working
   local shown = ns.Active("questItemButton")
@@ -662,7 +683,8 @@ end)
 -- with the quest displays (Core.lua): the quest log is read once.
 ns.RegisterRefresh("itembutton", Refresh)
 local function QueueRefresh() ns.QueueRefresh("itembutton") end
-ns.RefreshItemButton = QueueRefresh
+local function QueueRefreshAll() listStale = true ns.QueueRefresh("itembutton") end
+ns.RefreshItemButton = QueueRefreshAll
 
 function ns.ResetButtonPosition()
   ns.db.buttonPos = nil
@@ -681,10 +703,25 @@ ns.On("BAG_UPDATE_DELAYED", QueueRefresh)
 ns.On("SUPER_TRACKING_CHANGED", QueueRefresh)
 -- (12.11.2026) the list's items are stale at once, not only when the bundled refresh has run (the quest list may be
 -- built before it)
-local function ListStale() ns.ListItemsStale() end
-ns.On("QUEST_LOG_UPDATE", ListStale)
-ns.On("BAG_UPDATE_DELAYED", ListStale)
-ns.On("PLAYER_ENTERING_WORLD", ListStale)
+-- (21.11.2026, Ruckler) a quest log event only when the log's state changed (a quest more or less, one complete, an
+-- objective done: ns.QuestLogState) or ten seconds after the last time (an item's data the client had not loaded yet):
+-- the bags were read again after every kill and loot
+local staleAt
+local function ListStale() staleAt = ns.Num(ns.Value(GetTime)) or 0 ns.ListItemsStale() end
+local stateH, stateN
+ns.On("QUEST_LOG_UPDATE", function()
+  local h, n
+  if ns.QuestLogState then h, n = ns.QuestLogState() end
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if h == nil or h ~= stateH or n ~= stateN or not staleAt or now - staleAt < 0 or now - staleAt >= 10 then
+    stateH, stateN = h, n
+    ListStale()
+  end
+end)
+for _, e in ipairs({ "BAG_UPDATE_DELAYED", "PLAYER_ENTERING_WORLD", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN",
+    "PLAYER_LEVEL_UP" }) do
+  ns.On(e, ListStale)
+end
 ns.On("BAG_UPDATE_COOLDOWN", UpdateCooldown)
 ns.On("PLAYER_REGEN_ENABLED", function()
   if pendingStop and button then pendingStop = false button:StopMovingOrSizing() SavePosition() end

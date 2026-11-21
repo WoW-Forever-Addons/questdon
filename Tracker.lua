@@ -194,6 +194,7 @@ end
 -- distances are measured again. Outside a protected call (tests, other addons) they are read anew as before.
 local ENTRY_SECS = 10
 local entryList, entryByID, entryGen, entryLevel, entryAt, entryRead = {}, {}, nil, nil, nil, 0
+local entryDistAt -- (21.11.2026, Ruckler) when the list measured its distances (ns.TrackerQuestDistance)
 local greyAsk = {}
 local function FillEntry(e, id)
   e.title = ns.QuestTitle(id)
@@ -254,9 +255,21 @@ local function Entries()
     end
   end
   if ns.TimingSeen then ns.SafeCall("timing", ns.TimingSeen, entryList, now) end -- (18.10.) play times: seconds in each objective area
+  entryDistAt = (ns.InScope and ns.InScope() and not QD_TEST_FRESH_LOG) and now or nil -- (21.11.2026) when measured
   return entryList
 end
 ns.TrackerEntries = Entries -- (tests)
+-- (21.11.2026, Ruckler) the distance the list measured within the last second and a half: true, dist (dist nil: no
+-- point); false when it did not (the item buttons measure it themselves then)
+function ns.TrackerQuestDistance(questID)
+  local at = entryDistAt
+  if not (at and ns.InScope and ns.InScope()) then return false end
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if now - at < 0 or now - at > 1.5 then return false end
+  local e = entryByID[questID]
+  if type(e) ~= "table" or e.read ~= entryRead then return false end
+  return true, e.dist
+end
 
 -- the picked quest: the arrow's quest, else the game's super-tracked quest, else the nearest
 local Hidden -- (review 3) defined below, used by FocusID
@@ -1575,24 +1588,40 @@ function DG.FocusIn(list, id)
 end
 -- the quests to pick up: inside (giver in the dungeon) and missed (giver outside), worked out again with the log, the
 -- level or after 10 seconds (the overview reads some 600 dungeon quests)
+-- (21.11.2026, Ruckler) only this dungeon's quests (ns.DungeonAvailable, the overview's rule), and again only when the
+-- log's quests (not their counters: each kill raised LogGen), a turn-in, the level or the dungeon changed
+DG.doneGen = 0
+ns.On("QUEST_TURNED_IN", function() DG.doneGen = DG.doneGen + 1 end)
+function DG.LogKey()
+  local gen = ns.LogGen and ns.LogGen()
+  local fresh = QD_TEST_FRESH_LOG or not (ns.InScope and ns.InScope())
+  if not fresh and gen ~= nil and DG.keyGen == gen then return DG.keyH, DG.keyN end
+  local h, n = 0, 0
+  for _, info in ipairs(ns.QuestLogEntries()) do
+    local q = ns.Num(info.questID)
+    if q then n = n + 1 h = (h * 31 + q) % 4294967291 end
+  end
+  DG.keyGen, DG.keyH, DG.keyN = not fresh and gen or nil, h, n
+  return h, n
+end
+DG.pickLevel = {}
+function DG.ByLevel(a, b)
+  local lv = DG.pickLevel
+  local la, lb = lv[a] or 0, lv[b] or 0
+  if la ~= lb then return la < lb end
+  return a < b
+end
 function DG.Pickups(inst)
   local p = DG.pick
   local now = ns.Num(ns.Value(GetTime)) or 0
-  local gen, level = ns.LogGen and ns.LogGen(), ns.PlayerLevel and ns.PlayerLevel()
-  if p.inst == inst and p.gen == gen and p.level == level and p.at and now >= p.at and now - p.at < AVAIL_SECS then return p end
-  p.inst, p.gen, p.level, p.at = inst, gen, level, now
+  local h, n = DG.LogKey()
+  local level = ns.PlayerLevel and ns.PlayerLevel()
+  if p.inst == inst and p.h == h and p.n == n and p.dgen == DG.doneGen and p.level == level and p.at and now >= p.at
+      and now - p.at < AVAIL_SECS then return p end
+  p.inst, p.h, p.n, p.dgen, p.level, p.at = inst, h, n, DG.doneGen, level, now
   local inside, missed = {}, {}
-  for _, d in ipairs(ns.DungeonOverview and ns.DungeonOverview() or {}) do
-    if d.inst == inst then
-      for _, id in ipairs(d.available or {}) do
-        if ns.QuestStartsInside and ns.QuestStartsInside(id) then inside[#inside + 1] = id else missed[#missed + 1] = id end
-      end
-    end
-  end
-  local function ByLevel(a, b)
-    local la, lb = ns.QuestLevel(a) or 0, ns.QuestLevel(b) or 0
-    if la ~= lb then return la < lb end
-    return a < b
+  for _, id in ipairs(ns.DungeonAvailable and ns.DungeonAvailable(inst) or {}) do
+    if ns.QuestStartsInside and ns.QuestStartsInside(id) then inside[#inside + 1] = id else missed[#missed + 1] = id end
   end
   -- (21.11.2026, Daniel: "Bereits erledigte Quests in diesem Dungeon, die können dann ja auch mit angezeigt werden ...
   -- grün ... Auch einklappbar wie alles andere") the dungeon's quests you turned in
@@ -1600,9 +1629,15 @@ function DG.Pickups(inst)
   for _, id in ipairs(ns.DungeonQuestIDs and ns.DungeonQuestIDs(inst) or {}) do
     if ns.IsQuestDone(id) and not ns.InQuestLog(id) then done[#done + 1] = id end
   end
-  table.sort(inside, ByLevel)
-  table.sort(missed, ByLevel)
-  table.sort(done, ByLevel)
+  -- (21.11.2026, Ruckler) each quest's level read once, not in every comparison
+  local lv = DG.pickLevel
+  wipe(lv)
+  for _, list in ipairs({ inside, missed, done }) do
+    for _, id in ipairs(list) do lv[id] = ns.QuestLevel(id) end
+  end
+  table.sort(inside, DG.ByLevel)
+  table.sort(missed, DG.ByLevel)
+  table.sort(done, DG.ByLevel)
   p.inside, p.missed, p.done = inside, missed, done
   return p
 end

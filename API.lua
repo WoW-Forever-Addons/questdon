@@ -68,7 +68,17 @@ end
 -- { { name, complete, failed, objectives = { {fulfilled, required}, ... } }, ... },
 -- empty when nobody in the group has the quest or the option is off.
 function API.PartyProgress(questID)
-  return ns.PartyProgress and ns.PartyProgress(questID) or {}
+  -- (21.11.2026, Ruckler) Questdon keeps its result: other addons get copies
+  local out = {}
+  for i, p in ipairs(ns.PartyProgress and ns.PartyProgress(questID) or {}) do
+    local c = {}
+    for k, v in pairs(p) do c[k] = v end
+    local objs = {}
+    for j, o in ipairs(p.objectives or {}) do objs[j] = { o[1], o[2] } end
+    c.objectives = objs
+    out[i] = c
+  end
+  return out
 end
 
 -- Arrow: point it at a target { mapID, x, y (0-1), label } or nil to release it.

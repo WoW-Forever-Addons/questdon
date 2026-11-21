@@ -875,7 +875,11 @@ end
 ns.OnInit(Setup)
 ns.On("QUEST_LOG_UPDATE", Queue)
 local function QueueFresh() ForgetBase() Queue() end
-ns.On("QUEST_DATA_LOAD_RESULT", QueueFresh)
+-- (21.11.2026, Ruckler) not for the answers of DonData's background level walk (ns.LevelScanAsked, DonData/Engine/Levels.lua)
+ns.On("QUEST_DATA_LOAD_RESULT", function(_, questID)
+  if ns.LevelScanAsked and ns.LevelScanAsked(questID) == true then return end
+  QueueFresh()
+end)
 ns.On("QUESTLINE_UPDATE", QueueFresh)
 ns.On("BAG_UPDATE_DELAYED", Queue) -- the base pins (quests to take, turn-ins, entrances) do not read the bags
 ns.On("PLAYER_LEVEL_UP", QueueFresh)

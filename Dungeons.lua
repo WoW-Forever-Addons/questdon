@@ -618,7 +618,23 @@ end
 
 -- The dungeon the player is in: instanceID or nil (map of the player or one
 -- of its parents is a dungeon map of the data).
+-- (21.11.2026, Ruckler) kept until the zone changes (the quest list asks every second): ZONE_CHANGED_NEW_AREA,
+-- ZONE_CHANGED_INDOORS, PLAYER_ENTERING_WORLD; an empty answer (map not known yet) is asked again after 2 seconds.
+-- Only inside a protected call (event, timer, UI part), like DonData's log values
+local hereKnown, hereInst, hereAt = false, nil, nil
+for _, e in ipairs({ "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED", "PLAYER_ENTERING_WORLD" }) do
+  ns.On(e, function() hereKnown = false end)
+end
+function ns.ForgetCurrentDungeon() hereKnown = false end -- (tests)
+local ReadCurrentDungeon
 function ns.CurrentDungeon()
+  if not (ns.InScope and ns.InScope()) then return ReadCurrentDungeon() end -- (tests, other addons: read directly)
+  local now = Now()
+  if hereKnown and (hereInst or (hereAt and now - hereAt >= 0 and now - hereAt < 2)) then return hereInst end
+  hereInst, hereKnown, hereAt = ReadCurrentDungeon(), true, now
+  return hereInst
+end
+function ReadCurrentDungeon()
   Index()
   local m = C_Map and ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
   for _ = 1, 4 do
@@ -725,6 +741,25 @@ function ns.DungeonOverview()
     return tostring(a.name) < tostring(b.name)
   end)
   return list
+end
+
+-- (21.11.2026, Ruckler) the quests of one dungeon you can pick up: the overview's "available" of that dungeon alone (the
+-- same rule and order), for the quest list inside (it read all some 600 dungeon quests). log: { [questID] = true } or nil
+function ns.DungeonAvailable(inst, log)
+  Index()
+  local out = {}
+  if not log then
+    log = {}
+    for _, info in ipairs(ns.QuestLogEntries()) do log[info.questID] = true end
+  end
+  local level = ns.PlayerLevel()
+  for _, id in ipairs(byDungeon[inst] or {}) do
+    local minLevel = Q[id][LEVEL]
+    if not log[id] and not (level and minLevel and minLevel > level) and ns.ShowAsAvailable(id) then
+      out[#out + 1] = id
+    end
+  end
+  return out
 end
 
 -- Counts over an overview: quests in the log, quests to pick up.

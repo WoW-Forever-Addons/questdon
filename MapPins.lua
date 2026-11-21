@@ -98,6 +98,16 @@ function ns.IsContinentMap(mapID)
   return type(info) == "table" and ns.Num(info.mapType) == CONTINENT
 end
 ns.gameWideTurnIns = { ids = {} }
+-- (21.11.2026, Ruckler) what the game pinned is kept per continent (wideByMap): opening a continent seen before builds
+-- with it at once, and a refresh follows only when the set really changed and the option uses it (skipGameGivers); every
+-- opening and each switch of the continent built the map a second time 0.3 s later
+local wideByMap = {}
+local function WideKnown(mapID)
+  local w = ns.gameWideTurnIns
+  if w.map == mapID then return w.ids end
+  return wideByMap[mapID]
+end
+ns.GameWideKnown = WideKnown
 function ns.CheckGameQuestPins()
   local map = WorldMapFrame
   if not (map and map.IsShown and ns.True(ns.Value(map.IsShown, map))) then return end
@@ -108,16 +118,15 @@ function ns.CheckGameQuestPins()
   if ns.IsContinentMap(mapID) then
     local ids = {}
     GameQuestPinCount(map, ids)
-    local old = ns.gameWideTurnIns
-    local same = old.map == mapID
-    if same then
-      for id in pairs(ids) do if not old.ids[id] then same = false break end end
-      for id in pairs(old.ids) do if not ids[id] then same = false break end end
-    end
-    if not same then
+    local old = WideKnown(mapID) or {}
+    local same = true
+    for id in pairs(ids) do if not old[id] then same = false break end end
+    if same then for id in pairs(old) do if not ids[id] then same = false break end end end
+    if ns.gameWideTurnIns.map ~= mapID or not same then
       ns.gameWideTurnIns = { map = mapID, ids = ids }
-      if ns.QueueRefresh then ns.QueueRefresh("map") end
+      wideByMap[mapID] = ids
     end
+    if not same and ns.db.skipGameGivers and ns.QueueRefresh then ns.QueueRefresh("map") end
     return
   end
   local fn = C_QuestLog and C_QuestLog.GetQuestsOnMap
@@ -199,7 +208,7 @@ local function TurnIns(mapID)
   local list, game = {}, {}
   if not ns.db.learnPins then return list, game end
   local wide = ns.IsContinentMap(mapID)
-  local gameWide = wide and ns.db.skipGameGivers and ns.gameWideTurnIns.map == mapID and ns.gameWideTurnIns.ids or {}
+  local gameWide = wide and ns.db.skipGameGivers and WideKnown(mapID) or {}
   for _, info in ipairs(ns.QuestLogEntries()) do
     local questID = info.questID
     if ns.IsQuestComplete(questID) and not (ns.IsAutoComplete and ns.IsAutoComplete(questID))
@@ -1874,7 +1883,11 @@ ns.On("QUEST_LOG_UPDATE", Queue)
 for _, e in ipairs({ "SUPER_TRACKING_CHANGED", "QUEST_WATCH_LIST_CHANGED" }) do
   ns.On(e, function() if ns.db and ns.db.objectivePinsTrackedOnly then ns.RefreshPins() end end)
 end
-ns.On("QUEST_DATA_LOAD_RESULT", Queue)
+-- (21.11.2026, Ruckler) not for the answers of DonData's background level walk (ns.LevelScanAsked, DonData/Engine/Levels.lua)
+ns.On("QUEST_DATA_LOAD_RESULT", function(_, questID)
+  if ns.LevelScanAsked and ns.LevelScanAsked(questID) == true then return end
+  Queue()
+end)
 ns.On("QUESTLINE_UPDATE", Queue)
 ns.On("PLAYER_LEVEL_UP", Queue) -- (1.23) new level: other quests available (minimap and nameplates did this already)
 ns.On("BAG_UPDATE_DELAYED", function()
