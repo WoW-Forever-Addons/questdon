@@ -882,8 +882,7 @@ L["Questdon: everyone is done with %s."] = "Questdon: Alle sind fertig mit %s."
 L["Still open: %s"] = "Noch offen: %s"
 -- (16.11.2026) Blizzard look of the quest book and the dialogs
 L["Windows"] = "Fenster"
-L["Windows in the game's look"] = "Fenster im Look des Spiels"
-L["Questdon's windows look like the game's own: the quest book and the dialogs with the game's frame, tabs, buttons and lists. The quest list keeps its own look (above). The options then open in the game's settings (Options > AddOns > Questdon) after a /reload."] = "Questdons Fenster sehen aus wie die des Spiels: Questbuch und Dialoge mit Rahmen, Reitern, Knöpfen und Listen des Spiels. Die Questliste behält ihren eigenen Look (oben). Die Optionen öffnen sich dann nach einem /reload in den Einstellungen des Spiels (Optionen > AddOns > Questdon)."
+L["The quest list keeps its own look (above)."] = "Die Questliste behält ihren eigenen Look (oben)."
 L["The quest book could not be built in the game's look, it opens in the Don look. /qd diag says why."] = "Das Questbuch ließ sich nicht im Look des Spiels bauen und öffnet im Don-Look. /qd diag sagt warum."
 -- (17.11.2026) group progress in quest-list tooltips (PR by Djulio)
 L["Already completed"] = "Bereits abgeschlossen"
@@ -912,3 +911,15 @@ L["Questdon: Questdon's own window with background and frame. Blizzard: reads li
 -- (18.11.2026) vendor greeting
 L["Skip the greeting of vendors"] = "Begrüßung bei Händlern überspringen"
 L["Opens the goods of a vendor right away when browsing them is the only choice in the dialog. Hold Shift to see the greeting."] = "Öffnet die Waren eines Händlers sofort, wenn das Ansehen der Waren die einzige Auswahl im Dialog ist. Shift halten, um die Begrüßung zu sehen."
+L["Elite"] = "Elite"
+L["Raid"] = "Schlachtzug"
+L["Skip the talk before a quest"] = "Gespräch vor einer Quest überspringen"
+L["Clicks through an NPC's dialog until the quest shows up, when the NPC has a quest for you and the dialog offers only one choice. Stops where you can choose between several answers. Hold Shift to read the dialog."] = "Klickt sich durch den Dialog eines NPCs, bis die Quest erscheint, wenn der NPC eine Quest für dich hat und der Dialog nur eine Auswahl bietet. Hält an, wo du zwischen mehreren Antworten wählen kannst. Shift halten, um den Dialog zu lesen."
+-- (21.11.2026) the quest list in a dungeon (Tracker.lua ns.TrackerDungeon)
+L["Whole list"] = "Ganze Liste"
+L["Dungeon only"] = "Nur Dungeon"
+L["Can be picked up"] = "Annehmbar"
+L["Quest giver outside the dungeon"] = "Questgeber außerhalb des Dungeons"
+L["No quest of this dungeon in your log."] = "Keine Quest dieses Dungeons in deinem Log."
+L["The quest giver stands outside the dungeon: pick it up there before you go in next time."] = "Der Questgeber steht außerhalb des Dungeons: nimm die Quest beim nächsten Mal dort an, bevor du hineingehst."
+L["The quest giver stands in this dungeon."] = "Der Questgeber steht in diesem Dungeon."

@@ -899,8 +899,7 @@ L["Questdon: everyone is done with %s."] = "Questdon：所有人都完成了 %s�
 L["Still open: %s"] = "尚未完成：%s"
 -- (16.11.2026) Blizzard look of the quest book and the dialogs
 L["Windows"] = "視窗"
-L["Windows in the game's look"] = "遊戲風格的視窗"
-L["Questdon's windows look like the game's own: the quest book and the dialogs with the game's frame, tabs, buttons and lists. The quest list keeps its own look (above). The options then open in the game's settings (Options > AddOns > Questdon) after a /reload."] = "Questdon 的視窗看起來就像遊戲本身的視窗：任務手冊和對話框使用遊戲的外框、分頁、按鈕和清單。任務清單保留自己的外觀（上方）。/reload 之後，選項會在遊戲的設定中開啟（選項 > 插件 > Questdon）。"
+L["The quest list keeps its own look (above)."] = "任務清單保留自己的外觀（上方）。"
 L["The quest book could not be built in the game's look, it opens in the Don look. /qd diag says why."] = "無法以遊戲風格建立任務手冊，改以 Don 風格開啟。/qd diag 會說明原因。"
 -- (17.11.2026) group progress in quest-list tooltips (PR by Djulio)
 L["Already completed"] = "已完成"
@@ -929,3 +928,15 @@ L["Questdon: Questdon's own window with background and frame. Blizzard: reads li
 -- (18.11.2026) vendor greeting
 L["Skip the greeting of vendors"] = "跳過商人的問候語"
 L["Opens the goods of a vendor right away when browsing them is the only choice in the dialog. Hold Shift to see the greeting."] = "當瀏覽商品是對話中唯一的選項時，直接開啟商人的商品。按住 Shift 可看到問候語。"
+L["Elite"] = "精英"
+L["Raid"] = "團隊"
+L["Skip the talk before a quest"] = "跳過任務前的對話"
+L["Clicks through an NPC's dialog until the quest shows up, when the NPC has a quest for you and the dialog offers only one choice. Stops where you can choose between several answers. Hold Shift to read the dialog."] = "當NPC有你可接的任務且對話只有一個選項時，自動點過對話直到任務出現。遇到可在多個回答中選擇時會停下。按住Shift可閱讀對話。"
+-- (21.11.2026) the quest list in a dungeon (Tracker.lua ns.TrackerDungeon)
+L["Whole list"] = "完整列表"
+L["Dungeon only"] = "僅地城"
+L["Can be picked up"] = "可接任務"
+L["Quest giver outside the dungeon"] = "任務給予者在地城外"
+L["No quest of this dungeon in your log."] = "你的任務日誌中沒有這個地城的任務。"
+L["The quest giver stands outside the dungeon: pick it up there before you go in next time."] = "任務給予者在地城外：下次進入前先在那裡接取任務。"
+L["The quest giver stands in this dungeon."] = "任務給予者在這個地城裡。"

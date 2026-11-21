@@ -350,17 +350,32 @@ end }
 -- (yellow in the log, blue available, grey later, green done); a pill only when it is ready to turn in. A chain: its
 -- parts as dots and "3/6" on the right, a click opens the parts (indented, a mark "1", "2" ...); a step before a dungeon
 -- quest: its number as the mark.
+-- (21.11.2026) "Elite", "Dungeon" or "Raid" (DonData ns.QuestTagText: the game's tag from the log first), nil for others
+function UI.GroupText(id) return id ~= nil and ns.QuestTagText and ns.QuestTagText(id) or nil end
+function UI.IsGroupQuest(id) return UI.GroupText(id) ~= nil end
 function UI.QuestView(it)
   local lv = tonumber(it.level)
   if not (lv and lv > 0) then it.level, it.levelStatus = "?", "trivial" end
   it.status = UI.MARK[it.group] or "grey"
   it.done = it.group == "done" or nil
   it.pill = (it.group == "log" and it.stateColor == "good" and it.stateText) and { it.stateText, "ready" } or nil
+  -- (21.11.2026, Daniel: "Elite anzeige ... im Questbook") a group or elite quest gets the kit's red pill, as the quest
+  -- list's " (Group)"; "ready" goes first, a quest turned in needs none
+  it.groupPill, it.groupBare = nil, nil
+  local groupText = not it.pill and not it.done and UI.GroupText(it.questID)
+  if groupText then
+    it.pill = { groupText, "elite" }
+    it.groupPill = it.pill
+  end
   if it.step then it.chain = tostring(it.step) end
   -- (18.11.2026, Daniel's picture: "Fight for Warsong G..." beside empty room) nothing on the right (no count, pill,
   -- ring or dots): the right column's room goes to the name and the line below
   local bare = (it.right or "") == "" and (it.right2 or "") == "" and not it.pill and not it.dots and not it.ring
   it.rightWidth = bare and 0 or nil
+  -- (21.11.2026) bare but for the group pill: the right column's room comes back when the pill moves (Layout)
+  if it.groupPill then
+    it.groupBare = (it.right or "") == "" and (it.right2 or "") == "" and not it.dots and not it.ring
+  end
   it.tooltipFn = UI.TipOf
 end
 UI.KINDS.quest = { h = ROW_H, make = function(list)
@@ -373,8 +388,30 @@ UI.KINDS.quest = { h = ROW_H, make = function(list)
     base(self, it, index, l)
     self.onClick = it.onClick
   end
+  -- (21.11.2026) the group pill takes the right column: where the name would keep less than GROUP_NAME_MIN px (card
+  -- open beside a narrow list), the pill goes and "Group" stands red in front of the line below
+  local baseLayout = r.Layout
+  function r:Layout(w)
+    local it = self.item
+    if not (it and it.groupPill) then return baseLayout(self, w) end
+    it.pill = it.groupPill
+    if it.groupBare then it.rightWidth = nil end
+    self.pill:SetPill(it.groupPill[1], it.groupPill[2]) self.pill:Show()
+    self.sub:SetText(it.sub or "")
+    baseLayout(self, w)
+    local b = tonumber(self.title._fitBudget)
+    if b and b < UI.GROUP_NAME_MIN then
+      it.pill = nil
+      if it.groupBare then it.rightWidth = 0 end
+      self.pill:Hide()
+      local front = Colorize(it.groupPill[1], "critical")
+      self.sub:SetText((it.sub or "") ~= "" and (front .. "  ·  " .. it.sub) or front)
+      baseLayout(self, w)
+    end
+  end
   return r
 end }
+UI.GROUP_NAME_MIN = 280
 
 -- Journal line: the event's icon, "[6] Title", what happened, zone, time and how long the quest took; XP and money on
 -- the right; level-ups with a gold mark; a screenshot's picture on the right when the album has it.
@@ -3326,7 +3363,8 @@ function UI.RenderDetail()
   if yd then meta[#meta + 1] = L["%d yards"]:format(yd) end
   if not (group == "log" and q.pillColor == "good") then meta[#meta + 1] = q.pill end
   d:SetHead({ level = lv or "?", levelStatus = not lv and "trivial" or nil, title = q.title or "",
-    meta = table.concat(meta, "  ·  "), pill = (group == "log" and q.pillColor == "good") and { q.pill, "ready" } or nil })
+    meta = table.concat(meta, "  ·  "), pill = (group == "log" and q.pillColor == "good") and { q.pill, "ready" }
+      or (group ~= "done" and UI.IsGroupQuest(id)) and { UI.GroupText(id), "elite" } or nil }) -- (21.11.2026) as in the list
   local api = rawget(_G, "LeveldonAPI")
   UI.Actions((type(api) == "table" and type(api.Report) == "function") and { "arrow", "map", "report" } or { "arrow", "map" })
   if ns.PostcardHide then ns.PostcardHide(d) end

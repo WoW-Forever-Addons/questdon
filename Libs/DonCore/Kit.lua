@@ -1,4 +1,4 @@
-local Kit = LibStub("DonCore-1.0"):NewModule("Kit", 30)
+local Kit = LibStub("DonCore-1.0"):NewModule("Kit", 33)
 
 ---------------------------------------------------------------------------
 -- DonCore module "Kit" (minor 1, 01.11.2026, STYLEKIT_PLAN.md "Schritt 2"; minor 2, 02.11.2026: Kit.IconButton, the symbols from
@@ -82,7 +82,7 @@ local Kit = LibStub("DonCore-1.0"):NewModule("Kit", 30)
 ---------------------------------------------------------------------------
 if not Kit then return end -- the same or a newer Kit is loaded already
 local Core = LibStub("DonCore-1.0")
-Kit.VERSION = 30
+Kit.VERSION = 33
 
 local WHITE = "Interface\\Buttons\\WHITE8x8"
 local floor, ceil, max, min, abs, pi, sin, cos = math.floor, math.ceil, math.max, math.min, math.abs, math.pi, math.sin, math.cos
@@ -3310,9 +3310,24 @@ end
 -- when it loses the focus, opts.clear (a small x),
 -- Tab goes to box.nextBox (box:SetNext(other)). e:GetValue() (a number when numeric), e:SetValue(v), e:Layout(w)
 ---------------------------------------------------------------------------
+-- (minor 31, Daniel 20.11.2026: "mit Enter oder mit der Tab-Taste bestätigen ... wenn ich mit einem Linksklick irgendwo
+-- auf dem Bildschirm das quasi auch erneuert wird") a click anywhere outside a Don edit box takes its focus: the box's
+-- focus-lost handler commits what was typed, as Enter does. One watcher for all Don addons (frame DonCoreFocusWatch);
+-- only boxes marked _donFocusOut are touched, never the chat or other addons' boxes.
+local function WatchFocusOut(e)
+  e._donFocusOut = true
+  if _G.DonCoreFocusWatch or not CreateFrame then return end
+  local w = CreateFrame("Frame", "DonCoreFocusWatch", UIParent)
+  if not pcall(w.RegisterEvent, w, "GLOBAL_MOUSE_DOWN") then return end
+  w:SetScript("OnEvent", function()
+    local f = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
+    if f and f._donFocusOut and f.ClearFocus and not (f.IsMouseOver and f:IsMouseOver()) then f:ClearFocus() end
+  end)
+end
 function Kit.EditBox(parent, opts)
   opts = opts or {}
   local e = CreateFrame("EditBox", nil, parent)
+  WatchFocusOut(e)
   e:SetHeight(S.button)
   Call(e, "SetAutoFocus", false)
   local fo = Kit.Font("row")
@@ -3341,7 +3356,8 @@ function Kit.EditBox(parent, opts)
     if self.clear then if t == "" then self.clear:Hide() else self.clear:Show() end end
     if user then Safe("edit", opts.onChange, t, self) end
   end
-  if e.clear then e.clear:SetScript("OnClick", function() e:SetText("") e:ClearFocus() Changed(e, true) end) end
+  -- (minor 32) opts.onClear: called after the x emptied the box
+  if e.clear then e.clear:SetScript("OnClick", function() e:SetText("") e:ClearFocus() Changed(e, true) if opts.onClear then Safe("edit", opts.onClear, e) end end) end
   function e:GetValue()
     local t = self:GetText() or ""
     if opts.numeric then
@@ -3846,14 +3862,29 @@ end
 -- the game's item tooltip at owner (lines: more lines below, as Kit.Tooltip); false when the game has no such call
 -- (minor 19) at the mouse for a wide owner (Kit.TipAnchor); an unknown item is asked for and the tooltip built again
 -- fb: the stand-in while the game does not know the item (Kit.ItemFallbackTip)
-function Kit.ItemTooltip(owner, id, lines, hint, fb)
+-- (minor 33, Daniel 21.11.2026 on Profitdon: "überall fehlen die werte der ausrüstung wenn es of the ... ist") the game's
+-- tooltip of one variant: link (the piece itself, "of the Bear" with its stats), else key (an AH itemKey with itemSuffix),
+-- else the plain item ID (the base item without suffix stats). True when the tooltip took one.
+function Kit.SetItemTip(tt, id, link, key)
+  if not tt then return false end
+  if type(link) ~= "string" and type(id) == "string" then link = id end -- an item link given as the ID (Profitdon's sell grid)
+  if type(link) == "string" and link:find("item:", 1, true) and tt.SetHyperlink and pcall(tt.SetHyperlink, tt, link) then return true end
+  if type(key) == "table" and (tonumber(key.itemSuffix) or 0) ~= 0 and tt.SetItemKey
+    and pcall(tt.SetItemKey, tt, tonumber(key.itemID) or id, tonumber(key.itemLevel) or 0, tonumber(key.itemSuffix) or 0) then return true end
+  id = tonumber(id) or (type(key) == "table" and tonumber(key.itemID)) or nil
+  if not id then return false end
+  if tt.SetItemByID and pcall(tt.SetItemByID, tt, id) then return true end
+  return tt.SetHyperlink and pcall(tt.SetHyperlink, tt, "item:" .. tostring(id)) or false
+end
+
+-- (minor 33) link, key: the variant (Kit.SetItemTip); item rows pass item.itemLink and item.itemKey
+function Kit.ItemTooltip(owner, id, lines, hint, fb, link, key)
   local tt = GameTooltip
   if not (tt and owner and id) then return false end
   if not TipOwner(tt, owner) then return false end
-  local waits = Kit.ItemWait(owner, id, function() Kit.ItemTooltip(owner, id, lines, hint, fb) end)
+  local waits = Kit.ItemWait(owner, id, function() Kit.ItemTooltip(owner, id, lines, hint, fb, link, key) end)
   local ok = waits and Kit.ItemFallbackTip(tt, fb)
-  if not ok then ok = tt.SetItemByID and pcall(tt.SetItemByID, tt, id) end
-  if not ok then ok = tt.SetHyperlink and pcall(tt.SetHyperlink, tt, "item:" .. tostring(id)) end
+  if not ok then ok = Kit.SetItemTip(tt, id, link, key) end
   for _, l in ipairs(type(lines) == "table" and lines or {}) do
     if type(l) == "table" and l[2] ~= nil then
       local v = Col(l[3] or C.body)
@@ -3878,7 +3909,7 @@ function Kit.ItemTipFn(row)
     for _, l in ipairs(type(it.tipLines) == "table" and it.tipLines or {}) do lines[#lines + 1] = l end
     lines[#lines + 1] = { it.unusable, color = C.red }
   end
-  Kit.ItemTooltip(row, it.itemID, lines, it.tipHint, it.tipFallback)
+  Kit.ItemTooltip(row, it.itemID, lines, it.tipHint, it.tipFallback, it.itemLink, it.itemKey)
 end
 
 -- shift-click: the item's link into the open chat line (true when it did)

@@ -899,8 +899,7 @@ L["Questdon: everyone is done with %s."] = "Questdon: все выполнили 
 L["Still open: %s"] = "Ещё не готово: %s"
 -- (16.11.2026) Blizzard look of the quest book and the dialogs
 L["Windows"] = "Окна"
-L["Windows in the game's look"] = "Окна в стиле игры"
-L["Questdon's windows look like the game's own: the quest book and the dialogs with the game's frame, tabs, buttons and lists. The quest list keeps its own look (above). The options then open in the game's settings (Options > AddOns > Questdon) after a /reload."] = "Окна Questdon выглядят как окна самой игры: книга заданий и диалоги с рамкой, вкладками, кнопками и списками игры. Список заданий сохраняет свой вид (выше). Настройки после /reload открываются в настройках игры (Настройки > Модификации > Questdon)."
+L["The quest list keeps its own look (above)."] = "Список заданий сохраняет свой вид (выше)."
 L["The quest book could not be built in the game's look, it opens in the Don look. /qd diag says why."] = "Книгу заданий не удалось построить в стиле игры, она открывается в стиле Don. /qd diag покажет причину."
 -- (17.11.2026) group progress in quest-list tooltips (PR by Djulio)
 L["Already completed"] = "Уже выполнено"
@@ -929,3 +928,15 @@ L["Questdon: Questdon's own window with background and frame. Blizzard: reads li
 -- (18.11.2026) vendor greeting
 L["Skip the greeting of vendors"] = "Пропускать приветствие торговцев"
 L["Opens the goods of a vendor right away when browsing them is the only choice in the dialog. Hold Shift to see the greeting."] = "Сразу открывает товары торговца, если просмотр товаров является единственным вариантом в диалоге. Удерживайте Shift, чтобы увидеть приветствие."
+L["Elite"] = "Элита"
+L["Raid"] = "Рейд"
+L["Skip the talk before a quest"] = "Пропускать разговор перед заданием"
+L["Clicks through an NPC's dialog until the quest shows up, when the NPC has a quest for you and the dialog offers only one choice. Stops where you can choose between several answers. Hold Shift to read the dialog."] = "Пролистывает диалог НИП до появления задания, если у НИП есть задание для вас и в диалоге только один вариант. Останавливается там, где можно выбрать из нескольких ответов. Удерживайте Shift, чтобы прочитать диалог."
+-- (21.11.2026) the quest list in a dungeon (Tracker.lua ns.TrackerDungeon)
+L["Whole list"] = "Весь список"
+L["Dungeon only"] = "Только подземелье"
+L["Can be picked up"] = "Можно взять"
+L["Quest giver outside the dungeon"] = "Дает задание вне подземелья"
+L["No quest of this dungeon in your log."] = "В журнале нет заданий этого подземелья."
+L["The quest giver stands outside the dungeon: pick it up there before you go in next time."] = "Тот, кто дает задание, находится вне подземелья: в следующий раз возьмите задание там, прежде чем войти."
+L["The quest giver stands in this dungeon."] = "Тот, кто дает задание, находится в этом подземелье."

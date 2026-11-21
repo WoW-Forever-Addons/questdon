@@ -1,5 +1,15 @@
 # Changes
 
+## 1.10.0
+
+- **Skip the talk before a quest:** when an NPC first wants to chat and has a quest for you, Questdon clicks through the talk for you, also several steps in a row. It stops when there is more than one answer to choose. Hold Shift to read the talk; switch it off under Accept and turn in > More ("Skip the talk before a quest").
+- **Dungeon quests inside the dungeon:** in an instance the quest list shows only the quests of that dungeon, below them "Available" (givers inside first, missed ones with their giver outside in grey) and "Done" in green. A switch "Whole list / Dungeon only" under the tabs appears only inside an instance.
+- **Elite, Dungeon and Raid marks:** the quest list and the quest book mark group quests with a red "Elite", "Dungeon" or "Raid", taken from the game itself where it knows the quest.
+- **List by zone:** dungeon quests stand under their dungeon, not under the zone of the giver.
+- **Right quest levels:** quests you do not have yet show the level the server uses (learned from quest logs) instead of an outdated value of the game client, on the maps, in the lists and on name plates.
+- **One option for the window style:** the switch "Windows in the game's look" is now the choice "Window style" with "Don look" and "Blizzard look", named the same in every Don addon. Your setting stays as it was.
+- **Data of 21 November:** more quest levels, objective places and paths through DonData.
+
 ## 1.9.0
 
 - **Finished quests on the continent map:** zoom the world map out to Kalimdor or the Eastern Kingdoms and every quest that is ready to turn in shows its "?" there too, not only on the map of its zone. A click points the arrow to the exact spot.

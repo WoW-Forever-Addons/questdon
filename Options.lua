@@ -27,6 +27,8 @@ local PAGES = {
     { key = "autoTurnIn", name = "Auto turn in quests", tip = "Turns in completed quests. Quests with several reward choices or a gold cost, and repeatable quests, are left to you." },
     -- (18.11.2026, Daniel) Quests.lua GOSSIP_SHOW
     { key = "skipVendorGossip", name = "Skip the greeting of vendors", tip = "Opens the goods of a vendor right away when browsing them is the only choice in the dialog. Hold Shift to see the greeting." },
+    -- (21.11.2026, Neidhardt, Daniel) Quests.lua GOSSIP_SHOW
+    { key = "skipQuestGossip", name = "Skip the talk before a quest", tip = "Clicks through an NPC's dialog until the quest shows up, when the NPC has a quest for you and the dialog offers only one choice. Stops where you can choose between several answers. Hold Shift to read the dialog." },
     { header = "Chains and group" },
     { key = "shareQuests", name = "Share new quests with group", tip = "Shares every quest you accept with your group, if it can be shared." },
     -- (12.11.2026, CurseForge comment, Daniel: on by default, one line per quest) Announce.lua
@@ -155,10 +157,12 @@ local PAGES = {
     -- (16.11.2026, Daniel: "Sollte Standart sein", Blizzard look for all Don addons as in Luredon 1.7.0) the quest book
     -- and the dialogs from the game's own templates (DonCore Blizz); the quest list keeps its own look choice
     { header = "Windows" },
-    { key = "blizzLook", name = "Windows in the game's look", tip = "Questdon's windows look like the game's own: the quest book and the dialogs with the game's frame, tabs, buttons and lists. The quest list keeps its own look (above). The options then open in the game's settings (Options > AddOns > Questdon) after a /reload.", onChange = function()
+    -- (20.11.2026, Daniel: the same option in every Don addon) the choice "Window style": Don look / Blizzard look, name,
+    -- entries and tooltip from DonCore (Settings 6, ns.LookOption), stored as before in db.blizzLook (true = Blizzard look)
+    ns.LookOption({ addon = "Questdon", note = L["The quest list keeps its own look (above)."], onChange = function()
       if ns.QuestBookReset then ns.QuestBookReset() end
       if ns.DialogsReset then ns.DialogsReset() end
-    end },
+    end }),
   } },
   { title = "Signals", tip = "Sound and message when something is done, and the nearest quest (/qd next).", items = {
     { header = "When something is done" },
@@ -365,10 +369,12 @@ end
 function ns.OptionsLook() return fullPages and "game settings" or "don window" end
 
 -- (17.10.) an option changed outside the settings (the setup window): its own onChange as if clicked there
-function ns.OptionChanged(key)
+-- (20.11.2026) fromWindow: the call comes from DonCore's options window, which runs the onChange of a DonCore item
+-- (donCommon: the window style) itself right after this; it must not run twice
+function ns.OptionChanged(key, fromWindow)
   for _, page in ipairs(PAGES) do
     for _, item in ipairs(page.items or {}) do
-      if item.key == key and item.onChange then ns.SafeCall("setting", item.onChange, ns.db[key]) end
+      if item.key == key and item.onChange and not (fromWindow and item.donCommon) then ns.SafeCall("setting", item.onChange, ns.db[key]) end
     end
   end
   if ns.RefreshSettingsUI then ns.RefreshSettingsUI() end

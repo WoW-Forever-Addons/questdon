@@ -899,8 +899,7 @@ L["Questdon: everyone is done with %s."] = "Questdon: 모두 %s 퀘스트의 목
 L["Still open: %s"] = "아직 진행 중: %s"
 -- (16.11.2026) Blizzard look of the quest book and the dialogs
 L["Windows"] = "창"
-L["Windows in the game's look"] = "게임 스타일의 창"
-L["Questdon's windows look like the game's own: the quest book and the dialogs with the game's frame, tabs, buttons and lists. The quest list keeps its own look (above). The options then open in the game's settings (Options > AddOns > Questdon) after a /reload."] = "Questdon의 창이 게임 자체의 창처럼 보입니다: 퀘스트 수첩과 대화 상자는 게임의 테두리, 탭, 버튼, 목록으로 표시됩니다. 퀘스트 목록은 자체 모양을 유지합니다(위). 설정은 /reload 후 게임 설정(설정 > 애드온 > Questdon)에서 열립니다."
+L["The quest list keeps its own look (above)."] = "퀘스트 목록은 자체 모양을 유지합니다(위)."
 L["The quest book could not be built in the game's look, it opens in the Don look. /qd diag says why."] = "퀘스트 수첩을 게임 스타일로 만들 수 없어 Don 스타일로 엽니다. /qd diag에서 이유를 볼 수 있습니다."
 -- (17.11.2026) group progress in quest-list tooltips (PR by Djulio)
 L["Already completed"] = "이미 완료함"
@@ -929,3 +928,15 @@ L["Questdon: Questdon's own window with background and frame. Blizzard: reads li
 -- (18.11.2026) vendor greeting
 L["Skip the greeting of vendors"] = "상인의 인사말 건너뛰기"
 L["Opens the goods of a vendor right away when browsing them is the only choice in the dialog. Hold Shift to see the greeting."] = "대화에서 물건 살펴보기가 유일한 선택지일 때 상인의 물건을 바로 엽니다. 인사말을 보려면 Shift를 누르고 있으세요."
+L["Elite"] = "정예"
+L["Raid"] = "공격대"
+L["Skip the talk before a quest"] = "퀘스트 전 대화 건너뛰기"
+L["Clicks through an NPC's dialog until the quest shows up, when the NPC has a quest for you and the dialog offers only one choice. Stops where you can choose between several answers. Hold Shift to read the dialog."] = "NPC에게 받을 수 있는 퀘스트가 있고 대화에 선택지가 하나뿐이면 퀘스트가 나올 때까지 대화를 넘깁니다. 여러 답 중에서 고를 수 있는 곳에서는 멈춥니다. 대화를 읽으려면 Shift를 누르고 계세요."
+-- (21.11.2026) the quest list in a dungeon (Tracker.lua ns.TrackerDungeon)
+L["Whole list"] = "전체 목록"
+L["Dungeon only"] = "던전만"
+L["Can be picked up"] = "수락 가능"
+L["Quest giver outside the dungeon"] = "던전 밖의 퀘스트 NPC"
+L["No quest of this dungeon in your log."] = "이 던전의 퀘스트가 퀘스트 목록에 없습니다."
+L["The quest giver stands outside the dungeon: pick it up there before you go in next time."] = "퀘스트 NPC가 던전 밖에 있습니다: 다음에는 들어가기 전에 그곳에서 퀘스트를 받으세요."
+L["The quest giver stands in this dungeon."] = "퀘스트 NPC가 이 던전 안에 있습니다."

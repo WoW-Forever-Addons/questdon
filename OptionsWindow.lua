@@ -46,7 +46,8 @@ local TABS = {
     main = { "header:Quest list", "trackerLook",
       "header:Map", "objectiveIcons",
       "header:XP bar", "xpBarText",
-      -- (16.11.2026, Blizzard look as in Luredon 1.7.0, on by default) the quest book and the dialogs in the game's look
+      -- (16.11.2026, Blizzard look as in Luredon 1.7.0, on by default) the quest book and the dialogs in the game's look;
+      -- (20.11.2026) the choice "Window style": Don look / Blizzard look
       "header:Windows", "blizzLook" },
     more = { "header:Quest list", "trackerScale",
       "header:Map", "mapPinScale", "minimapPinScale", "wayPinScale",
@@ -55,7 +56,7 @@ local TABS = {
   { key = "accept", title = "Accept and turn in", pic = "opt_accept",
     text = "Quests taken and turned in for you, the reward that suits you marked, a sound when something is done.",
     main = { "autoAccept", "autoTurnIn", "notifySound", "partyAnnounce" },
-    more = { "notifyText", "shareQuests", "skipVendorGossip" } },
+    more = { "notifyText", "shareQuests", "skipVendorGossip", "skipQuestGossip" } },
   { key = "xp", title = "XP bar", pic = "opt_xp",
     text = "Questdon's experience bar: XP, rested XP, finished quests, XP per hour and the time to the next level.",
     main = { "xpBar" },
@@ -119,7 +120,7 @@ local QD = NewWindow({
   icons = TAB_ICONS, labels = function(s) return L[s] end,
   pages = function() return ns.OPTION_PAGES end, tools = function() return ns.OPTION_TOOLS end,
   db = function() return ns.db end, default = function(key) return ns.defaults and ns.defaults[key] end,
-  changed = function(key) if ns.OptionChanged then ns.OptionChanged(key) end end,
+  changed = function(key) if ns.OptionChanged then ns.OptionChanged(key, true) end end, -- true: DonCore runs a donCommon item itself
   T = function(s) return L[s] end,
   status = function() return ns.OptionStatus and ns.OptionStatus() or {} end, help = function() return ns.HELP end,
   buttonKey = function(section) return (section == "XP bar") and "button:xp" or "button:arrow" end,

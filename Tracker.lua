@@ -209,6 +209,18 @@ local function FillEntry(e, id)
   for _, o in ipairs(e.objs) do if not o.done then open = open or o end end
   e.open = open
 end
+-- (21.11.2026, Daniel: "Die Dungeon Quests ... nach Zone ... bitte auch alle unter den Dungeon verorten") a quest
+-- in a dungeon stands under the dungeon's name (DonData ns.QuestDungeon, the client's map name), not under the zone
+-- the game's log puts it in (often the zone of its giver); the others under the log's heading as before
+local function TrackerZone(id)
+  local inst = ns.QuestDungeon and ns.QuestDungeon(id)
+  if inst and ns.DungeonName then
+    local name = ns.DungeonName(inst)
+    if type(name) == "string" and name ~= "" and name ~= "?" then return name end
+  end
+  return ns.QuestLogZone(id)
+end
+ns.TrackerZone = TrackerZone -- (tests)
 local function Entries()
   local now = ns.Num(ns.Value(GetTime)) or 0
   local gen, level = ns.LogGen and ns.LogGen(), ns.PlayerLevel and ns.PlayerLevel()
@@ -223,7 +235,7 @@ local function Entries()
       local id = info.questID
       local e = entryByID[id]
       if not e then e = {} entryByID[id] = e end
-      e.questID, e.zone, e.index, e.read = id, ns.QuestLogZone(id), ns.QuestLogIndex(id), entryRead
+      e.questID, e.zone, e.index, e.read = id, TrackerZone(id), ns.QuestLogIndex(id), entryRead
       FillEntry(e, id)
       n = n + 1
       list[n] = e
@@ -1520,10 +1532,233 @@ local function UpdateProgress(focus)
   return true
 end
 
+-- (21.11.2026, Daniel: "sobald ich eine Instanz betrete, dass in der Questliste nur noch die Quests für das Dungeon
+-- angezeigt werden ... darunter dann annehmbar Quest XY ... Wahlschalter für ganze Questliste oder nur Dungeon-Questliste
+-- ... nur wenn man in der Instanz ist. Portet man sich raus, ist wieder die alte da") In a dungeon (ns.CurrentDungeon) the
+-- list shows only its quests from the log (ns.QuestDungeon), in every tab and both looks; below them "Can be picked up":
+-- first the quests whose giver stands inside, then grey the missed ones whose giver stands outside, with the giver as a
+-- hint (ns.DungeonOverview, its rule ns.ShowAsAvailable with ns.CanTakeQuest). A switch "Whole list / Dungeon only"
+-- (DonCore Kit.Segmented, the game's buttons in the game look) only inside; every loading screen sets it back to
+-- "Dungeon only". Kept in one table: Build is at Lua's limit of 60 upvalues.
+local DG = { buf = {}, pick = { inside = {}, missed = {} } }
+ns.TrackerDungeon = DG
+function DG.Here()
+  local inst = ns.CurrentDungeon and ns.CurrentDungeon()
+  if not inst then DG.full = nil end
+  return inst
+end
+function DG.Active(inst) return inst ~= nil and DG.full ~= inst end
+ns.On("PLAYER_ENTERING_WORLD", function() DG.full = nil end)
+function DG.Name(inst)
+  local name = ns.DungeonName and ns.DungeonName(inst)
+  return type(name) == "string" and name ~= "" and name ~= "?" and name or nil
+end
+-- the log's entries of this dungeon (a kept array; the log's own list stays whole)
+function DG.Filter(list, inst)
+  local out, n = DG.buf, 0
+  for _, e in ipairs(list) do
+    if ns.QuestDungeon and ns.QuestDungeon(e.questID) == inst then n = n + 1 out[n] = e end
+  end
+  for i = #out, n + 1, -1 do out[i] = nil end
+  return out
+end
+-- the card's quest: the one picked when it is a quest of this dungeon, else the nearest of them, else the first
+function DG.FocusIn(list, id)
+  for _, e in ipairs(list) do if e.questID == id then return id end end
+  local best
+  for _, e in ipairs(list) do
+    if e.dist and not Hidden()[e.questID] and (not best or e.dist < best.dist) then best = e end
+  end
+  if best then return best.questID end
+  for _, e in ipairs(list) do if not Hidden()[e.questID] then return e.questID end end
+  return list[1] and list[1].questID
+end
+-- the quests to pick up: inside (giver in the dungeon) and missed (giver outside), worked out again with the log, the
+-- level or after 10 seconds (the overview reads some 600 dungeon quests)
+function DG.Pickups(inst)
+  local p = DG.pick
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  local gen, level = ns.LogGen and ns.LogGen(), ns.PlayerLevel and ns.PlayerLevel()
+  if p.inst == inst and p.gen == gen and p.level == level and p.at and now >= p.at and now - p.at < AVAIL_SECS then return p end
+  p.inst, p.gen, p.level, p.at = inst, gen, level, now
+  local inside, missed = {}, {}
+  for _, d in ipairs(ns.DungeonOverview and ns.DungeonOverview() or {}) do
+    if d.inst == inst then
+      for _, id in ipairs(d.available or {}) do
+        if ns.QuestStartsInside and ns.QuestStartsInside(id) then inside[#inside + 1] = id else missed[#missed + 1] = id end
+      end
+    end
+  end
+  local function ByLevel(a, b)
+    local la, lb = ns.QuestLevel(a) or 0, ns.QuestLevel(b) or 0
+    if la ~= lb then return la < lb end
+    return a < b
+  end
+  -- (21.11.2026, Daniel: "Bereits erledigte Quests in diesem Dungeon, die können dann ja auch mit angezeigt werden ...
+  -- grün ... Auch einklappbar wie alles andere") the dungeon's quests you turned in
+  local done = {}
+  for _, id in ipairs(ns.DungeonQuestIDs and ns.DungeonQuestIDs(inst) or {}) do
+    if ns.IsQuestDone(id) and not ns.InQuestLog(id) then done[#done + 1] = id end
+  end
+  table.sort(inside, ByLevel)
+  table.sort(missed, ByLevel)
+  table.sort(done, ByLevel)
+  p.inside, p.missed, p.done = inside, missed, done
+  return p
+end
+function DG.Sig(inst)
+  local p = DG.Pickups(inst)
+  Put(#p.inside) for _, id in ipairs(p.inside) do Put(id) end
+  Put(#p.missed) for _, id in ipairs(p.missed) do Put(id) end
+  Put(#p.done) for _, id in ipairs(p.done) do Put(id) end
+  local f = type(ns.db.trackerFolded) == "table" and ns.db.trackerFolded or {}
+  Put(Game()) Put(f.dpick or false) Put(f.ddone or false)
+end
+-- the giver as a hint: "Name (Zone)", the name or the zone alone
+function DG.Giver(id)
+  local givers = ns.QuestGiverIDs and ns.QuestGiverIDs(id)
+  local name = givers and ns.LocalNpcName and ns.LocalNpcName(givers[1])
+  local learned = ns.db.learned and ns.db.learned[id]
+  name = name or (learned and learned.start and learned.start.npc)
+  local m = ns.QuestStart(id)
+  local info = m and C_Map and ns.Value(C_Map.GetMapInfo, m)
+  local zone = type(info) == "table" and type(info.name) == "string" and ns.Usable(info.name) and info.name ~= "" and info.name or nil
+  if name and zone then return name .. " (" .. zone .. ")" end
+  return name or zone
+end
+-- the switch under the tabs: Kit.Segmented, in the game look the game's buttons (DonCore Blizz)
+function DG.Switch(inst)
+  local game = Game()
+  local key = game and "seg_game" or "seg_don"
+  local seg = DG[key]
+  if not seg then
+    local maker = Kit
+    if game then
+      local Bz = LibStub("DonCore-1.0"):Get("Blizz", 5)
+      local bk = Bz and Bz.Kit and Bz.Kit()
+      if bk and bk.Segmented then maker = bk end
+    end
+    if not (maker and maker.Segmented) then return end
+    seg = maker.Segmented(UIParent, {
+      items = { { value = "all", text = L["Whole list"] }, { value = "dungeon", text = L["Dungeon only"] } },
+      get = function() return DG.Active(DG.inst) and "dungeon" or "all" end,
+      set = function(v)
+        DG.full = v == "all" and DG.inst or nil
+        ns.UpdateTracker(true)
+      end,
+    })
+    DG[key] = seg
+  end
+  local other = DG[game and "seg_don" or "seg_game"]
+  if other and other.Hide then other:Hide() end
+  DG.inst = inst
+  local width = (panel and panel._width or 300)
+  local h = ns.Num(ns.Value(seg.GetHeight, seg)) or 28
+  seg:Layout(math.max(60, width - 16))
+  seg:Update()
+  local holder = Style.Content(panel, seg, h + 4)
+  if holder and holder.SetKeepWhenCollapsed then holder:SetKeepWhenCollapsed(true) end
+  return seg
+end
+ns.TrackerDungeonSwitch = function() return DG[Game() and "seg_game" or "seg_don"] end -- (tests)
+-- one quest to pick up: the Don row (badge, title, the giver below) or the game's "[level] title" with a line below
+local function PickRow(id, missed, ind)
+  local title = ns.QuestTitle(id) .. ns.GroupTag(id)
+  local lv = ns.QuestLevel(id)
+  lv = lv and lv > 0 and lv or nil
+  local giver = DG.Giver(id)
+  local hint = giver and L["Quest giver: %s"]:format(giver) or (missed and L["Quest giver outside the dungeon"] or nil)
+  local row = Style.Row(panel):SetGapBefore(Game() and GAME_GAP or QUEST_GAP):SetIndent(ind)
+  if Game() then
+    local c = missed and GAME_DONE or LevelRGB(lv)
+    local lead = ("|cff%02x%02x%02x[%s]|r"):format(math.floor((c[1] or 1) * 255 + 0.5), math.floor((c[2] or 1) * 255 + 0.5),
+      math.floor((c[3] or 1) * 255 + 0.5), lv and tostring(lv) or "?")
+    if row.SetLead then row:SetLead(lead) row:SetText(title, missed and GAME_DONE or GAME_GOLD)
+    else row:SetText(lead .. " " .. title, missed and GAME_DONE or GAME_GOLD) end
+  else
+    row:SetText(title, missed and HINT or CREAM)
+    row:SetSub(hint, HINT)
+    row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", missed and HINT or LevelRGB(lv), true)
+  end
+  row.pickQuest, row.pickMissed = id, missed -- (tests)
+  local m = ns.QuestStart(id)
+  row:SetTooltip(function()
+    local lines = {}
+    if giver then lines[#lines + 1] = { L["Quest giver"], giver } end
+    lines[#lines + 1] = missed and L["The quest giver stands outside the dungeon: pick it up there before you go in next time."]
+      or L["The quest giver stands in this dungeon."]
+    return ns.QuestTitle(id), lines, (m and not ns.QuestStartsInside(id)) and L["Click: show on the zone map"] or nil
+  end)
+  row:SetOnClick(function()
+    if m and ns.ShowQuestGiver and not ns.QuestStartsInside(id) then ns.ShowQuestGiver(id) end
+  end)
+  if Game() and hint then
+    Style.Row(panel):SetText(hint, GAME_DONE):SetIndent(ind + 12)
+  end
+  return row
+end
+-- below the dungeon's quests: a line when none is in the log, then "Can be picked up" (foldable, its place kept)
+function DG.Sections(inst, count)
+  local ind = ns.TrackerFold.IND
+  if count == 0 then
+    Style.Row(panel):SetText(L["No quest of this dungeon in your log."], Game() and GAME_DONE or HINT):SetIndent(ind)
+  end
+  local p = DG.Pickups(inst)
+  -- a foldable head (key in db.trackerFolded); true when its rows are to be shown
+  local function Head(text, key, n)
+    if n == 0 then return false end
+    local folded = type(ns.db.trackerFolded) == "table" and ns.db.trackerFolded[key]
+    local h = Style.Header(panel, (Kit and not Game()) and Kit.Upper(text) or text)
+    if h and h.SetFold then
+      h:SetFold(not folded, n, function()
+        local f = type(ns.db.trackerFolded) == "table" and ns.db.trackerFolded or {}
+        f[key] = not f[key] or nil
+        ns.db.trackerFolded = next(f) and f or nil
+        ns.UpdateTracker(true)
+      end)
+    end
+    return not folded
+  end
+  if Head(L["Can be picked up"], "dpick", #p.inside + #p.missed) then
+    for _, id in ipairs(p.inside) do PickRow(id, false, ind) end
+    for _, id in ipairs(p.missed) do PickRow(id, true, ind) end
+  end
+  -- (21.11.2026) the turned in ones in green, last
+  if Head(L["Done"], "ddone", #p.done) then
+    for _, id in ipairs(p.done) do DG.DoneRow(id, ind) end
+  end
+end
+-- a quest of the dungeon you turned in: green, "done" below (Don look) or as the line under it (game look)
+function DG.DoneRow(id, ind)
+  local lv = ns.QuestLevel(id)
+  lv = lv and lv > 0 and lv or nil
+  local row = Style.Row(panel):SetGapBefore(Game() and GAME_GAP or QUEST_GAP):SetIndent(ind)
+  local title = ns.QuestTitle(id) .. ns.GroupTag(id)
+  if Game() then
+    local lead = ("|cff%02x%02x%02x[%s]|r"):format(math.floor(COMPLETE_TEXT[1] * 255 + 0.5), math.floor(COMPLETE_TEXT[2] * 255 + 0.5),
+      math.floor(COMPLETE_TEXT[3] * 255 + 0.5), lv and tostring(lv) or "?")
+    if row.SetLead then row:SetLead(lead) row:SetText(title, COMPLETE_TEXT)
+    else row:SetText(lead .. " " .. title, COMPLETE_TEXT) end
+  else
+    row:SetText(title, COMPLETE_TEXT)
+    row:SetSub(L["done (turned in)"], GREEN)
+    row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", GREEN, true)
+  end
+  row.doneQuest = id -- (tests)
+  row:SetTooltip(function() return ns.QuestTitle(id), { { L["Status"], L["done (turned in)"], "good" } } end)
+  return row
+end
+
 local function Build()
   if not panel then return end
   local list = ns.MemPart("tracker log", Entries)
+  -- (21.11.2026) in a dungeon only its quests (ns.TrackerDungeon above)
+  local dg = ns.TrackerDungeon
+  local dInst = dg.Here()
+  local dOn = dg.Active(dInst)
+  if dOn then list = dg.Filter(list, dInst) end
   local focusID = FocusID(list)
+  if dOn then focusID = dg.FocusIn(list, focusID) end
   -- (Questdon review 3) the list's pick for the item and target buttons when the game tracks nothing (a turned in
   -- quest leaves the super track at 0 and the card picks the nearest)
   if focusID ~= ns.trackerFocus then
@@ -1566,7 +1801,10 @@ local function Build()
       end
     end
     here = here or nearZ
+    if dOn then here = dg.Name(dInst) or here end -- (21.11.2026) the dungeon's quests stand under its name: open
   end
+  Put(dInst or false) Put(dOn)
+  if dInst then dg.Sig(dInst) end
   if FoldS.shut ~= nil and FoldS.shut ~= here then FoldS.shut = nil end
   Put(here or false) Put(FoldS.shut or false)
   for _, e in ipairs(list) do
@@ -1639,6 +1877,9 @@ local function Build()
     return false
   end
   Style.Content(panel, Tabs(), TAB_H, { inset = false }) -- (02.11.2026) the tabs over the whole width
+  if dInst then dg.Switch(dInst) else
+    for _, k in ipairs({ "seg_don", "seg_game" }) do if dg[k] and dg[k].Hide then dg[k]:Hide() end end
+  end
   -- (1.3.6) with a guide's compass (Leveldon) the guide shows the way: no card of our own, all quests listed
   if not ns.GuideActive() then
     local h = FillCard(focus, width)
@@ -1790,6 +2031,7 @@ local function Build()
     if more > 0 then Style.Row(panel):SetText(L["+%d more quests"]:format(more), B.textHint or "textHint"):SetIndent(FoldS.IND) end
     if skipped > 0 then Style.Row(panel):SetText(L["%d quests above (scroll up)"]:format(skipped), B.textHint or "textHint") end
     scrollMore = more
+    if dOn then dg.Sections(dInst, #dg.buf) end -- (21.11.2026) "Can be picked up" below the dungeon's quests
     FoldedHeads()
     Greys()
     HiddenLine()
@@ -1863,6 +2105,7 @@ local function Build()
     if more > 0 then Style.Row(panel):SetText(L["+%d more quests"]:format(more), B.textHint or "textHint"):SetIndent(ns.db.trackerSortLevel and 0 or FoldS.IND) end
     if skipped > 0 then Style.Row(panel):SetText(L["%d quests above (scroll up)"]:format(skipped), B.textHint or "textHint") end
     scrollMore = more
+    if dOn then dg.Sections(dInst, #dg.buf) end -- (21.11.2026) "Can be picked up" below the dungeon's quests
     FoldedHeads()
     Greys()
     HiddenLine()

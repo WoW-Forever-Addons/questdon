@@ -1,4 +1,4 @@
-local Bz = LibStub("DonCore-1.0"):NewModule("Blizz", 8)
+local Bz = LibStub("DonCore-1.0"):NewModule("Blizz", 11)
 if not Bz then return end
 
 ---------------------------------------------------------------------------
@@ -35,11 +35,17 @@ if not Bz then return end
 -- hidden), Button.blizz.
 ---------------------------------------------------------------------------
 local Kit = LibStub("DonCore-1.0"):Get("Kit", 25)
+-- (minor 11, 21.11.2026, Profitdon: gear "of the ..." without its stats) item rows show item.itemLink / item.itemKey,
+-- the variant itself (Kit.SetItemTip, Kit 33); an older Kit: the plain item ID as before
+local function SetItem(tt, it)
+  if Kit and Kit.SetItemTip then return Kit.SetItemTip(tt, it.itemID, it.itemLink, it.itemKey) end
+  return tt.SetItemByID and pcall(tt.SetItemByID, tt, it.itemID)
+end
 local K = setmetatable({}, { __index = Kit or {} })
 Bz.kit = K
 Bz.K = K -- (Profitdon's name for the kit)
 K.blizzLook = true -- a caller can tell the two kits apart
-Bz.VERSION = 8
+Bz.VERSION = 11
 Bz.ROW_H = 24 -- the row height of Bz.List without opts.rowHeight (Profitdon's craft and sell lists)
 if Bz.light == nil then Bz.light = true end
 
@@ -484,9 +490,24 @@ function K.SearchBox(parent, opts)
 end
 
 -- a number or text box of the game (InputBoxTemplate) with the kit's calls: SetValue, GetValue, Layout, _focus
+-- (minor 9, Daniel 20.11.2026: "mit Enter oder mit der Tab-Taste bestätigen ... wenn ich mit einem Linksklick irgendwo
+-- auf dem Bildschirm das quasi auch erneuert wird") a click anywhere outside a Don edit box takes its focus: the box's
+-- focus-lost handler commits what was typed, as Enter does. One watcher for all Don addons (frame DonCoreFocusWatch);
+-- only boxes marked _donFocusOut are touched, never the chat or other addons' boxes.
+local function WatchFocusOut(e)
+  e._donFocusOut = true
+  if _G.DonCoreFocusWatch or not CreateFrame then return end
+  local w = CreateFrame("Frame", "DonCoreFocusWatch", UIParent)
+  if not pcall(w.RegisterEvent, w, "GLOBAL_MOUSE_DOWN") then return end
+  w:SetScript("OnEvent", function()
+    local f = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
+    if f and f._donFocusOut and f.ClearFocus and not (f.IsMouseOver and f:IsMouseOver()) then f:ClearFocus() end
+  end)
+end
 function K.EditBox(parent, opts)
   opts = opts or {}
   local e = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+  WatchFocusOut(e)
   e:SetSize(opts.width or 60, 20)
   e:SetAutoFocus(false)
   if opts.numeric then e:SetNumeric(true) e:SetJustifyH("CENTER") e:SetMaxLetters(opts.maxLetters or 7)
@@ -496,8 +517,32 @@ function K.EditBox(parent, opts)
   e.hint:SetPoint("LEFT", 2, 0)
   if e.hint.SetWordWrap then e.hint:SetWordWrap(false) end
   e.hint:SetText(opts.placeholder or "")
+  -- (minor 10) opts.clear as in the Kit: a small x at the right while there is text; opts.onClear after it emptied the box
+  if opts.clear then
+    e.clear = CreateFrame("Button", nil, e)
+    e.clear:SetSize(14, 14)
+    e.clear:SetPoint("RIGHT", -3, 0)
+    local t = e.clear:CreateTexture(nil, "ARTWORK")
+    t:SetAllPoints()
+    t:SetTexture("Interface\\FriendsFrame\\ClearBroadcastIcon")
+    t:SetAlpha(0.6)
+    e.clear.tex = t
+    e.clear:SetScript("OnEnter", function(self) self.tex:SetAlpha(1) end)
+    e.clear:SetScript("OnLeave", function(self) self.tex:SetAlpha(0.6) end)
+    e.clear:Hide()
+    if e.SetTextInsets then e:SetTextInsets(0, 18, 0, 0) end
+  end
   local function Hint(self)
     if (self:GetText() or "") == "" and (opts.placeholder or "") ~= "" and not self._focus then self.hint:Show() else self.hint:Hide() end
+    if self.clear then if (self:GetText() or "") == "" then self.clear:Hide() else self.clear:Show() end end
+  end
+  if e.clear then
+    e.clear:SetScript("OnClick", function()
+      e:SetValue(nil)
+      e:ClearFocus()
+      if opts.onChange then Try(opts.onChange, "", e) end
+      if opts.onClear then Try(opts.onClear, e) end
+    end)
   end
   function e:SetValue(v)
     self._setting = true
@@ -731,7 +776,7 @@ local function RowTip(r)
   if not (tt and tt.SetOwner) then return end
   tt:SetOwner(r, "ANCHOR_RIGHT")
   Bz.NoCompare(tt)
-  if it.itemID and tt.SetItemByID then Call(tt.SetItemByID, tt, it.itemID) else tt:SetText(tostring(it.title or ""), 1, 0.82, 0) end
+  if not (it.itemID and SetItem(tt, it)) then tt:SetText(tostring(it.title or ""), 1, 0.82, 0) end
   for _, l in ipairs(type(it.tipLines) == "table" and it.tipLines or {}) do
     if type(l) == "table" and l[2] ~= nil then tt:AddDoubleLine(tostring(l[1] or ""), tostring(l[2]), 0.7, 0.7, 0.7, 1, 1, 1)
     elseif type(l) == "table" then local cr, cg, cb = RGB(l.color) tt:AddLine(tostring(l[1] or ""), cr, cg, cb, true)
@@ -1484,7 +1529,7 @@ local function ShowTipOf(owner, it, tipFn)
   if type(it) == "table" and it.itemID and GameTooltip and GameTooltip.SetItemByID then
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     Bz.NoCompare(GameTooltip)
-    Call(GameTooltip.SetItemByID, GameTooltip, it.itemID)
+    SetItem(GameTooltip, it)
     for _, l in ipairs(type(it.tipLines) == "table" and it.tipLines or {}) do
       if type(l) == "table" and l[2] ~= nil then GameTooltip:AddDoubleLine(tostring(l[1] or ""), tostring(l[2]), 0.7, 0.7, 0.7, 1, 1, 1)
       elseif l then GameTooltip:AddLine(tostring(type(l) == "table" and l[1] or l), 1, 1, 1, true) end

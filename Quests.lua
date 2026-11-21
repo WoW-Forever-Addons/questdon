@@ -209,6 +209,30 @@ end
 -- Gossip window (modern NPC dialog with quest list)
 local VENDOR_ICON = 132060 -- Interface\GossipFrame\VendorGossipIcon, the bag of "I want to browse your goods"
 if type(ns.defaults) == "table" and ns.defaults.skipVendorGossip == nil then ns.defaults.skipVendorGossip = true end
+-- (21.11.2026) dialog chains before a quest: the speech bubble of a plain chat choice, steps per visit
+local CHAT_ICON = 132053 -- Interface\GossipFrame\GossipGossipIcon
+local CHAT_STEPS = 10
+if type(ns.defaults) == "table" and ns.defaults.skipQuestGossip == nil then ns.defaults.skipQuestGossip = true end
+-- per NPC: a new NPC or a minute without a step starts afresh (not GOSSIP_CLOSED: a server may close between steps)
+local chatSteps = { n = 0 }
+local function ChatSteps()
+  local guid = UnitGUID and UnitGUID("npc")
+  local now = GetTime and GetTime() or 0
+  if chatSteps.guid ~= guid or now - (chatSteps.at or now) > 60 then chatSteps = { n = 0, guid = guid } end
+  chatSteps.at = now
+  return chatSteps
+end
+
+-- The NPC of the open dialog gives, by the data, a quest you can take now (not done, not in your log).
+function ns.NpcHasQuestForYou()
+  local cr = ns.CreatureIDFromGUID and ns.CreatureIDFromGUID(UnitGUID and UnitGUID("npc"))
+  if not cr or not ns.CreatureQuestIndex then return false end
+  local _, gives = ns.CreatureQuestIndex(cr)
+  for _, questID in ipairs(gives or {}) do
+    if not ns.IsQuestDone(questID) and not ns.InQuestLog(questID) and ns.CanTakeQuest(questID) then return true end
+  end
+  return false
+end
 OnNpc("GOSSIP_SHOW", function()
   if ns.IsPaused() or not C_GossipInfo then return end
   local db = ns.db
@@ -260,6 +284,30 @@ OnNpc("GOSSIP_SHOW", function()
         ns.NoteAutoStep("C_GossipInfo.SelectOption(id)") C_GossipInfo.SelectOption(id)
       elseif index and C_GossipInfo.SelectOptionByIndex then
         ns.NoteAutoStep("C_GossipInfo.SelectOptionByIndex(index)") C_GossipInfo.SelectOptionByIndex(index)
+      end
+      return
+    end
+  end
+
+  -- (21.11.2026, Neidhardt on CurseForge: "an option to skip NPC dialogues ... very long conversations before you can
+  -- accept a quest", Daniel: also several dialogs in a row, stop where there are several choices) the dialog has no
+  -- quest yet and one plain chat choice, and by the data this NPC gives a quest you can take: click on. Each step of a
+  -- chain is a new GOSSIP_SHOW; at most CHAT_STEPS steps per visit and never the same choice twice (loop).
+  if db.skipQuestGossip and C_GossipInfo.GetOptions then
+    local quests = #(ns.Value(C_GossipInfo.GetActiveQuests) or {}) + #(ns.Value(C_GossipInfo.GetAvailableQuests) or {})
+    local opts = ns.Value(C_GossipInfo.GetOptions)
+    local o = quests == 0 and type(opts) == "table" and #opts == 1 and opts[1]
+    if type(o) == "table" and (ns.Num(o.overrideIconID) or ns.Num(o.icon)) == CHAT_ICON and ns.NpcHasQuestForYou() then
+      local id, index = ns.Num(o.gossipOptionID), ns.Num(o.orderIndex)
+      local key = id and ("id" .. id) or index and ("ix" .. index) or nil
+      local steps = ChatSteps()
+      if key and steps.n < CHAT_STEPS and not steps[key] then
+        steps.n, steps[key] = steps.n + 1, true
+        if id and C_GossipInfo.SelectOption then
+          ns.NoteAutoStep("C_GossipInfo.SelectOption(chat)") C_GossipInfo.SelectOption(id)
+        elseif index and C_GossipInfo.SelectOptionByIndex then
+          ns.NoteAutoStep("C_GossipInfo.SelectOptionByIndex(chat)") C_GossipInfo.SelectOptionByIndex(index)
+        end
       end
     end
   end
