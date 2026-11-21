@@ -1,5 +1,12 @@
 # Changes
 
+## 1.10.2
+
+- **Fixed: the quest list inside a dungeon:** in a dungeon with many quests the sections "Available" and "Done" made the window taller than the screen, so its title bar and size handle were out of reach and your own quests were cut. They now keep to the room on the screen and the line limit, the rest shows as "+n more".
+- **Fixed: Ctrl + mouse wheel only made the list bigger:** making the text smaller moved the title bar away from the mouse. The corner of the window now stays where it is, both ways. If your list is stuck too big, type /qd list reset.
+- **Hall of Thanes:** the dungeon quest list now also appears there (the game names the instance "The Hall of Thanes").
+- **Dungeon switch in the title row:** "Whole list / Dungeon only" sits small in the header next to "Quests" when the list is wide enough, otherwise under the tabs as before.
+
 ## 1.10.1
 
 - **Smoother play:** fixed short stutters. In a dungeon the quest list no longer works out all dungeons after every kill or loot, only your dungeon when your quests change; the group line of a quest, the item buttons and the continent map do less work; the background check of quest levels no longer redraws the map twice a second.

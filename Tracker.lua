@@ -1688,12 +1688,65 @@ function DG.Switch(inst)
   if other and other.Hide then other:Hide() end
   DG.inst = inst
   local width = (panel and panel._width or 300)
+  seg:Update()
+  if DG.InHeader(seg, width) then return seg end
+  -- too narrow for the header: under the tabs as before
+  if seg.SetParent and seg.GetParent and seg:GetParent() ~= UIParent then seg:SetParent(UIParent) end
+  if seg.SetHeight then seg:SetHeight(DG.fullH or 28) end
+  for _, b in ipairs(seg.fields or {}) do if b.SetHeight then b:SetHeight(DG.fullBtnH or (game and 22 or 14)) end end
   local h = ns.Num(ns.Value(seg.GetHeight, seg)) or 28
   seg:Layout(math.max(60, width - 16))
-  seg:Update()
   local holder = Style.Content(panel, seg, h + 4)
   if holder and holder.SetKeepWhenCollapsed then holder:SetKeepWhenCollapsed(true) end
   return seg
+end
+-- (21.11.2026, Daniel: "die knöpfe sind natürlich immens groß, bekommen wir die oben rechts neben 'Quests' hin? Sie dürfen
+-- dann natürlich nicht die Buttons verdecken, die kommen beim drüber hovern") small in the header: right of the title's
+-- text, left of the header's buttons (also the faded ones, they come back on hover). False when there is no room.
+DG.HEADER_MIN, DG.HEADER_MAX, DG.HEADER_H = 110, 190, 16
+function DG.InHeader(seg, width)
+  local header, title = panel and panel._header, panel and panel._title
+  if not (header and title and seg.SetParent) then return false end
+  local S = Style.S or {}
+  local gap, right = S.buttonGap or 4, S.buttonRight or 4
+  local used, lead = right, nil
+  for _, b in ipairs(panel._buttons or {}) do
+    if b.IsShown and b:IsShown() then
+      used = used + (ns.Num(ns.Value(b.GetWidth, b)) or 14) + gap
+      lead = b
+    end
+  end
+  local textW = ns.Num(ns.Value(title.GetStringWidth, title)) or 60
+  local titleX = panel._titleX or S.titleX or 8
+  local room = math.floor(width - used - (titleX + textW + 10))
+  if room < DG.HEADER_MIN then return false end
+  local w = math.min(room, DG.HEADER_MAX)
+  if not DG.fullH then
+    DG.fullH = ns.Num(ns.Value(seg.GetHeight, seg)) or 28
+    local f1 = seg.fields and seg.fields[1]
+    DG.fullBtnH = f1 and ns.Num(ns.Value(f1.GetHeight, f1)) or nil
+  end
+  if seg:GetParent() ~= header then seg:SetParent(header) end
+  seg:SetHeight(DG.HEADER_H)
+  for _, b in ipairs(seg.fields or {}) do
+    if b.SetHeight then b:SetHeight(DG.HEADER_H) end
+    local fs = b.text
+    if fs and fs.GetFont and fs.SetFont and not b._smallFont then
+      local ok, path, size, flags = pcall(fs.GetFont, fs)
+      if ok and path then
+        b._smallFont = true
+        pcall(fs.SetFont, fs, path, math.max(8, math.min(10, (tonumber(size) or 12) - 2)), flags or "")
+      end
+    end
+  end
+  seg:ClearAllPoints()
+  if lead then seg:SetPoint("RIGHT", lead, "LEFT", -gap - 2, 0)
+  else seg:SetPoint("RIGHT", header, "RIGHT", -right, 0) end
+  seg:Layout(w)
+  if seg.SetFrameLevel and header.GetFrameLevel then seg:SetFrameLevel((header:GetFrameLevel() or 1) + 2) end
+  seg:Show()
+  DG.inHeader = true -- (tests)
+  return true
 end
 ns.TrackerDungeonSwitch = function() return DG[Game() and "seg_game" or "seg_don"] end -- (tests)
 -- one quest to pick up: the Don row (badge, title, the giver below) or the game's "[level] title" with a line below
@@ -1733,7 +1786,13 @@ local function PickRow(id, missed, ind)
   return row
 end
 -- below the dungeon's quests: a line when none is in the log, then "Can be picked up" (foldable, its place kept)
-function DG.Sections(inst, count)
+-- (22.11.2026, a player via Daniel: in the dungeon "liste kaputt", the window too big to reach) budget: how many rows the
+-- list has left (its line limit or the screen cap, after the dungeon's own quests); the rows past it as "+n more".
+-- Returns the rows shown, so the screen cap counts them (without that the window ran past the screen in a dungeon
+-- with many quests and the cap took the player's own quests away instead)
+function DG.Sections(inst, count, budget)
+  budget = tonumber(budget) or math.huge
+  local used = 0
   local ind = ns.TrackerFold.IND
   if count == 0 then
     Style.Row(panel):SetText(L["No quest of this dungeon in your log."], Game() and GAME_DONE or HINT):SetIndent(ind)
@@ -1754,14 +1813,22 @@ function DG.Sections(inst, count)
     end
     return not folded
   end
+  local function More(n)
+    if n > 0 then Style.Row(panel):SetText(L["+%d more quests"]:format(n), Game() and GAME_DONE or HINT):SetIndent(ind) end
+  end
   if Head(L["Can be picked up"], "dpick", #p.inside + #p.missed) then
-    for _, id in ipairs(p.inside) do PickRow(id, false, ind) end
-    for _, id in ipairs(p.missed) do PickRow(id, true, ind) end
+    local over = 0
+    for _, id in ipairs(p.inside) do if used < budget then PickRow(id, false, ind) used = used + 1 else over = over + 1 end end
+    for _, id in ipairs(p.missed) do if used < budget then PickRow(id, true, ind) used = used + 1 else over = over + 1 end end
+    More(over)
   end
   -- (21.11.2026) the turned in ones in green, last
   if Head(L["Done"], "ddone", #p.done) then
-    for _, id in ipairs(p.done) do DG.DoneRow(id, ind) end
+    local over = 0
+    for _, id in ipairs(p.done) do if used < budget then DG.DoneRow(id, ind) used = used + 1 else over = over + 1 end end
+    More(over)
   end
+  return used
 end
 -- a quest of the dungeon you turned in: green, "done" below (Don look) or as the line under it (game look)
 function DG.DoneRow(id, ind)
@@ -1905,6 +1972,7 @@ local function Build()
   local modeKey = Mode() .. (ns.db.trackerSortLevel and "L" or "")
   if scrollMode ~= modeKey then scrollMode, scrollSkip = modeKey, 0 end
   local skip, skipped, shown = scrollSkip, 0, 0
+  local dgUsed = 0 -- (22.11.2026) rows of the dungeon's sections (count for the screen cap)
   local function Take()
     if skip > 0 then skip, skipped = skip - 1, skipped + 1 return false end
     if left > 0 then left, shown = left - 1, shown + 1 return true end
@@ -2066,7 +2134,7 @@ local function Build()
     if more > 0 then Style.Row(panel):SetText(L["+%d more quests"]:format(more), B.textHint or "textHint"):SetIndent(FoldS.IND) end
     if skipped > 0 then Style.Row(panel):SetText(L["%d quests above (scroll up)"]:format(skipped), B.textHint or "textHint") end
     scrollMore = more
-    if dOn then dg.Sections(dInst, #dg.buf) end -- (21.11.2026) "Can be picked up" below the dungeon's quests
+    if dOn then dgUsed = dg.Sections(dInst, #dg.buf, left) or 0 end -- (21.11.2026) "Can be picked up" below the dungeon's quests; (22.11.) within the rows left
     FoldedHeads()
     Greys()
     HiddenLine()
@@ -2140,7 +2208,7 @@ local function Build()
     if more > 0 then Style.Row(panel):SetText(L["+%d more quests"]:format(more), B.textHint or "textHint"):SetIndent(ns.db.trackerSortLevel and 0 or FoldS.IND) end
     if skipped > 0 then Style.Row(panel):SetText(L["%d quests above (scroll up)"]:format(skipped), B.textHint or "textHint") end
     scrollMore = more
-    if dOn then dg.Sections(dInst, #dg.buf) end -- (21.11.2026) "Can be picked up" below the dungeon's quests
+    if dOn then dgUsed = dg.Sections(dInst, #dg.buf, left) or 0 end -- (21.11.2026) "Can be picked up" below the dungeon's quests; (22.11.) within the rows left
     FoldedHeads()
     Greys()
     HiddenLine()
@@ -2156,7 +2224,7 @@ local function Build()
   Extras()
   Footer()
   panel:Relayout()
-  CapToScreen(shown)
+  CapToScreen(shown + dgUsed)
   if ns.SyncListItems then ns.SyncListItems() end -- (12.11.2026) the item buttons to their new rows (not in a fight)
 end
 
@@ -2286,12 +2354,31 @@ QuestdonToggleList = function() if ns.ToggleTracker then ns.SafeCall("list key",
 function ns.TrackerFrame() return panel end
 function ns.TrackerCard() return card end -- (tests)
 
+-- (22.11.2026, a player via Daniel: "Ctrl + mausrad macht nur größer", the window then too big to reach the handle) The
+-- game scales a frame around its anchor's offsets: smaller moved the title bar away from the cursor, the next wheel turn
+-- hit the list (scrolling) instead, only bigger kept working. The anchor's screen point stays now (offsets times old
+-- scale through new scale) and is saved like after a drag. Docked under Leveldon the anchor is Leveldon's.
+function ns.TrackerScale(scale, silent)
+  if not panel then return end
+  local s0 = ns.Num(panel._scale) or 1
+  local ok, point, rel, relPoint, x, y = pcall(panel.GetPoint, panel, 1)
+  panel:SetPanelScale(scale, silent)
+  local s1 = ns.Num(panel._scale) or 1
+  if docked or not ok or type(point) ~= "string" or s1 == s0 or (rel ~= nil and rel ~= UIParent) then return end
+  x, y = (tonumber(x) or 0) * s0 / s1, (tonumber(y) or 0) * s0 / s1
+  panel:ClearAllPoints()
+  panel:SetPoint(point, UIParent, relPoint or point, x, y)
+  if DB().trackerPos ~= nil or point:find("^TOP") then
+    DB().trackerPos = { point, relPoint or point, math.floor(x + 0.5), math.floor(y + 0.5) }
+  end
+end
+
 -- (1.3.6) Shift + mouse wheel over the title bar: the background's opacity, down to nothing
 local function WheelAlpha(_, delta)
   if not panel then return end
   -- Ctrl + mouse wheel: text size (the whole window, 60 to 160 %, saved as trackerScale)
   if IsControlKeyDown and IsControlKeyDown() then
-    panel:SetPanelScale((panel._scale or 1) + (delta > 0 and 0.05 or -0.05))
+    ns.TrackerScale((panel._scale or 1) + (delta > 0 and 0.05 or -0.05))
     lastSig = nil
     Dock()
     return

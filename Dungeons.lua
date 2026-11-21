@@ -643,12 +643,29 @@ function ReadCurrentDungeon()
     local info = ns.Value(C_Map.GetMapInfo, m)
     m = type(info) == "table" and ns.Num(info.parentMapID) or nil
   end
-  -- fallback in an instance: its name against the dungeon names (client or English)
+  -- fallback in an instance: its instance map (8th value of GetInstanceInfo), then its name against the dungeon names
+  -- (client or English, with or without a leading "The ")
+  -- (21.11.2026, Daniel in Hall of Thanes: no uiMap, the game names it "The Hall of Thanes", instance map 3065.) The new
+  -- Forever dungeons have ATT's ID as their instance map; the classic ones go through GAME_MAP (journal -> instance map),
+  -- and a classic journal ID is never taken as an instance map (BRD's map 230 is Dire Maul's journal ID).
   if not ns.True(ns.Value(IsInInstance)) then return nil end
-  local name = ns.Value(GetInstanceInfo)
-  if type(name) ~= "string" or name == "" then return nil end
+  local ok, name, _, _, _, _, _, _, imap = false, nil
+  if type(GetInstanceInfo) == "function" then ok, name, _, _, _, _, _, _, imap = pcall(GetInstanceInfo) end
+  if not ok then return nil end
+  imap = imap ~= nil and ns.Usable(imap) and ns.Num(imap) or nil
+  if imap then
+    for inst, m in pairs(GAME_MAP) do
+      if m == imap and byDungeon[inst] then return inst end
+    end
+    if D[imap] and not GAME_MAP[imap] and byDungeon[imap] then return imap end
+  end
+  if type(name) ~= "string" or not ns.Usable(name) or name == "" then return nil end
+  local bare = name:gsub("^[Tt]he ", "")
   for inst, d in pairs(D) do
-    if byDungeon[inst] and (name == d[NAME_EN] or name == ns.DungeonName(inst)) then return inst end
+    if byDungeon[inst] then
+      local n1, n2 = d[NAME_EN], ns.DungeonName(inst)
+      if name == n1 or name == n2 or bare == n1 or bare == n2 then return inst end
+    end
   end
 end
 

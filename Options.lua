@@ -125,7 +125,7 @@ local PAGES = {
       end },
     -- (1.3.7, Discord: "how do I remove low level quests from the quest panel?")
     { key = "trackerHideGrey", name = "Hide grey quests", tip = "Quests that give no XP for your level are not listed at all. Off: they are folded into one line at the bottom.", parent = "tracker", onChange = function() if ns.UpdateTracker then ns.UpdateTracker(true) end end },
-    { key = "trackerScale", kind = "slider", name = "Text size", tip = "Size of the quest list and its text. Ctrl + mouse wheel over the title bar does it too.", min = SMIN, max = SMAX, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f then f:SetPanelScale(ns.db.trackerScale, true) end if ns.UpdateTracker then ns.UpdateTracker(true) end end },
+    { key = "trackerScale", kind = "slider", name = "Text size", tip = "Size of the quest list and its text. Ctrl + mouse wheel over the title bar does it too.", min = SMIN, max = SMAX, step = 0.05, parent = "tracker", onChange = function() local f = ns.TrackerFrame and ns.TrackerFrame() if f and ns.TrackerScale then ns.TrackerScale(ns.db.trackerScale, true) elseif f then f:SetPanelScale(ns.db.trackerScale, true) end if ns.UpdateTracker then ns.UpdateTracker(true) end end },
     -- (12.11.2026, Daniel: the list as an option "mehr wie blizzards eigene") one choice instead of the switch "No background
     -- and frame": Don (trackerPlain false), Don without background (trackerPlain), like the game (trackerPlain and trackerGame)
     -- (18.11.2026) shown in the order of ns.LOOK_ORDER: the choice's position is not the saved number
