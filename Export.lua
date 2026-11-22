@@ -320,8 +320,15 @@ end
 
 -- (1.0.1) The export records (lines without header), also what Questdon
 -- shares with guild and group (Exchange.lua). all: without comparing with the data.
+-- (22.11.2026, Ruckler, DonMonitor report: "share" avg 125 ms, max 186 ms once a minute) the share send builds these
+-- lines in slices over several frames (Exchange.lua ns.ShareBreath: a pause when the slice's time is used up, only
+-- inside that send's coroutine; everywhere else it does nothing). Only between whole quests, items and parts.
+local function Breath() if ns.ShareBreath then ns.ShareBreath() end end
+-- (22.11.2026, second report) the part being built, named in the engine's slow log when a slice was slow in it
+local function Part(name) if ns.SharePart then ns.SharePart(name) end end
 function ns.ExportRecords(all)
   local records = {}
+  Part("quests")
   local learned = ns.db.learned or {}
   local learnedObj = ns.db.learnedObj or {}
   local quests = {}
@@ -332,6 +339,7 @@ function ns.ExportRecords(all)
   for id in pairs(credits) do if Int(id) and id > 0 then quests[id] = true end end
 
   for _, id in ipairs(SortedKeys(quests)) do
+    Breath()
     local e = learned[id]
     if type(e) == "table" then
       local fac = e.faction == "Alliance" and "A" or e.faction == "Horde" and "H" or "-"
@@ -409,7 +417,10 @@ function ns.ExportRecords(all)
 
   -- (1.0.1) quest items: where they dropped, which item starts which quest
   local drops = type(ns.db.learnedDrops) == "table" and ns.db.learnedDrops or {}
+  Breath()
+  Part("drops")
   for _, itemID in ipairs(SortedKeys(drops)) do
+    Breath()
     local d = drops[itemID]
     if type(d) == "table" then
       local keys = {}
@@ -432,22 +443,36 @@ function ns.ExportRecords(all)
     if Int(q) and q > 0 then records[#records + 1] = ("I %d %d -"):format(q, itemID) end
   end
 
+  Breath()
+  Part("missing")
   -- quests the server answered with "does not exist"
   for _, id in ipairs(ns.MissingQuestIDs and ns.MissingQuestIDs() or {}) do
     if Int(id) and id > 0 then records[#records + 1] = ("X %d"):format(id) end
   end
 
+  Breath()
+  Part("nothere")
   -- (1.1) quests a quest giver never offers
   for _, line in ipairs(ns.NotHereRecords and ns.NotHereRecords(all) or {}) do records[#records + 1] = line end
 
+  Breath()
+  Part("entrances")
   -- (1.3.6) dungeon entrances (always: they confirm the listed ones too)
   for _, line in ipairs(ns.EntranceRecords and ns.EntranceRecords() or {}) do records[#records + 1] = line end
+  Breath()
+  Part("paths")
   -- (1.3.6) where you walked (Paths.lua): ways around mountains for others
   for _, line in ipairs(ns.WalkRecords and ns.WalkRecords(all) or {}) do records[#records + 1] = line end
+  Breath()
+  Part("walks")
   -- (17.10.) where walking NPCs were seen (Walks.lua): "P npc map x y"
   for _, line in ipairs(ns.WalkSeenRecords and ns.WalkSeenRecords() or {}) do records[#records + 1] = line end
+  Breath()
+  Part("roles")
   -- (22.10.) what an NPC is (Services.lua): "V npc role map x y"
   for _, line in ipairs(ns.NpcRoleRecords and ns.NpcRoleRecords() or {}) do records[#records + 1] = line end
+  Breath()
+  Part("orders")
   -- (23.10.) objective orders the game showed other than the data's, seen for sure: "Y quest 2,1" (QuestData.lua)
   local orders = type(ns.db.objOrder) == "table" and ns.db.objOrder or {}
   local orderKeys = {}
@@ -460,8 +485,12 @@ function ns.ExportRecords(all)
     local lv = levels[q]
     if Int(lv) and lv > 0 and lv <= 100 then records[#records + 1] = ("Z %d %d"):format(q, lv) end
   end
+  Breath()
+  Part("gather")
   -- (27.10.) where herbs, ore, leather and fish came from (Gather.lua): "H kind source id map x y item count"
   for _, line in ipairs(ns.GatherRecords and ns.GatherRecords() or {}) do records[#records + 1] = line end
+  Breath()
+  Part("picks")
   -- (1.3.8) the reward each of your characters picked by hand: "R quest class tree item" (Rewards.lua)
   local picks = type(ns.db.rewardPicks) == "table" and ns.db.rewardPicks or {}
   local pickKeys = {}
@@ -476,10 +505,13 @@ function ns.ExportRecords(all)
 
   -- (03.11.2026) what the shipped data or the data build has already stays home (ns.KnownLine)
   if not all then
+    Breath()
+    Part("known")
     local n = 0
     for i = 1, #records do
       local r = records[i]
       if not ns.KnownLine(r) then n = n + 1 records[n] = r end
+      if i % 16 == 0 then Breath() end
     end
     for i = #records, n + 1, -1 do records[i] = nil end
   end

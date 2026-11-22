@@ -238,9 +238,12 @@ function ns.WalkSeenRecords()
   local npcs = {}
   for npc in pairs(seen) do if type(npc) == "number" then npcs[#npcs + 1] = npc end end
   table.sort(npcs)
-  for _, npc in ipairs(npcs) do
+  for i, npc in ipairs(npcs) do
+    -- (22.11.2026, Ruckler: "share" avg 125 ms) the share send builds these in slices (Exchange.lua ns.ShareBreath);
+    -- an NPC that went meanwhile has no maps
+    if i % 16 == 0 and ns.ShareBreath then ns.ShareBreath() end
     local maps = {}
-    for m in pairs(seen[npc]) do if type(m) == "number" then maps[#maps + 1] = m end end
+    for m in pairs(type(seen[npc]) == "table" and seen[npc] or maps) do if type(m) == "number" then maps[#maps + 1] = m end end
     table.sort(maps)
     for _, m in ipairs(maps) do
       local l = seen[npc][m]

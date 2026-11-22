@@ -1,5 +1,11 @@
 # Changes
 
+## 1.10.5
+
+- **Smoother play:** fixed short stutters that came once a second. The quest list rebuilt itself every second to refresh the distances; now it does almost nothing while you stand still, and while you walk, ride or fly it only updates what changed. On a flight path it updates every 5 seconds.
+- **Calmer list, map and arrow:** the list reorders only when a quest is clearly nearer than the one above it, and the quest picked for the map and the arrow no longer jumps back and forth between two quests that are about equally near. Distances far away are shown in coarser steps.
+- **Sharing with other players:** building and tidying the shared data is spread over several frames instead of one long one.
+
 ## 1.10.4
 
 - **Fixed: the dungeon switch was big and below the tabs:** in the Blizzard look Questdon counted room for its own logo next to "Quests" and thought the header was too narrow. "Whole list / Dungeon only" now sits small in the header at the normal width. In a narrow list it takes the place of the title "Quests" while you are in the dungeon, and the title comes back outside.

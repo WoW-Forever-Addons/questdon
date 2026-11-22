@@ -12,9 +12,10 @@ local L = ns.L
 -- teleports (IsInLFGDungeon), a taxi, a spot on another zone map than every listed entrance of that
 -- dungeon (a summon or a portal), or the option learnQuests off.
 --
--- Use (Dungeons.lua, ns.DungeonEntrances): a learned spot within NEAR_LIST map units of a listed entrance
--- confirms it ("You entered here", "Entrance confirmed by %d players"); farther away it is another way in
--- (source "learned", or "shared" when others confirmed it).
+-- Use (Dungeons.lua, ns.DungeonEntrances): a learned spot confirms the nearest listed entrance on its map
+-- ("You entered here", "Entrance confirmed by %d players"); only a dungeon without listed entrances gets it as
+-- a way in of its own (source "learned", or "shared" when others confirmed it). (22.11.2026, Daniel: three rings
+-- at Uldaman, "sowas darf nicht passieren": the spot up to 20 s before the load can lie deep in a cave tunnel.)
 --
 -- Sharing: /qd export and Exchange.lua send "E <inst> <map> <x> <y>" like every other learned fact
 -- (guild, group, QuestdonNet). Others count reporters; two through guild or group or three in all
@@ -108,11 +109,9 @@ function ns.LearnEntrance(inst)
   end
   stats.learned = stats.learned + 1
   outside = nil
-  -- a way in nobody listed: say so once
-  local known = false
-  for _, p in ipairs(type(list) == "table" and list or {}) do
-    if p[1] == m and math.abs(p[2] / 100 - x) * 100 <= NEAR_LIST and math.abs(p[3] / 100 - y) * 100 <= NEAR_LIST then known = true end
-  end
+  -- a way in nobody listed: say so once. (22.11.2026) A dungeon with listed entrances (checked by hand) gets no new
+  -- one from a learned spot (Dungeons.lua ns.DungeonEntrances), so there is nothing to announce.
+  local known = type(list) == "table" and #list > 0
   if known then stats.confirmed = stats.confirmed + 1
   elseif ns.Print then ns.Print(L["Entrance of %s learned."]:format(ns.DungeonName(inst))) end
   if ns.ResetDungeonEntrances then ns.ResetDungeonEntrances() end

@@ -164,14 +164,29 @@ function ns.DungeonEntrances(inst)
     local d = D[inst]
     if d and d[EMAP] and d[EX] and d[EY] and not NOT_ZONE[d[EMAP]] then out[1] = { d[EMAP], d[EX] / 100, d[EY] / 100, "data" } end
   end
-  -- learned in the game: own, and what others confirmed
+  -- learned in the game: own, and what others confirmed.
+  -- (22.11.2026, Daniel with a picture of three rings at Uldaman: "sowas darf nicht passieren") The listed
+  -- entrances are checked by hand; a learned spot is the player's position up to FRESH seconds before the load
+  -- (Entrances.lua), deep in a long cave tunnel it lies well off the door. With listed entrances a learned or shared
+  -- spot only confirms the nearest listed one on its map and never adds a ring of its own.
+  local checked = #out > 0 and out[1][4] == "list"
   local function Merge(m, x, y, source, n, mine)
+    local hit
     for _, p in ipairs(out) do
-      if Near(p, m, x, y) then
-        if mine then p[6] = true end
-        if n then p[5] = math.max(p[5] or 0, n) end
-        return
+      if Near(p, m, x, y) then hit = p break end
+    end
+    if not hit and checked then
+      local best
+      for _, p in ipairs(out) do
+        local d = p[1] == m and (p[2] - x) ^ 2 + (p[3] - y) ^ 2
+        if d and (not best or d < best) then hit, best = p, d end
       end
+      if not hit then return end
+    end
+    if hit then
+      if mine then hit[6] = true end
+      if n then hit[5] = math.max(hit[5] or 0, n) end
+      return
     end
     out[#out + 1] = { m, x, y, source, n, mine or nil }
   end

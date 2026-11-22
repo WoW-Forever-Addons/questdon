@@ -674,6 +674,7 @@ L["Drag down and up: how many quests. The width follows Leveldon."] = "Arrastrar
 L["Ctrl + mouse wheel: text size."] = "Ctrl + rueda del ratón: tamaño del texto."
 L["Shift + mouse wheel: background opacity."] = "Mayús + rueda del ratón: opacidad del fondo."
 L["+%d more quests"] = "+%d misiones más"
+L["+%d more zones"] = "+%d zonas más"
 L["%d quests above (scroll up)"] = "%d misiones arriba (desplázate hacia arriba)"
 L["By zone"] = "Por zona"
 -- (1.3.6) options review 12.10.

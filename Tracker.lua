@@ -194,6 +194,56 @@ local ENTRY_SECS = 10
 local entryList, entryByID, entryGen, entryLevel, entryAt, entryRead = {}, {}, nil, nil, nil, 0
 local entryDistAt -- (21.11.2026, Ruckler) when the list measured its distances (ns.TrackerQuestDistance)
 local greyAsk = {}
+-- (22.11.2026, Ruckler, DonMonitor report: ticker Tracker.lua:2616 avg 11.8 ms every second, also standing in a fight)
+-- the pass of the 1 s ticker (ns.TrackerTick below) measures the nearest points again only when the player moved
+-- MOVE_YARDS from where they were last measured, the log was read anew or STILL_SECS passed; standing still it skips
+-- the whole build (TK.Still). Every other caller (the refresh part "tracker", tests) measures as before.
+-- One table for all of it: the file is at Lua's limit of 200 locals.
+--   pass: set by ns.TrackerTick for its one call of Entries; c, n, w, at: the player's world position and the time of
+--   the last measuring; stats: (tests); world: the available quests as kept targets (NewNearby)
+local TK = { MOVE_YARDS = 2, STILL_SECS = 5, pass = false, stats = { full = 0, still = 0, measured = 0, nearest = 0, kept = 0 },
+  world = { n = -1 } }
+ns.TrackerPass = TK -- (Build is at Lua's limit of 60 upvalues: it reaches this table through ns)
+-- (22.11.2026, Ruckler, second DonMonitor report: the pass while moving still 12.5 ms, once a second for minutes on a
+-- taxi and riding) Moving, the pass still looked through all spawn points of every quest each second. Now a quest's
+-- nearest point is looked for again only when the player moved KEEP_FRAC of the distance to it (at least MOVE_YARDS)
+-- from where it was found, or after KEEP_SECS plus up to 4 s (spread by the quest's place in the log), and at most
+-- BUDGET quests a pass, taking turns (riding among many quests nearly all were due every second); in between only the
+-- distance to the kept point is measured (one call). So the yards of a quest can for a few seconds be those to a
+-- spawn that is no longer its nearest. A log that changed (not just read again after ENTRY_SECS) and every caller but
+-- the ticker look for all of them as before.
+TK.KEEP_FRAC, TK.KEEP_SECS, TK.BUDGET, TK.turn = 0.1, 15, 4, 0
+-- the yards of a row are written again when they leave their step: 10 yards near, 25 from 300, 50 from 1000 (riding,
+-- every row's text changed every second)
+function TK.YardStep(d)
+  if not d then return nil end
+  if d < 300 then return math.floor(d / 10) end
+  if d < 1000 then return 1000 + math.floor(d / 25) end
+  return 2000 + math.floor(d / 50)
+end
+-- (22.11.2026, second report) which step of a slow pass took longest, for the engine's slow log (it appends
+-- ns.slowDetail to the entry's context and clears it): only with DonMonitor loaded (DonMonitorDB), a handful of
+-- debugprofilestop calls, no tables, no strings built. Without DonMonitor: one rawget per pass.
+TK.SLOW_MS = 8
+function TK.Begin()
+  if type(rawget(_G, "DonMonitorDB")) ~= "table" then TK.dps = nil return false end
+  local f = rawget(_G, "debugprofilestop")
+  if type(f) ~= "function" then TK.dps = nil return false end
+  local t = f()
+  TK.dps, TK.t0, TK.tStart, TK.max, TK.maxName = f, t, t, 0, nil
+  return true
+end
+function TK.Mark(name)
+  local t = TK.dps()
+  local d = t - TK.t0
+  TK.t0 = t
+  if d > TK.max then TK.max, TK.maxName = d, name end
+end
+function TK.End()
+  local f = TK.dps
+  TK.dps = nil
+  if f and f() - TK.tStart >= TK.SLOW_MS and TK.maxName then ns.slowDetail = TK.maxName end
+end
 local function FillEntry(e, id)
   e.title = ns.QuestTitle(id)
   e.level = ns.GameQuestLevel(id) or ns.QuestLevel(id)
@@ -223,8 +273,12 @@ ns.TrackerZone = TrackerZone -- (tests)
 local function Entries()
   local now = ns.Num(ns.Value(GetTime)) or 0
   local gen, level = ns.LogGen and ns.LogGen(), ns.PlayerLevel and ns.PlayerLevel()
+  local tick, reread = TK.pass, false
+  TK.pass = false
+  local same = gen == entryGen and level == entryLevel and not QD_TEST_FRESH_LOG -- (22.11.2026) read again, nothing new
   if not (ns.InScope and ns.InScope()) or QD_TEST_FRESH_LOG or gen ~= entryGen or level ~= entryLevel
       or not entryAt or now - entryAt > ENTRY_SECS or now < entryAt then
+    reread = true
     entryGen, entryLevel, entryAt = gen, level, now
     ns.MemCount("tracker log read")
     -- (23.10.) the list, the index and every entry are kept and filled again (they were new at each quest log event)
@@ -244,12 +298,56 @@ local function Entries()
   end
   local pc, pn, pw
   if ns.PlayerWorld then pc, pn, pw = ns.PlayerWorld() end
-  for _, e in ipairs(entryList) do
-    e.target, e.dist = nil, nil
-    local p = pc and ns.QuestNearestPoint and ns.MemPart("tracker nearest", ns.QuestNearestPoint, e.questID)
-    if p then
-      e.target = p -- (16.10.) the arrow's kept point (read only; it carries its world position)
-      e.dist = ns.MemPart("tracker distance", ns.DistanceFrom, pc, pn, pw, p)
+  -- (22.11.2026, Ruckler) the ticker's pass with the player where they were measured: the kept points and distances
+  local still = tick and not reread and TK.at and now >= TK.at and now - TK.at < TK.STILL_SECS and pc == TK.c
+  if still and pc then
+    local dn, dw = pn - TK.n, pw - TK.w
+    still = dn * dn + dw * dw < TK.MOVE_YARDS * TK.MOVE_YARDS
+  end
+  if not still then
+    TK.stats.measured = TK.stats.measured + 1
+    -- (22.11.2026, second report) riding (faster than FAST_YPS yards a second since the last measuring): the list's
+    -- order alone is put right every ORDER_FAST seconds only (Build)
+    TK.fast = false
+    if pc and pc == TK.c and TK.at and now > TK.at then
+      local dn, dw, dt = pn - TK.n, pw - TK.w, now - TK.at
+      TK.fast = dn * dn + dw * dw > TK.FAST_YPS * TK.FAST_YPS * dt * dt
+    end
+    TK.c, TK.n, TK.w, TK.at = pc, pn, pw, now
+    local st = TK.stats
+    local count = #entryList
+    local some = tick and (same or not reread) and pc -- the ticker's pass with the log as it was
+    local left, first = TK.BUDGET, some and TK.turn % (count > 0 and count or 1) or 0
+    for k = 1, count do
+      -- (22.11.2026, second report) the ticker's pass keeps a quest's point while the player is close to where it was
+      -- found (TK.KEEP_FRAC above); the quests due take turns, starting after the last one looked for
+      local i = (first + k - 1) % count + 1
+      local e = entryList[i]
+      local keep = some and e.mc == pc and e.mAt and now >= e.mAt
+      if keep and left > 0 and now - e.mAt < TK.KEEP_SECS + i % 5 then
+        if e.mDist then -- (a quest without a point here is asked again by its age only)
+          local dn, dw = pn - e.mn, pw - e.mw
+          local step = e.mDist * TK.KEEP_FRAC
+          if step < TK.MOVE_YARDS then step = TK.MOVE_YARDS end
+          keep = dn * dn + dw * dw < step * step
+        end
+      elseif keep and left > 0 then
+        keep = false -- too old
+      end
+      if not keep and some then left = left - 1 TK.turn = i end
+      if keep then
+        st.kept = st.kept + 1
+        if e.target then e.dist = ns.DistanceFrom(pc, pn, pw, e.target) end
+      else
+        st.nearest = st.nearest + 1
+        e.target, e.dist = nil, nil
+        local p = pc and ns.QuestNearestPoint and ns.MemPart("tracker nearest", ns.QuestNearestPoint, e.questID)
+        if p then
+          e.target = p -- (16.10.) the arrow's kept point (read only; it carries its world position)
+          e.dist = ns.MemPart("tracker distance", ns.DistanceFrom, pc, pn, pw, p)
+        end
+        e.mc, e.mn, e.mw, e.mAt, e.mDist = pc, pn, pw, now, e.dist
+      end
     end
   end
   if ns.TimingSeen then ns.SafeCall("timing", ns.TimingSeen, entryList, now) end -- (18.10.) play times: seconds in each objective area
@@ -257,6 +355,32 @@ local function Entries()
   return entryList
 end
 ns.TrackerEntries = Entries -- (tests)
+function TK.Kept() return entryList end -- (tests) the kept entries as they are, nothing measured
+-- (22.11.2026, Ruckler) the ticker's question: is everything Entries would read as it was at the last measuring (the
+-- log, the level, the player's place within MOVE_YARDS, not older than STILL_SECS)? Then the kept distances stay
+-- good: the play times get their second and the item buttons their distances (ns.TrackerQuestDistance) as from a pass.
+function TK.Still()
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if QD_TEST_FRESH_LOG or not (ns.InScope and ns.InScope()) then return false end
+  if not TK.at or now < TK.at or now - TK.at >= TK.STILL_SECS then return false end
+  if not entryAt or now < entryAt or now - entryAt > ENTRY_SECS then return false end
+  if (ns.LogGen and ns.LogGen()) ~= entryGen or (ns.PlayerLevel and ns.PlayerLevel()) ~= entryLevel then return false end
+  local pc, pn, pw
+  if ns.PlayerWorld then pc, pn, pw = ns.PlayerWorld() end
+  if pc ~= TK.c then return false end
+  if pc then
+    local dn, dw = pn - TK.n, pw - TK.w
+    if dn * dn + dw * dw >= TK.MOVE_YARDS * TK.MOVE_YARDS then
+      -- (22.11.2026, Ruckler, second DonMonitor report: the whole pass once a second for the minutes of a flight) on a
+      -- taxi nothing of the list can be used: the whole pass only every STILL_SECS, the yards up to that old
+      if not ns.True(ns.Value(rawget(_G, "UnitOnTaxi"), "player")) then return false end
+      TK.stats.taxi = (TK.stats.taxi or 0) + 1
+    end
+  end
+  if ns.TimingSeen then ns.SafeCall("timing", ns.TimingSeen, entryList, now) end
+  entryDistAt = now
+  return true
+end
 -- (21.11.2026, Ruckler) the distance the list measured within the last second and a half: true, dist (dist nil: no
 -- point); false when it did not (the item buttons measure it themselves then)
 function ns.TrackerQuestDistance(questID)
@@ -287,10 +411,35 @@ local function FocusID(list)
       if e.dist and not Hidden()[e.questID] and (not best or e.dist < best.dist) then best = e end
     end
   end
+  -- (22.11.2026, Ruckler, second DonMonitor report) two quests about as far away took turns as the nearest while
+  -- moving, and every turn drew the whole list anew (the card's quest is part of what it shows): the nearest of the
+  -- last pass stays until another one is FOCUS_YARDS (or FOCUS_FRAC of the distance) nearer
+  -- riding (TK.Riding) it stays ORDER_FAST seconds at least: in a zone full of quests another one was the nearest every
+  -- few seconds
+  local was = TK.nearFocus
+  if best and was and was ~= best and was.dist and was.grey == best.grey and not Hidden()[was.questID] then
+    local tol = best.dist * TK.FOCUS_FRAC
+    if tol < TK.FOCUS_YARDS then tol = TK.FOCUS_YARDS end
+    if was.dist <= best.dist + tol or TK.Riding(TK.nearAt) then
+      for _, e in ipairs(list) do if e == was then best = was break end end
+    end
+  end
+  if best ~= was then TK.nearAt = ns.Num(ns.Value(GetTime)) or 0 end
+  TK.nearFocus = best
   if best then return best.questID end
   for _, e in ipairs(list) do if not Hidden()[e.questID] then return e.questID end end
   return list[1] and list[1].questID
 end
+TK.FOCUS_YARDS, TK.FOCUS_FRAC = 20, 0.15
+-- riding (the list's last pass measured more than FAST_YPS yards a second, not longer than 3 s ago) and since less
+-- than ORDER_FAST seconds after "since"? (Arrow.lua asks too, for its "next" quest)
+function TK.Riding(since)
+  if not (TK.fast and TK.at) then return false end
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if now < TK.at or now - TK.at > 3 then return false end
+  return since ~= nil and now >= since and now - since < TK.ORDER_FAST
+end
+TK.Focus = FocusID -- (tests)
 ns.TrackerFocusID = function() return FocusID(Entries()) end -- (tests)
 
 local function Pick(id)
@@ -1221,7 +1370,7 @@ local function NeedleRow(row, e)
   row:SetValue(Yards(e.dist), Game() and GAME_OPEN or GOLD)
   -- (18.10., Daniel: "the small arrows beside the quests can go") no needle icon on the rows any more
   -- (17.10.) kept with its entry: the yards are written again without a rebuild when they change by 10
-  rows[#rows + 1] = { row = row, target = e.target, e = e, b = e.dist and math.floor(e.dist / 10) }
+  rows[#rows + 1] = { row = row, target = e.target, e = e, b = TK.YardStep(e.dist) }
 end
 -- (17.10., /qd mem: the list 57 KB a second, rebuilt every second while walking) only the yards of the shown rows
 local function UpdateYards()
@@ -1229,7 +1378,7 @@ local function UpdateYards()
     local e = r.e
     if e then
       r.target = e.target or r.target
-      local b = e.dist and math.floor(e.dist / 10)
+      local b = TK.YardStep(e.dist) -- (22.11.2026) 10 yards near, coarser far away
       if b ~= r.b then
         r.b = b
         r.row:SetValue(Yards(e.dist), Game() and GAME_OPEN or (B.goldLight or "accent"))
@@ -1237,18 +1386,43 @@ local function UpdateYards()
     end
   end
 end
--- the order of the "Nearby" list for the rebuild check: a kept array, sorted in place by distance in steps of
--- ORDER_YARDS (quests about as far as each other changed places every second while walking: a rebuild each time)
-local ORDER_YARDS, ORDER_SECS = 25, 5
+-- the order of the "Nearby" list for the rebuild check (quests about as far as each other changed places every second
+-- while walking: a rebuild each time).
+-- (22.11.2026, Ruckler, second DonMonitor report: the pass while moving still 12.5 ms) it was sorted anew every second
+-- by distance in steps of 25 yards and compared: riding, some pair crossed a step nearly every pass, so the whole list
+-- was drawn anew every ORDER_SECS. Now the entries stand as the last build listed them (orderLast) and the list is
+-- built anew for its order only when a quest stands more than ORDER_YARDS (or a tenth of the distance) farther than the
+-- one below it; a smaller disorder is put right after ORDER_LAZY seconds (and by any other rebuild). No sort per pass.
+-- Riding (TK.fast, Entries) quests pass each other all the time: the order alone then rebuilds every ORDER_FAST seconds
+-- at most (the yards of the rows stay current), on foot every ORDER_SECS as before.
+local ORDER_SECS = 5
+TK.ORDER_YARDS, TK.ORDER_LAZY, TK.ORDER_FAST, TK.FAST_YPS = 25, 15, 10, 9
 local orderLast, orderAt = {}, nil
-local orderBuf = {}
 local nearbyRow, nearbyB -- the "new quests nearby" row of the last build and its yards / 10
 local function ByDistance(a, b)
   if (a.dist ~= nil) ~= (b.dist ~= nil) then return a.dist ~= nil end
-  local da, db = a.dist and math.floor(a.dist / ORDER_YARDS), b.dist and math.floor(b.dist / ORDER_YARDS)
-  if da and db and da ~= db then return da < db end
+  if a.dist and b.dist and a.dist ~= b.dist then return a.dist < b.dist end
   return a.questID < b.questID
 end
+-- true: out of order by more than the tolerance; false, true: a little (ORDER_LAZY)
+function TK.OrderOff(order)
+  local lazy = false
+  for i = 1, #order - 1 do
+    local a, b = order[i].dist, order[i + 1].dist
+    if a == nil then
+      if b ~= nil then return true end
+    elseif b and a > b then
+      lazy = true
+      local tol = b * 0.1
+      if tol < TK.ORDER_YARDS then tol = TK.ORDER_YARDS end
+      if a > b + tol then return true end
+    end
+  end
+  return false, lazy
+end
+function TK.Order() return orderLast end -- (tests)
+TK.NEW_RGB = { 0.96, 0.78, 0.26 }
+function TK.NewText(n) return n == 1 and L["1 new quest nearby"] or L["%d new quests nearby"]:format(n) end
 
 -- (Questdon review 5) the map's available quests are worked out again only when the log, the level or the zone changed,
 -- or after AVAIL_SECS (they were worked out every second: 2 ms and 44 KB a tick, more with much learned data); the
@@ -1270,22 +1444,37 @@ local function AvailableHere(mapID)
   if availMap ~= mapID or availSeen ~= availGen or not availAt or now - availAt > AVAIL_SECS or now < availAt then
     availMap, availAt, availSeen = mapID, now, availGen
     availList = ns.AvailableQuestsOnMap(mapID) or {}
+    TK.world.n = -1 -- (22.11.2026) their world positions with them
   end
   return availList
 end
-local nearTarget = {}
 local function NewNearby()
   local mapID = ns.Num(ns.Value(C_Map.GetBestMapForUnit, "player"))
   if not (mapID and ns.AvailableQuestsOnMap and ns.PlayerWorld) then return 0 end
   local pc, pn, pw = ns.PlayerWorld()
   if not pc then return 0 end
   local n, best = 0, nil
-  local target = nearTarget
-  target.mapID = mapID
-  for _, a in ipairs(AvailableHere(mapID)) do
+  local list = AvailableHere(mapID)
+  -- (22.11.2026, Ruckler, DonMonitor report: ticker Tracker.lua:2616 avg 11.8 ms every second) each available quest's
+  -- map position became a world position again every second (one shared target table: the engine's memory of the last
+  -- target never fit). A kept target per quest of the list now, with its world position worked out once per list
+  -- (AvailableHere; the engine's distance takes _wc, _wn, _ww as it does for the quests' points).
+  local W = TK.world
+  if W.n ~= #list then
+    for i, a in ipairs(list) do
+      local t = W[i]
+      if not t then t = {} W[i] = t end
+      t.mapID, t.x, t.y, t._wc, t._wn, t._ww = mapID, a.x, a.y, nil, nil, nil
+      if a.x and a.y and ns.WorldPos then
+        local c, wn, ww = ns.WorldPos(mapID, a.x, a.y)
+        if c then t._wc, t._wn, t._ww = c, wn, ww end
+      end
+    end
+    W.n = #list
+  end
+  for i, a in ipairs(list) do
     if not a.dimmed and a.x and a.y then
-      target.x, target.y = a.x, a.y
-      local d = ns.DistanceFrom(pc, pn, pw, target)
+      local d = ns.DistanceFrom(pc, pn, pw, W[i])
       if d and d <= NEAR_NEW then
         n = n + 1
         if not best or d < best then best = d end
@@ -1863,6 +2052,8 @@ end
 local function Build()
   if not panel then return end
   local list = ns.MemPart("tracker log", Entries)
+  local P = ns.TrackerPass -- (22.11.2026) the pass's kept state and its step timer (P.dps only with DonMonitor)
+  if P.dps then P.Mark("entries") end
   -- (21.11.2026) in a dungeon only its quests (ns.TrackerDungeon above)
   local dg = ns.TrackerDungeon
   local dInst = dg.Here()
@@ -1880,8 +2071,10 @@ local function Build()
   soonest = nil
   local least
   for _, e in ipairs(list) do
-    local left = not e.failed and not e.complete and ns.QuestTimeLeft(e.questID)
-    if left and (not least or left < least) then soonest, least = e, left end
+    -- (22.11.2026) asked once per quest and pass (twice before: here and for the signature)
+    local left = not e.failed and ns.QuestTimeLeft(e.questID) or nil
+    e.tl = left
+    if left and not e.complete and (not least or left < least) then soonest, least = e, left end
   end
   local focus
   for _, e in ipairs(list) do if e.questID == focusID then focus = e end end
@@ -1921,34 +2114,36 @@ local function Build()
   for _, e in ipairs(list) do
     Put(fq[e.questID] and true or false)
     Put(e.questID) Put(e.title) Put(e.level) Put(e.zone) Put(e.complete) Put(e.failed) Put(e.grey) Put(hid[e.questID] and true or false)
-    local left = not e.failed and ns.QuestTimeLeft(e.questID) or nil
+    local left = e.tl
     Put(e.dist ~= nil) Put(left ~= nil) Put(#e.objs)
     Put((e.grey or e.complete) and ns.TrackerClose(e, zt)) -- (12.11.2026) close by: listed on top in "Nearby"
     PutP(left)
     for _, o in ipairs(e.objs) do PutP(o.have) PutP(o.done) end
   end
   -- (17.10.) the distances count only through the order of the quests (their yards: UpdateYards)
-  if Mode() == "near" then
-    local nb = #list
-    for i = 1, nb do orderBuf[i] = list[i] end
-    for i = nb + 1, #orderBuf do orderBuf[i] = nil end
-    table.sort(orderBuf, ByDistance)
-  end
-  local n, best = ns.MemPart("tracker nearby", NewNearby)
-  Put(n) -- (17.10.) its yards without a rebuild (below)
+  if P.dps then P.Mark("signature") end
+  -- (22.11.2026, second report) the new quests around are a row of the tab "Nearby" only: asked there only, and only
+  -- "any or none" counts for a rebuild (riding past quest givers their number changed every few seconds: the whole
+  -- list drawn anew); the number itself is written into the kept row (below)
+  local n, best = 0, nil
+  if Mode() == "near" then n, best = ns.MemPart("tracker nearby", NewNearby) end
+  Put(n > 0)
+  if P.dps then P.Mark("nearby") end
   Put(ns.PlayerLevel()) -- (23.10.) the footer's level and bar size; the XP itself only moves the bar (UpdateProgress)
   PutP(ns.Num(ns.Value(UnitXP, "player")))
   -- (17.10.) a new order alone rebuilds at most every ORDER_SECS (walking past quests: every second before)
   local orderNew = false
-  if Mode() == "near" then
-    local nb = #list
-    if nb ~= #orderLast then orderNew = true end
-    for i = 1, nb do if orderLast[i] ~= orderBuf[i].questID then orderNew = true break end end
-  end
   local now = ns.Num(ns.Value(GetTime)) or 0
+  if Mode() == "near" then
+    if #list ~= #orderLast then orderNew = true else
+      local lazy
+      orderNew, lazy = P.OrderOff(orderLast)
+      if lazy and not orderNew and orderAt and (now - orderAt >= P.ORDER_LAZY or now < orderAt) then orderNew = true end
+    end
+  end
   local changed = ns.MemPart("tracker signature", SigChanged)
   local progNew = ProgChanged()
-  if orderNew and not changed and lastSig and orderAt and now - orderAt < ORDER_SECS and now >= orderAt then orderNew = false end
+  if orderNew and not changed and lastSig and orderAt and now - orderAt < (P.fast and P.ORDER_FAST or ORDER_SECS) and now >= orderAt then orderNew = false end
   -- (12.11.2026) in a fight the item buttons cannot follow their rows: a new order alone waits for its end (the fight's
   -- end rebuilds the list, ExtrasSig)
   if orderNew and not changed and lastSig and ns.db.trackerItemButtons and InCombatLockdown and InCombatLockdown() then orderNew = false end
@@ -1956,6 +2151,8 @@ local function Build()
     ns.MemPart("tracker yards", UpdateYards)
     local b = best and math.floor(best / 10)
     if nearbyRow and b ~= nearbyB then nearbyB = b nearbyRow:SetValue(Yards(best), GOLD) end
+    if nearbyRow and n > 0 and n ~= P.nearN then P.nearN = n nearbyRow:SetText(P.NewText(n), P.NEW_RGB) end
+    if P.dps then P.Mark("texts") end
     return
   end
   lastSig = true
@@ -1969,8 +2166,12 @@ local function Build()
   ns.TrackerItemReset()
   nearbyRow, nearbyB = nil, nil
   orderAt = now
-  for i = 1, #orderBuf do orderLast[i] = orderBuf[i].questID end
-  for i = #orderBuf + 1, #orderLast do orderLast[i] = nil end
+  do -- the order this build lists the quests in (tab "Nearby"; the other tabs do not ask)
+    local nb = Mode() == "near" and #list or 0
+    for i = 1, nb do orderLast[i] = list[i] end
+    for i = #orderLast, nb + 1, -1 do orderLast[i] = nil end
+    table.sort(orderLast, ByDistance)
+  end
   for k in pairs(rows) do rows[k] = nil end
   panel:ClearRows()
   local width = (panel._width or 300) - 16
@@ -2102,8 +2303,18 @@ local function Build()
     if h and h.SetFold then h:SetFold(open, count, fn or function() Fold(key) end) end
     return h
   end
+  -- (22.11.2026, Daniel with a picture of "By zone": "ich kann die liste zonenansicht nicht kleiner machen"; chosen: a folded
+  -- head counts as a row) the folded heads take rows from the handle's limit like quests; what does not fit stands
+  -- under "+n more zones" and the mouse wheel scrolls to it
   local function FoldedHeads()
-    for _, f in ipairs(foldedLater) do Head(f[1], f[2], f[3], false) end
+    local before = more
+    for _, f in ipairs(foldedLater) do
+      if Take() then Head(f[1], f[2], f[3], false) end
+    end
+    if more > before then
+      Style.Row(panel):SetText(L["+%d more zones"]:format(more - before), B.textHint or "textHint"):SetIndent(FoldS.IND)
+    end
+    scrollMore = more
   end
   if Mode() == "near" then
     local done, others = {}, {}
@@ -2150,7 +2361,8 @@ local function Build()
     HiddenLine()
     if n > 0 then
       nearbyRow, nearbyB = Style.Row(panel), best and math.floor(best / 10)
-      nearbyRow:SetText(n == 1 and L["1 new quest nearby"] or L["%d new quests nearby"]:format(n), { 0.96, 0.78, 0.26 })
+      P.nearN = n
+      nearbyRow:SetText(P.NewText(n), P.NEW_RGB)
         :SetValue(Yards(best), B.goldLight or "accent"):SetIcon("Interface\\GossipFrame\\AvailableQuestIcon"):SetGapBefore(4)
     end
   else
@@ -2223,6 +2435,7 @@ local function Build()
     Greys()
     HiddenLine()
   end
+  P.rowsAll = skipped + shown + more -- (22.11.2026) quests and folded heads, where the handle starts and ends
   do -- the list got shorter: scroll back
     local lines = Limit()
     local total = skipped + ((lines or math.huge) - left) + more
@@ -2233,9 +2446,12 @@ local function Build()
   end
   Extras()
   Footer()
+  if P.dps then P.Mark("draw") end
   panel:Relayout()
   CapToScreen(shown + dgUsed)
+  if P.dps then P.Mark("layout") end
   if ns.SyncListItems then ns.SyncListItems() end -- (12.11.2026) the item buttons to their new rows (not in a fight)
+  if P.dps then P.Mark("items") end
 end
 
 -- the small needles of the rows (5 times a second, no rebuild)
@@ -2296,8 +2512,7 @@ function ns.RescueTracker()
 end
 function ns.TrackerDocked() return docked end -- (tests)
 
-function ns.UpdateTracker(force)
-  if not panel then return end
+function TK.Update(force)
   if force then lastSig = nil availGen = availGen + 1 end -- (review 5) a forced update works the quests out again
   if DB().tracker == false then
     if panel:IsShown() then panel:FadeOut() end
@@ -2306,6 +2521,7 @@ function ns.UpdateTracker(force)
     return
   end
   Dock()
+  if TK.dps then TK.Mark("dock") end
   -- (Questdon review 1) closed with its X: not built every second (all objective points of all quests)
   if not panel:IsShown() and DB().trackerShown == false then ApplyBlizzTracker() return end
   Build()
@@ -2314,7 +2530,60 @@ function ns.UpdateTracker(force)
     if ns.ApplyArrowLook then ns.ApplyArrowLook() end -- (1.3.7) the arrow runs for the list's compass
   end
   ApplyBlizzTracker()
+  if TK.dps then TK.Mark("blizz") end
 end
+-- (22.11.2026, second report) with DonMonitor the pass names its slowest step (TK.Begin above); the ticker's pass
+-- measures itself (TK.ticking)
+function ns.UpdateTracker(force)
+  if not panel then return end
+  local mine = not TK.ticking and TK.Begin()
+  TK.Update(force)
+  if mine then TK.End() end
+end
+
+-- (22.11.2026, Ruckler, DonMonitor report: ticker Tracker.lua:2616 avg 11.8 ms every second, in and out of a fight)
+-- The 1 s ticker's pass. It was the whole ns.UpdateTracker: every quest's nearest point out of all its spawn points,
+-- the timers, the signature of some hundred values, the order, the available quests around, then mostly "nothing
+-- changed". Now it asks first whether anything it alone would notice changed; if not, it only docks the list and
+-- looks after Blizzard's tracker (as every second before). The whole pass still runs when
+--   the player moved MOVE_YARDS or the log or level changed (TK.Still), at the latest after STILL_SECS,
+--   a rebuild is due (lastSig), the list is off, closed or not shown yet,
+--   a timed quest counts down (soonest), a fight began or ended (ExtrasSig), you are in a group (its progress
+--   comes without a message), the arrow's quest or the game's tracked quest changed (FocusID), a guide's window.
+-- Real changes come through the refresh part "tracker" (events) and ns.UpdateTracker(true) as before.
+function TK.Keys()
+  local t = ns.ArrowTarget and ns.ArrowTarget()
+  local st = C_SuperTrack and ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID)) or false
+  return ns.True(ns.Value(InCombatLockdown)), type(t) == "table" and t.questID or false, st, ns.GuideActive()
+end
+function ns.TrackerTick()
+  if not panel then return end
+  TK.ticking = true -- (an error in the pass leaves it set: the next tick puts it right)
+  local mon = TK.Begin()
+  local fight, arrow, st, guide = TK.Keys()
+  if lastSig and DB().tracker ~= false and panel:IsShown() and not soonest
+      and fight == TK.fight and arrow == TK.arrow and st == TK.super and guide == TK.guide
+      and not (ns.PartyMemberCount and ns.PartyMemberCount() > 0) then
+    Dock()
+    if mon then TK.Mark("dock") end
+    if lastSig and TK.Still() then
+      TK.stats.still = TK.stats.still + 1
+      if mon then TK.Mark("still") end
+      ApplyBlizzTracker()
+      if mon then TK.Mark("blizz") TK.End() end
+      TK.ticking = false
+      return
+    end
+  end
+  TK.fight, TK.arrow, TK.super, TK.guide = fight, arrow, st, guide
+  TK.stats.full = TK.stats.full + 1
+  TK.pass = true
+  ns.UpdateTracker()
+  TK.pass = false
+  if mon then TK.End() end
+  TK.ticking = false
+end
+function ns.TrackerTickStats() return TK.stats end -- (tests)
 
 -- (Questdon review 4) the arrow window stands in for the list's compass while the list is off or closed, and goes
 -- again when the list comes back if Questdon switched it on (two arrows before); an arrow you switched on stays
@@ -2450,7 +2719,9 @@ function ns.TrackerAttachGrip()
       ns.db.trackerPos = { "TOPLEFT", "BOTTOMLEFT", math.floor(l + 0.5), math.floor(t + 0.5) }
     end
     local x, y = Cursor()
-    local total = #Entries()
+    -- (22.11.2026) the rows of the last build (quests and folded zone heads), not only the quests: in "By zone" with
+    -- folded zones the handle started far above what showed and dragging up changed nothing
+    local total = tonumber(TK.rowsAll) or #Entries()
     -- (05.11.2026, Daniel: "nach dem neu einloggen liste voll aufgeklappt") a list without a saved size shows all its
     -- quests: the handle starts from all of them. It started from 0 before (math.huge - math.huge), so the first drag,
     -- even one only in width, cut the list to 1 quest.
@@ -2613,7 +2884,7 @@ ns.OnInit(function()
   -- (17.11.2026) the gamepad test module is gone: its saved switch with it
   if ns.db then ns.db.gamepad, ns.db.gamepadOffV1117 = nil, nil end
   Create()
-  ns.NewTicker(1, function() ns.UpdateTracker() end)     -- distances
+  ns.NewTicker(1, function() ns.TrackerTick() end)       -- distances (22.11.2026: only when something moved)
   ns.NewTicker(0.2, function()
     ns.SafeCall("trackerNeedles", TurnNeedles)
     ns.SafeCall("trackerButtons", FadeButtons)

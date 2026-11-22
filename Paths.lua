@@ -533,9 +533,18 @@ function ns.WalkRecords(all)
   end
   table.sort(maps)
   for _, m in ipairs(maps) do
+    -- (22.11.2026, Ruckler: "share" avg 125 ms) the share send builds these in slices (Exchange.lua ns.ShareBreath);
+    -- a map that went meanwhile has no cells
+    if ns.ShareBreath then ns.ShareBreath() end
     local seed = Seed(m)
     local blocks = {}
-    for c in pairs(walked[m]) do
+    -- (22.11.2026, second DonMonitor report: the slices avg 11.7 ms, max 20) a much walked map has thousands of cells:
+    -- its cells first as a list (no pause with pairs() open: you walk on meanwhile), then with a pause every 256
+    local cells, nc = {}, 0
+    for c in pairs(type(walked[m]) == "table" and walked[m] or blocks) do nc = nc + 1 cells[nc] = c end
+    for ci = 1, nc do
+      local c = cells[ci]
+      if ci % 256 == 0 and ns.ShareBreath then ns.ShareBreath() end
       if type(c) == "number" and c >= 0 and c < N * N and not (seed and seed[c]) and not (known and known(m, c)) then
         local i, j = c % N, math.floor(c / N)
         local b = math.floor(i / BLOCK) + math.floor(j / BLOCK) * (N / BLOCK)

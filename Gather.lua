@@ -176,7 +176,9 @@ function ns.GatherRecords()
   local keys = {}
   for k in pairs(t) do if type(k) == "string" then keys[#keys + 1] = k end end
   table.sort(keys)
-  for _, k in ipairs(keys) do
+  for i, k in ipairs(keys) do
+    -- (22.11.2026, Ruckler: "share" avg 125 ms) the share send builds these in slices (Exchange.lua ns.ShareBreath)
+    if i % 16 == 0 and ns.ShareBreath then ns.ShareBreath() end
     local kind, src, id, map = k:match("^([hmsf]) ([oc%-])(%d+) (%d+) ")
     local e = t[k]
     if kind and type(e) == "table" and type(e.items) == "table" then

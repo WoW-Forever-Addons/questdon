@@ -674,6 +674,7 @@ L["Drag down and up: how many quests. The width follows Leveldon."] = "上下拖
 L["Ctrl + mouse wheel: text size."] = "Ctrl + 滑鼠滾輪：文字大小。"
 L["Shift + mouse wheel: background opacity."] = "Shift + 滑鼠滾輪：背景透明度。"
 L["+%d more quests"] = "還有 %d 個任務"
+L["+%d more zones"] = "還有 %d 個區域"
 L["%d quests above (scroll up)"] = "上方還有 %d 個任務（向上捲動）"
 L["By zone"] = "依區域"
 -- (1.3.6) options review 12.10.

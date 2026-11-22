@@ -445,7 +445,7 @@ end
 -- pass removes everything below the cut (and part of the cut's rank).
 local QUEST_KEYS = { S = true, G = true, T = true, I = true, O = true, F = true, K = true, A = true, X = true, N = true, R = true,
   Z = true }
-local function Rank(key, e, reach)
+local function Rank(key, e, reach, sides)
   local best, t = 0, 0
   if type(e) == "string" then
     t = tonumber(e:match("^(%d+)")) or 0
@@ -462,8 +462,14 @@ local function Rank(key, e, reach)
   if reach and type(key) == "string" and QUEST_KEYS[key:sub(1, 1)] then
     local q = tonumber(key:match("^%a (%d+)"))
     if q then
-      local ok, can = pcall(reach, q)
-      if ok and can == false then side = 0 end
+      -- (22.11.2026) asked once per quest and prune (a quest has many facts)
+      local known = sides and sides[q]
+      if known == nil then
+        local ok, can = pcall(reach, q)
+        known = ok and can == false and 0 or 1
+        if sides then sides[q] = known end
+      end
+      side = known
     end
   end
   return (best * 2 + side) * 100000 + math.floor(t / 86400) % 100000
@@ -479,30 +485,46 @@ local bestMemo, bestMemoN, memoSize = {}, {}, 0 -- (A5) Best of a fact string (S
 local function Forget() bestMemo, bestMemoN, memoSize = {}, {}, 0 end
 ns.SharedForget = Forget -- (measurements)
 
-local function PruneTo(target)
+-- (22.11.2026, Ruckler, second DonMonitor report: "CHAT_MSG_ADDON Exchange.lua:1425" once 108.7 ms) That was this:
+-- the fact of another player that filled the store ranked all 8000 facts twice in the frame it came in (each with a
+-- protected question about its quest). Now every fact is ranked once (the keys and ranks kept for the second pass, the
+-- quest question once per quest), and a prune caused by a received fact runs in a coroutine in slices of
+-- PRUNE_SLICE_MS a frame, starting the frame after (Prune below). breath: pauses that coroutine when its slice is used
+-- up; only between whole facts, with no pairs() open (the store may change during a pause) and no protected call around.
+local function PruneTo(target, breath)
   local shared = DB().shared
   local reach = ns.QuestReachable
-  local hist, total = {}, 0
-  for key, e in pairs(shared) do
-    local r = Rank(key, e, reach)
-    hist[r] = (hist[r] or 0) + 1
-    total = total + 1
-  end
+  local keys, total = {}, 0
+  for key in pairs(shared) do total = total + 1 keys[total] = key end
   local remove = total - target
   if remove > 0 then
-    local ranks = {}
-    for r in pairs(hist) do ranks[#ranks + 1] = r end
-    table.sort(ranks)
+    local ranks, hist, sides = {}, {}, {}
+    for i = 1, total do
+      local key = keys[i]
+      local e = shared[key]
+      if e ~= nil then
+        local r = Rank(key, e, reach, sides)
+        ranks[i] = r
+        hist[r] = (hist[r] or 0) + 1
+      else
+        ranks[i] = false -- gone during a pause
+        remove = remove - 1
+      end
+      if breath and i % 32 == 0 then breath() end
+    end
+    local order = {}
+    for r in pairs(hist) do order[#order + 1] = r end
+    table.sort(order)
     local cut, part, acc = math.huge, 0, 0
-    for _, r in ipairs(ranks) do
+    for _, r in ipairs(order) do
       if acc + hist[r] <= remove then acc = acc + hist[r] else cut, part = r, remove - acc break end
     end
     local removed = 0
-    for key, e in pairs(shared) do
-      local r = Rank(key, e, reach)
-      if r < cut or (r == cut and part > 0) then
+    for i = 1, total do
+      local r = ranks[i]
+      if r and (r < cut or (r == cut and part > 0)) and shared[keys[i]] ~= nil then
         if r == cut then part = part - 1 end
-        shared[key] = nil
+        shared[keys[i]] = nil
         removed = removed + 1
       end
     end
@@ -512,8 +534,44 @@ local function PruneTo(target)
   end
   sharedCount, sharedH = nil, nil
 end
-local function Prune() PruneTo(math.floor(MAX_SHARED * 0.9)) end
+local PRUNE_SLICE_MS = 3
+local pruneJob -- { co =, t0 = this slice's start (ms), at = started (GetTime) }
+local function PruneStep()
+  local j = pruneJob
+  if not j then return end
+  j.t0 = debugprofilestop()
+  local ok, err = coroutine.resume(j.co)
+  if pruneJob ~= j then return end
+  if ok and coroutine.status(j.co) ~= "dead" then ns.After(0, PruneStep) return end
+  pruneJob = nil
+  stats.prunedSliced, stats.pruneSlices = (stats.prunedSliced or 0) + 1, (stats.pruneSlices or 0) + j.slices
+  if not ok then error(err, 0) end
+end
+-- now: in this frame (the migration at login, tests); else in slices where the game has the clock and timers for it
+local function Prune(now)
+  local target = math.floor(MAX_SHARED * 0.9)
+  if now or ns.sharePruneNow or type(debugprofilestop) ~= "function" or type(coroutine) ~= "table"
+      or not (C_Timer and C_Timer.After and ns.After) then
+    pruneJob = nil
+    PruneTo(target)
+    return
+  end
+  local j = pruneJob
+  if j then
+    local age = (ns.Num(ns.Value(GetTime)) or 0) - j.at
+    if age >= 0 and age < 30 then return end -- on its way (the store runs a few facts over meanwhile)
+  end
+  j = { t0 = debugprofilestop(), at = ns.Num(ns.Value(GetTime)) or 0, slices = 0 }
+  j.co = coroutine.create(function()
+    PruneTo(target, function()
+      if debugprofilestop() - j.t0 >= PRUNE_SLICE_MS then j.slices = j.slices + 1 coroutine.yield() end
+    end)
+  end)
+  pruneJob = j
+  ns.After(0, PruneStep)
+end
 ns.SharedPruneTo = PruneTo -- (measurements)
+ns.SharedPruneJob = function() return pruneJob end -- (tests)
 
 -- (A5) once per session (and for every new shared table): old tables into strings and down to MAX_SHARED. Returns how
 -- many entries changed.
@@ -527,7 +585,7 @@ function Migrate(db)
   end
   db.sharedVersion = 3
   sharedCount, sharedH = nil, nil
-  if SharedCount() > MAX_SHARED then Prune() end
+  if SharedCount() > MAX_SHARED then Prune(true) end
   Forget()
   return n
 end
@@ -970,6 +1028,8 @@ end
 local function Walk(t, depth, acc)
   for k, v in pairs(t) do
     acc[1] = acc[1] + 1
+    -- (22.11.2026, second report) in slices when the ticker's send asks (ns.ShareBreath: only in its coroutine)
+    if acc[1] % 256 == 0 then ns.ShareBreath() end
     local tv = type(v)
     if tv == "number" then acc[2] = (acc[2] + v * 7 + acc[1]) % 1000000007
     elseif tv == "string" then acc[2] = (acc[2] + #v * 13 + acc[1]) % 1000000007
@@ -997,6 +1057,35 @@ end
 local quiet = { fp = nil, nextDue = nil } -- the last flush that had nothing to send
 ns.ShareQuietState = function() return quiet end -- (tests)
 local nextDueSeen
+-- (22.11.2026, Ruckler, DonMonitor report: "share" 3 calls in 2.5 minutes, avg 125 ms, max 186 ms) While you play,
+-- your own facts change every minute, so every send of the ticker built the whole list anew in one frame (all export
+-- lines, each parsed and compared). The ticker's send (ns.ShareFlush(true)) now builds the list in a coroutine, a
+-- slice of SLICE_MS a frame; ns.ShareBreath pauses it between whole lines, quests and parts (here, Export.lua,
+-- Gather.lua, Paths.lua, Walks.lua). The finished list goes where the one-frame list went (backlog, quiet) and the
+-- send follows in that frame: the same lines, a few frames later. Every other caller (tests, measurements) builds it
+-- in one go as before; so does the ticker where the game has no clock for it (debugprofilestop).
+-- (22.11.2026, second DonMonitor report: the slices avg 11.7 ms, max 20; "share" itself avg 16.6 ms, max 38) What did
+-- not fit a slice: the fingerprint of all own facts before the list (every minute, in the ticker's frame) and once
+-- more in the frame that sent; whole maps of walked cells. The fingerprint and the questions after it now run in the
+-- coroutine too (Walk above pauses every 256 values), the send after a built list does not take it again, and the
+-- walked cells pause within a map (Paths.lua).
+-- ns.SharePart names the part being built, for the engine's slow log (ns.slowDetail, only with DonMonitor): the part
+-- a slow slice was in when it paused or ended.
+local SLICE_MS = 3
+local job -- { co = the coroutine, t0 = this slice's start (ms), at = started (GetTime), slices =, part = }
+function ns.ShareBreath()
+  local j = job
+  if not j or coroutine.running() ~= j.co then return end
+  if debugprofilestop() - j.t0 >= SLICE_MS then
+    j.slices = j.slices + 1
+    coroutine.yield()
+  end
+end
+function ns.SharePart(name)
+  local j = job
+  if j then j.part = name end
+end
+function ns.ShareJob() return job end -- (tests)
 local function Pending()
   local db = DB()
   local sent, at, shared = db.shareSent, db.shareSentAt, db.shared
@@ -1004,7 +1093,11 @@ local function Pending()
   local hList, hAgain, hTaken = {}, {}, 0 -- (12) gathering finds: after the rest, at most H_PENDING
   local due = Clock() - RESEND
   nextDueSeen = nil
-  for _, line in ipairs(ns.ExportRecords and ns.ExportRecords(false) or {}) do
+  local records = ns.ExportRecords and ns.ExportRecords(false) or {}
+  ns.ShareBreath()
+  ns.SharePart("pending")
+  for li, line in ipairs(records) do
+    if li % 8 == 0 then ns.ShareBreath() end -- (22.11.2026, Ruckler) in slices when the ticker's send builds it
     local isH = line:byte(1) == 72
     -- (12) enough finds for this list: the others are not even read (they come with a later list)
     local key, _, count
@@ -1047,6 +1140,8 @@ local function Pending()
     end
   end
   local function Oldest(a, b) if a[4] ~= b[4] then return a[4] < b[4] end return a[1] < b[1] end
+  ns.ShareBreath()
+  ns.SharePart("sort")
   table.sort(again, Oldest)
   for _, e in ipairs(again) do list[#list + 1] = e end
   table.sort(hAgain, Oldest)
@@ -1101,7 +1196,71 @@ local function SampleBudget()
   return SAMPLES_PER_HOUR - #sampleTimes
 end
 
-function ns.ShareFlush()
+-- (22.11.2026, second report) what ns.ShareFlush asked in the ticker's frame before the list, now the coroutine's
+-- first part: the fingerprint, "nothing changed" (returns "quiet"), "the kept list still serves" (returns "send"),
+-- else the list (returns it, with the two fingerprints)
+local function JobBody()
+  ns.SharePart("fingerprint")
+  local fp, own = ExportFingerprint()
+  if quiet.fp == fp and (not quiet.nextDue or Clock() < quiet.nextDue) then return "quiet" end
+  local age = Now() - backlog.at
+  if backlog.list and backlog.pos <= #backlog.list and age >= 0 and age < BACKLOG_AGE
+      and (backlog.fp == own or age < REBUILD_GAP) then
+    return "send"
+  end
+  ns.SharePart("export")
+  return Pending(), fp, own
+end
+-- with DonMonitor: a slow slice names its part for the engine's slow log
+local function JobSlow(j, part)
+  if debugprofilestop() - j.t0 >= 8 and type(rawget(_G, "DonMonitorDB")) == "table" then ns.slowDetail = part or j.part end
+end
+-- one slice of the list being built; done: into the backlog as in ns.ShareFlush, then the send itself. Returns the
+-- messages sent when it ended in this slice.
+local function JobStep()
+  local j = job
+  if not j then return 0 end
+  j.t0 = debugprofilestop()
+  local ok, list, fp, own = coroutine.resume(j.co)
+  if job ~= j then return 0 end -- (learned data deleted meanwhile, ns.ResetShared)
+  if not ok then
+    job = nil
+    -- own facts were taken out during a pause (pairs lost its place): this send is dropped, the next one starts anew
+    if type(list) == "string" and list:find("invalid key to 'next'", 1, true) then
+      stats.jobLost = (stats.jobLost or 0) + 1
+      return 0
+    end
+    error(list, 0)
+  end
+  if coroutine.status(j.co) ~= "dead" then JobSlow(j) ns.After(0, JobStep) return 0 end
+  job = nil
+  stats.slices = (stats.slices or 0) + j.slices
+  if list == "quiet" then
+    stats.quiet = (stats.quiet or 0) + 1
+    JobSlow(j)
+    return 0
+  end
+  if type(list) == "table" then
+    backlog.list, backlog.pos, backlog.fp, backlog.at = list, 1, own, Now()
+    stats.built = (stats.built or 0) + 1
+    stats.sliced = (stats.sliced or 0) + 1
+    if #list == 0 then quiet.fp, quiet.nextDue = fp, nextDueSeen else quiet.fp, quiet.nextDue = nil, nil end
+  elseif list ~= "send" then
+    return 0
+  end
+  local before = debugprofilestop()
+  local n = ns.ShareFlush(false, true)
+  JobSlow(j, debugprofilestop() - before > before - j.t0 and "send" or nil)
+  return n
+end
+-- slices: the ticker's send, the list may be built over several frames (0 now, the send follows); built: the list
+-- was just built that way, not again
+function ns.ShareFlush(slices, built)
+  if job then
+    local age = Now() - job.at
+    if age >= 0 and age < 30 then return 0 end -- its list is on the way
+    job = nil
+  end
   if not (ns.db and ns.db.shareLearned and ns.db.learnQuests) then return 0 end
   if not (C_ChatInfo and type(C_ChatInfo.SendAddonMessage) == "function") then return 0 end
   if Locked() or ns.True(ns.Value(InCombatLockdown)) then stats.blocked, stats.held = stats.blocked + 1, stats.held + 1 return 0 end -- (04.11.2026) counted apart
@@ -1111,13 +1270,20 @@ function ns.ShareFlush()
   local budget = math.min(MAX_PER_FLUSH, HourBudget(), math.floor(SENDS_PER_FLUSH / #channels))
   local facts = FactBudget()
   if budget <= 0 or facts <= 0 then return 0 end
-  local fp, own = ExportFingerprint()
-  if quiet.fp == fp and (not quiet.nextDue or Clock() < quiet.nextDue) then
+  -- (22.11.2026, Ruckler) the ticker's send: the fingerprint and the list in slices (JobBody above), the send follows
+  -- when they are there; (second report) the fingerprint too, and not a second time for the send after them (built)
+  if not built and slices == true and type(debugprofilestop) == "function" and type(coroutine) == "table" and C_Timer and C_Timer.After then
+    job = { co = coroutine.create(JobBody), t0 = debugprofilestop(), at = Now(), slices = 0 }
+    return JobStep()
+  end
+  local fp, own
+  if not built then fp, own = ExportFingerprint() end
+  if not built and quiet.fp == fp and (not quiet.nextDue or Clock() < quiet.nextDue) then
     stats.quiet = (stats.quiet or 0) + 1
     return 0
   end
   local age = Now() - backlog.at
-  if not (backlog.list and backlog.pos <= #backlog.list and age >= 0 and age < BACKLOG_AGE
+  if not built and not (backlog.list and backlog.pos <= #backlog.list and age >= 0 and age < BACKLOG_AGE
       and (backlog.fp == own or age < REBUILD_GAP)) then
     local list = Pending()
     backlog.list, backlog.pos, backlog.fp, backlog.at = list, 1, own, Now()
@@ -1367,6 +1533,7 @@ function ns.ResetShared()
   -- (23.10.) learned data deleted (Options.lua calls this): the kept send list goes too
   backlog.list, backlog.pos, backlog.fp, backlog.at = nil, 1, nil, 0
   quiet.fp, quiet.nextDue = nil, nil
+  job = nil -- (22.11.2026) a list being built in slices is dropped with them
 end
 
 ---------------------------------------------------------------------------
@@ -1381,7 +1548,7 @@ ns.OnInit(function()
   if not ticker and C_Timer and type(C_Timer.NewTicker) == "function" then
     ticker = C_Timer.NewTicker(FLUSH_GAP, function()
       ns.SafeCall("share channel", ns.ShareChannelTick)
-      ns.SafeCall("share", ns.ShareFlush)
+      ns.SafeCall("share", ns.ShareFlush, true) -- (22.11.2026, Ruckler) the list in slices over several frames
     end)
   end
   -- (1.1) the open channel: shortly after login, then the join is checked

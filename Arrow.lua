@@ -128,10 +128,26 @@ local function Nearest(points)
   local best, bestDist
   local pc, pn, pw = PlayerWorld() -- once, not per point
   if not pc then return nil end
-  for _, p in ipairs(points) do
-    local d = FromPlayer(pc, pn, pw, p)
-    if d and (not bestDist or d < bestDist) then best, bestDist = p, d end
+  -- (22.11.2026, Ruckler, DonMonitor report: ticker Tracker.lua:2616 avg 11.8 ms every second) the list asks for every
+  -- quest of the log: thousands of spawn points, each through three calls with a root and an angle nobody read.
+  -- Points that carry their world position (CachedPoints) are compared by the squared distance right here; the root
+  -- only once, for the nearest. The others as before.
+  local bestSq
+  for i = 1, #points do
+    local p = points[i]
+    local wc = p._wc
+    if wc then
+      if wc == pc and p.mapID and p.x and p.y then
+        local dn, dw = p._wn - pn, p._ww - pw
+        local sq = dn * dn + dw * dw
+        if not bestSq or sq < bestSq then best, bestSq, bestDist = p, sq, nil end
+      end
+    else
+      local d = FromPlayer(pc, pn, pw, p)
+      if d and (not bestSq or d * d < bestSq) then best, bestSq, bestDist = p, d * d, d end
+    end
   end
+  if best and not bestDist then bestDist = math.sqrt(bestSq) end
   return best, bestDist
 end
 
@@ -379,6 +395,7 @@ end
 -- tracked: the arrow moves on by itself, to the nearest turn-in of a finished quest, or to an open
 -- objective close by when that is nearer. A click on the arrow puts this aside until the quest log changes.
 local NEXT_NEAR = 400 -- yards: an open objective counts as "close by"
+local NEXT_STICK, NEXT_STICK_FRAC = 20, 0.15 -- (22.11.2026) the next quest stays until another is this much nearer
 local nextDismissed -- quest log signature when the player clicked the "next" target away
 local function LogSignature()
   local parts = {}
@@ -389,6 +406,7 @@ local function LogSignature()
   return table.concat(parts, ",")
 end
 local nextCache, nextAt, nextSig = nil, -10, nil
+local nextPickAt -- (22.11.2026) when the "next" quest last changed
 local function NextAuto()
   if ns.db.arrowNext == false then return nil end
   local sig = LogSignature()
@@ -397,6 +415,14 @@ local function NextAuto()
   -- every quest's places: at most every 2 seconds, at once when the log changed
   local now = ns.Num(ns.Value(GetTime)) or 0
   if sig == nextSig and now - nextAt < 2 then return nextCache end
+  -- (22.11.2026, Ruckler, second DonMonitor report: the quest list's pass while moving still 12.5 ms) two quests about
+  -- as far away took turns as "next" while moving, and every turn drew the whole quest list anew (its card shows the
+  -- arrow's quest): the quest of the last choice stays (same log) until another one of its kind (a turn-in or close
+  -- by, else the nearest open one) is NEXT_STICK yards, or NEXT_STICK_FRAC of the distance, nearer
+  -- Riding (the quest list's pass says so, ns.TrackerPass.Riding) it stays 10 s at least: in a zone full of quests
+  -- another one was the nearest every few seconds.
+  local was = sig == nextSig and type(nextCache) == "table" and nextCache.questID or nil
+  local wasP, wasD, wasPts, wasFin
   nextSig, nextAt = sig, now
   nextCache = nil
   local best, bestD, bestID
@@ -413,14 +439,22 @@ local function NextAuto()
         local p, d = Nearest(points)
         if p and d then
           local finished = p.kind == "turnin" or p.kind == "guess"
+          if id == was then wasP, wasD, wasPts, wasFin = p, d, points, finished end
           if (finished or d <= NEXT_NEAR) and (not bestD or d < bestD) then best, bestD, bestID, bestPts = p, d, id, points end
           if not finished and (not farD or d < farD) then far, farD, farID, farPts = p, d, id, points end
         end
       end
     end
   end
+  local first = best ~= nil
   if not best then best, bestD, bestID, bestPts = far, farD, farID, farPts end
   if not best then return nil end
+  if wasP and was ~= bestID and ((first and (wasFin or wasD <= NEXT_NEAR)) or (not first and not wasFin))
+      and (wasD <= bestD + math.max(NEXT_STICK, bestD * NEXT_STICK_FRAC)
+        or (ns.TrackerPass and ns.TrackerPass.Riding and ns.TrackerPass.Riding(nextPickAt))) then
+    best, bestD, bestID, bestPts = wasP, wasD, was, wasPts
+  end
+  if bestID ~= was then nextPickAt = now end
   local title = ns.QuestTitle(bestID)
   local label = (best.kind == "turnin" or best.kind == "guess") and L["Turn in: %s"]:format(title) or title
   nextCache = { mapID = best.mapID, x = best.x, y = best.y, label = L["Next: %s"]:format(label), questID = bestID, next = true }
