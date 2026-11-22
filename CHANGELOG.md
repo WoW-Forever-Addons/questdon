@@ -1,5 +1,9 @@
 # Changes
 
+## 1.10.3
+
+- **Fixed: error "Auras cannot be accessed when secret while tainted":** with a tracked recipe Questdon folded the quest part of the game's objective tracker, and the next tracker update of the game then ran as Questdon's (for example in Torghast or other scenarios). Questdon now only makes that part invisible and never folds it.
+
 ## 1.10.2
 
 - **Fixed: the quest list inside a dungeon:** in a dungeon with many quests the sections "Available" and "Done" made the window taller than the screen, so its title bar and size handle were out of reach and your own quests were cut. They now keep to the room on the screen and the line limit, the rest shows as "+n more".

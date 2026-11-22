@@ -77,10 +77,14 @@ local function BlizzTracker()
 end
 -- (15.11.2026, Daniel: "wenn ich ein rezept tracken möchte erscheint keine liste") tracked recipes live in the same
 -- frame as Blizzard's quest list. While a recipe is tracked the frame stays visible and only its quest parts are
--- hidden (invisible and folded); without a tracked recipe the whole frame is hidden as before.
+-- hidden (invisible); without a tracked recipe the whole frame is hidden as before.
+-- (22.11.2026, Profitdon 0.2.12 taint "GetAuraDataByIndex(): Auras cannot be accessed when secret while tainted") no
+-- SetCollapsed/IsCollapsed on Blizzard's tracker modules any more: SetCollapsed writes self.isCollapsed and calls
+-- MarkDirty, so Blizzard's next tracker update reads our values and runs tainted. Only SetAlpha (a C method, no Lua
+-- field) is used; the invisible part keeps its height.
 local QUEST_PARTS = { "QuestObjectiveTracker", "CampaignQuestObjectiveTracker" }
 local recipeFlag -- nil: ask the game again (TRACKED_RECIPE_UPDATE, entering the world)
-local partsHidden, partsFolded = false, {}
+local partsHidden = false
 local function TrackedList(get, recraft)
   local ok, t = pcall(get, recraft)
   return ok and type(t) == "table" and next(t) ~= nil
@@ -101,14 +105,8 @@ local function ApplyQuestParts(hide)
       if hide then
         local a = ns.Num(ns.Value(m.GetAlpha, m))
         if not a or a > 0 then pcall(m.SetAlpha, m, 0) end
-        if type(m.SetCollapsed) == "function" and type(m.IsCollapsed) == "function" then
-          local ok, folded = pcall(m.IsCollapsed, m)
-          if ok and not folded then partsFolded[n] = true pcall(m.SetCollapsed, m, true) end
-        end
       else
         pcall(m.SetAlpha, m, 1)
-        if partsFolded[n] and type(m.SetCollapsed) == "function" then pcall(m.SetCollapsed, m, false) end
-        partsFolded[n] = nil
       end
     end
   end
