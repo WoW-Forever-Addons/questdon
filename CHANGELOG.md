@@ -1,5 +1,9 @@
 # Changes
 
+## 1.10.4
+
+- **Fixed: the dungeon switch was big and below the tabs:** in the Blizzard look Questdon counted room for its own logo next to "Quests" and thought the header was too narrow. "Whole list / Dungeon only" now sits small in the header at the normal width. In a narrow list it takes the place of the title "Quests" while you are in the dungeon, and the title comes back outside.
+
 ## 1.10.3
 
 - **Fixed: error "Auras cannot be accessed when secret while tainted":** with a tracked recipe Questdon folded the quest part of the game's objective tracker, and the next tracker update of the game then ran as Questdon's (for example in Torghast or other scenarios). Questdon now only makes that part invisible and never folds it.

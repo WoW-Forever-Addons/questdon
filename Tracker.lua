@@ -1688,13 +1688,12 @@ function DG.Switch(inst)
   local width = (panel and panel._width or 300)
   seg:Update()
   if DG.InHeader(seg, width) then return seg end
-  -- too narrow for the header: under the tabs as before
+  -- too narrow even without the title: under the tabs, but small as in the header (22.11.2026, Daniel: "dachte die
+  -- knöpfe sollten oben und kleiner sein?")
   if seg.SetParent and seg.GetParent and seg:GetParent() ~= UIParent then seg:SetParent(UIParent) end
-  if seg.SetHeight then seg:SetHeight(DG.fullH or 28) end
-  for _, b in ipairs(seg.fields or {}) do if b.SetHeight then b:SetHeight(DG.fullBtnH or (game and 22 or 14)) end end
-  local h = ns.Num(ns.Value(seg.GetHeight, seg)) or 28
-  seg:Layout(math.max(60, width - 16))
-  local holder = Style.Content(panel, seg, h + 4)
+  DG.Small(seg)
+  seg:Layout(math.max(60, math.min(width - 16, DG.HEADER_MAX)))
+  local holder = Style.Content(panel, seg, DG.HEADER_H + 4)
   if holder and holder.SetKeepWhenCollapsed then holder:SetKeepWhenCollapsed(true) end
   return seg
 end
@@ -1715,16 +1714,36 @@ function DG.InHeader(seg, width)
     end
   end
   local textW = ns.Num(ns.Value(title.GetStringWidth, title)) or 60
-  local titleX = panel._titleX or S.titleX or 8
+  -- (22.11.2026, Daniel: "muss man super breit ziehen dafür") the game look puts the title at the left edge without the
+  -- Don mark (DonCore Style SetGameLook): its 24 px made the header look too narrow. Still too narrow: the switch takes
+  -- the title's place while in the dungeon (the title comes back outside, DG.TitleBack)
+  local titleX = (Game() and S.titleX) or panel._titleX or S.titleX or 8
   local room = math.floor(width - used - (titleX + textW + 10))
-  if room < DG.HEADER_MIN then return false end
+  local noTitle = room < DG.HEADER_MIN
+  if noTitle then room = math.floor(width - used - (Game() and S.titleX or 8)) end
+  if room < DG.HEADER_MIN then DG.TitleBack() return false end
+  if title.SetAlpha then title:SetAlpha(noTitle and 0 or 1) end
+  DG.noTitle = noTitle or nil
   local w = math.min(room, DG.HEADER_MAX)
-  if not DG.fullH then
-    DG.fullH = ns.Num(ns.Value(seg.GetHeight, seg)) or 28
-    local f1 = seg.fields and seg.fields[1]
-    DG.fullBtnH = f1 and ns.Num(ns.Value(f1.GetHeight, f1)) or nil
-  end
   if seg:GetParent() ~= header then seg:SetParent(header) end
+  DG.Small(seg)
+  seg:ClearAllPoints()
+  if lead then seg:SetPoint("RIGHT", lead, "LEFT", -gap - 2, 0)
+  else seg:SetPoint("RIGHT", header, "RIGHT", -right, 0) end
+  seg:Layout(w)
+  if seg.SetFrameLevel and header.GetFrameLevel then seg:SetFrameLevel((header:GetFrameLevel() or 1) + 2) end
+  seg:Show()
+  DG.inHeader = true -- (tests)
+  return true
+end
+function DG.TitleFS() return panel and panel._title end -- (tests)
+function DG.TitleBack()
+  local title = panel and panel._title
+  if DG.noTitle and title and title.SetAlpha then title:SetAlpha(1) end
+  DG.noTitle = nil
+end
+-- the switch small: 16 high, the font 2 smaller (at most 10)
+function DG.Small(seg)
   seg:SetHeight(DG.HEADER_H)
   for _, b in ipairs(seg.fields or {}) do
     if b.SetHeight then b:SetHeight(DG.HEADER_H) end
@@ -1737,14 +1756,6 @@ function DG.InHeader(seg, width)
       end
     end
   end
-  seg:ClearAllPoints()
-  if lead then seg:SetPoint("RIGHT", lead, "LEFT", -gap - 2, 0)
-  else seg:SetPoint("RIGHT", header, "RIGHT", -right, 0) end
-  seg:Layout(w)
-  if seg.SetFrameLevel and header.GetFrameLevel then seg:SetFrameLevel((header:GetFrameLevel() or 1) + 2) end
-  seg:Show()
-  DG.inHeader = true -- (tests)
-  return true
 end
 ns.TrackerDungeonSwitch = function() return DG[Game() and "seg_game" or "seg_don"] end -- (tests)
 -- one quest to pick up: the Don row (badge, title, the giver below) or the game's "[level] title" with a line below
@@ -1980,6 +1991,7 @@ local function Build()
   Style.Content(panel, Tabs(), TAB_H, { inset = false }) -- (02.11.2026) the tabs over the whole width
   if dInst then dg.Switch(dInst) else
     for _, k in ipairs({ "seg_don", "seg_game" }) do if dg[k] and dg[k].Hide then dg[k]:Hide() end end
+    dg.TitleBack()
   end
   -- (1.3.6) with a guide's compass (Leveldon) the guide shows the way: no card of our own, all quests listed
   if not ns.GuideActive() then
