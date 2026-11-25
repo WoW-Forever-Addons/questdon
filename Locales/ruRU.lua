@@ -608,7 +608,6 @@ L["Opens the world map at the entrance and lets its pin pulse for a moment."] = 
 L["The world map cannot be opened in combat."] = "В бою карту мира открыть нельзя."
 L["The world map could not be opened."] = "Не удалось открыть карту мира."
 -- (1.3.5) bundled minimap dots
-L["%d objective spots"] = "Мест с целями: %d"
 L["Symbols instead of dots"] = "Символы вместо точек"
 L["Quest mobs, loot, named mobs, objects to click, places to reach and the places to use a quest item get their own symbol in the quest's colour, on the world map and the minimap. Spots close together become one symbol."] = "Противники заданий, добыча, именные противники, предметы для взаимодействия, места, куда нужно дойти, и места применения предмета задания получают на карте мира и миникарте свой символ цвета задания. Близкие места объединяются в один символ."
 L["Hide the game's quest markers on the world map"] = "Скрыть метки заданий игры на карте мира"
@@ -880,6 +879,12 @@ L["Shift-click: also the arrow"] = "Shift-щелчок: также стрелк�
 L["%d waypoints set."] = "Путевых точек поставлено: %d."
 L["Waypoints"] = "Путевые точки"
 L["One waypoint per line: [zone or #map] x y [text]"] = "По одной точке в строке: [зона или #карта] x y [текст]"
+-- (24.11.2026, Fenstercheck) the /way window: errors with an example
+L["Line not understood: %s"] = "Строка не понята: %s"
+L["Nothing to set."] = "Нечего ставить."
+L["#1413 62.7 36.3 your text"] = "#1413 62.7 36.3 ваш текст"
+L["Example: #1413 62.7 36.3 your text"] = "Пример: #1413 62.7 36.3 ваш текст"
+L["(62.7, 36.3 with a comma works too)"] = "(62.7, 36.3 через запятую тоже можно)"
 L["Remove all"] = "Убрать все"
 L["Set waypoints"] = "Поставить точки"
 L["Waypoint pin size"] = "Размер путевых точек"
@@ -941,3 +946,7 @@ L["Quest giver outside the dungeon"] = "Дает задание вне подз�
 L["No quest of this dungeon in your log."] = "В журнале нет заданий этого подземелья."
 L["The quest giver stands outside the dungeon: pick it up there before you go in next time."] = "Тот, кто дает задание, находится вне подземелья: в следующий раз возьмите задание там, прежде чем войти."
 L["The quest giver stands in this dungeon."] = "Тот, кто дает задание, находится в этом подземелье."
+-- (23.11.2026) hide a quest starter item
+L["Right-click: hide this item (Options: Hidden quest items)"] = "ПКМ: скрыть этот предмет (Настройки: Скрытые предметы заданий)"
+L["Hidden quest items"] = "Скрытые предметы заданий"
+L["Items that start a quest and that you hid with a right-click on their row in the quest list come back (row and button)."] = "Предметы, начинающие задание, которые вы скрыли правым щелчком по их строке в списке заданий, снова появятся (строка и кнопка)."

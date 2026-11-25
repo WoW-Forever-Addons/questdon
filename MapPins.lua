@@ -240,15 +240,19 @@ local BuildPins, BuildBase
 function ns.PinsForMap(mapID)
   return ns.Memo("pins", mapID, BuildPins)
 end
-function ns.PinsForMapBase(mapID)
-  return ns.Memo("pinsBase", mapID, BuildBase)
+-- pause: (24.11.2026, Ruckler Runde 4) the builds in slices of the map and the minimap: given on to the engine
+-- (ns.AvailableQuestsOnMap, ns.ObjectivePointsOnMap; an engine without it leaves it out) and called between the parts
+function ns.PinsForMapBase(mapID, pause)
+  return ns.Memo("pinsBase", mapID, BuildBase, pause)
 end
-function BuildPins(mapID)
+-- pause: (24.11.2026) the map's refresh in slices (RefreshIfChanged below) pauses between the base and the dots
+function BuildPins(mapID, pause)
   local pins = {}
   if not mapID then return pins end
-  for _, p in ipairs(ns.PinsForMapBase(mapID)) do pins[#pins + 1] = p end
+  for _, p in ipairs(ns.PinsForMapBase(mapID, pause)) do pins[#pins + 1] = p end
+  if pause then pause("dots") end
   if ns.db.objectivePins then
-    for _, o in ipairs(ns.ObjectivePointsOnMap(mapID)) do
+    for _, o in ipairs(ns.ObjectivePointsOnMap(mapID, pause)) do
       o.kind = "objective"
       pins[#pins + 1] = o
     end
@@ -264,18 +268,21 @@ function ns.OpenMapEntrances()
   return ok and on == true
 end
 
-function BuildBase(mapID)
+function BuildBase(mapID, pause)
   local pins = {}
   if not mapID then return pins end
   if ns.db.availablePins then
-    for _, a in ipairs(ns.AvailableQuestsOnMap(mapID)) do
+    for i, a in ipairs(ns.AvailableQuestsOnMap(mapID, pause)) do
       if not ns.DrawnElsewhere(a.questID, "start") then
         a.kind = "available"
         pins[#pins + 1] = a
       end
+      if pause and i % 32 == 0 then pause() end
     end
   end
+  if pause then pause() end
   local own, game = TurnIns(mapID)
+  if pause then pause() end
   for _, t in ipairs(game) do
     -- only where one of our "!" stands at its spot (the marker then shows the "?"); alone it stays the game's
     for _, a in ipairs(pins) do
@@ -528,7 +535,9 @@ end
 local LEVEL_CODE = { impossible = "|cffff2020", verydifficult = "|cffff8040", difficult = "|cffffff00",
   standard = "|cff40c040", trivial = "|cff808080" }
 function ns.LevelColor(level, player)
-  if player == nil and ns.Num(level) and type(GetQuestDifficultyColor) == "function" then
+  -- (23.11.2026) always the same answer as our quest list (Tracker.lua LevelRGB: Kit.QuestDifficulty), also where a
+  -- client has no GetQuestDifficultyColor (Forever has it: at 20 it calls 14 grey, trivial range 5)
+  if player == nil and ns.Num(level) then
     local Kit = LibStub and LibStub("DonCore-1.0", true)
     Kit = Kit and Kit.Get and Kit:Get("Kit", 28)
     local code = Kit and LEVEL_CODE[Kit.QuestDifficulty(level)]
@@ -542,6 +551,24 @@ function ns.LevelColor(level, player)
   if d >= -2 then return "|cffffff00" end
   if d >= -ns.QuestTrivialRange() then return "|cff40c040" end
   return "|cff808080"
+end
+
+-- (23.11.2026, Daniel: the card's "[14] The People's Militia" grey, Blizzard's quest list beside the map green; "wenn
+-- möglich von forever auslesen lassen") Blizzard's list colours a quest by what the game says about that quest, not
+-- by its level: C_PlayerInfo.GetContentDifficultyQuestForPlayer (in the game at 20: quest 13 [14] gives 1 = easy,
+-- green, while GetQuestDifficultyColor(14) gives grey). Enum.RelativeContentDifficulty: 0 trivial, 1 easy, 2 fair,
+-- 3 difficult, 4 impossible. Without it (Classic Era) the colour by level.
+local CONTENT_KEY = { [0] = "trivial", [1] = "standard", [2] = "difficult", [3] = "verydifficult", [4] = "impossible" }
+-- the game's difficulty of a quest as a Kit quest key (the quest list uses it too), nil without the API
+function ns.QuestContentKey(questID)
+  local api = C_PlayerInfo and C_PlayerInfo.GetContentDifficultyQuestForPlayer
+  local d = api and ns.Num(questID) and ns.Num(ns.Value(api, questID))
+  return d and CONTENT_KEY[d] or nil
+end
+function ns.QuestLevelColor(questID, level)
+  local key = ns.QuestContentKey(questID)
+  if key then return LEVEL_CODE[key] end
+  return ns.LevelColor(level)
 end
 
 -- (1.17) Where the start point of an available quest comes from:
@@ -588,8 +615,8 @@ function ns.QuestPinDescription(pin)
   local function Add(line) desc = desc .. "\n" .. line end
   if pin.kind ~= "turnin" then
     -- (1.22) an unknown level is said, never guessed
-    local level = ns.QuestLevel(pin.questID)
-    if level then Add(ns.LevelColor(level) .. L["Level %d"]:format(level) .. "|r")
+    local level = ns.ShownQuestLevel(pin.questID)
+    if level then Add(ns.QuestLevelColor(pin.questID, level) .. L["Level %d"]:format(level) .. "|r")
     else Add("|cff737880" .. L["Level unknown"] .. "|r") end
   end
   local giver = GiverText(pin)
@@ -656,9 +683,16 @@ end)
 
 -- (1.3.4) Daniel 08.10.: the level belongs in the title, "[6] Al'Aketh Assassins",
 -- in the difficulty colour; "[?]" when the data has none (said, never guessed).
+-- (23.11.2026, Daniel with the card "9 The People's Militia" beside the list's "[14]": "das questlevel sollte sich an
+-- blizzards orientieren, nicht wann ich das annehmen kann") the level the game shows (quest log, kept, players'
+-- logs: ns.GameQuestLevel), else the data's level you may take it at
+function ns.ShownQuestLevel(questID)
+  return ns.GameQuestLevel and ns.GameQuestLevel(questID) or ns.QuestLevel(questID)
+end
+
 function ns.LevelTitle(questID)
-  local level = ns.QuestLevel(questID)
-  local tag = level and (ns.LevelColor(level) .. "[" .. level .. "]|r ") or "|cff737880[?]|r "
+  local level = ns.ShownQuestLevel(questID)
+  local tag = level and (ns.QuestLevelColor(questID, level) .. "[" .. level .. "]|r ") or "|cff737880[?]|r "
   return tag .. ns.QuestTitle(questID)
 end
 
@@ -676,8 +710,9 @@ local SOURCE_SHORT = {
   learned = L["learned by Questdon"],
   database = L["database (All The Things)"],
 }
-local function LevelRGB(level)
-  local code = ns.LevelColor(level)
+-- questID given: the colour the game gives that quest (ns.QuestLevelColor); else by level (creatures)
+local function LevelRGB(level, questID)
+  local code = questID and ns.QuestLevelColor(questID, level) or ns.LevelColor(level)
   local r, g, b = code:match("|cff(%x%x)(%x%x)(%x%x)")
   if not r then return nil end
   return { tonumber(r, 16) / 255, tonumber(g, 16) / 255, tonumber(b, 16) / 255 }
@@ -689,8 +724,8 @@ function ns.QuestPinTooltip(pin)
   -- (1.2) the quest picked in the zone quest list: its status there
   if pin.kind == "focus" then
     KV(L["Status"], pin.statusText or "")
-    local level = ns.QuestLevel(pin.questID)
-    if level then KV(L["Level"], level, LevelRGB(level)) else KV(L["Level"], L["unknown"], "textHint") end
+    local level = ns.ShownQuestLevel(pin.questID)
+    if level then KV(L["Level"], level, LevelRGB(level, pin.questID)) else KV(L["Level"], L["unknown"], "textHint") end
     local giver = GiverText(pin)
     if giver then KV(L["Quest giver"], giver) end
     return ns.QuestTitle(pin.questID), lines, L["Picked in the quest list of the zone."]
@@ -705,6 +740,11 @@ function ns.QuestPinTooltip(pin)
     if type(text) == "table" and type(text.o) == "string" and text.o ~= "" then
       lines[#lines + 1] = "|cffdcc17f" .. L["Objective"] .. ":|r " .. text.o
     end
+  end
+  -- (23.11.2026, Daniel: objective pins and quest givers alike) what the quest asks you to kill or collect, with
+  -- picture and the creatures' level
+  if pin.kind ~= "turnin" and ns.GiverObjectiveEntries then
+    for _, e in ipairs(ns.GiverObjectiveEntries(pin.questID)) do lines[#lines + 1] = e end
   end
   if pin.kind == "turnin" then
     -- (1.3.6) the card's "?" and green stripe say "turn in here"; the line stays only when nothing else follows
@@ -763,7 +803,8 @@ function ns.QuestGroupTooltip(pin)
       break
     end
     -- (1.3.4) "[6] Title" like the single tooltip; a status only when there is one
-    local title = ns.LevelTitle(p.questID)
+    -- (23.11.2026) the whole title in its level colour, like the game's quest list
+    local title = ns.ColoredLevelTitle and ns.ColoredLevelTitle(p.questID) or ns.LevelTitle(p.questID)
     if ns.QuestFlags(p.questID):find("b", 1, true) then title = title .. " (" .. L["Breadcrumb quest"] .. ")" end
     if p.kind == "turnin" then
       lines[#lines + 1] = { title, L["Turn in here"], "good" } -- (16.10.) a turn-in in the giver's marker
@@ -789,47 +830,155 @@ local function Swatch(questID)
   return ("|TInterface\\Buttons\\WHITE8x8:8:8:0:0:8:8:0:8:0:8:%d:%d:%d|t "):format(r * 255, g * 255, b * 255)
 end
 
--- (1.19) Objective dot tooltip: title with the dot colour, what to do, where
--- it comes from, rewards; hint last.
+---------------------------------------------------------------------------
+-- (23.11.2026, Daniel with the objective cards: "den questnamen im pin anhand der farbzuweisung von blizzard ...
+-- und den fortschrittsbalken? den '4 objectives spots' würde ich weglassen ... vll noch was mit einem kleinen bild?
+-- wie dungeonkarte?", chosen: objective pins and quest givers) Each objective is an entry of the card
+-- (PinCard.lua): a small picture (the creature's model, an item's icon), its name, the creatures' level range in
+-- their difficulty colour, below it a progress bar in the quest's dot colour. Levels and models: DonData
+-- Spawns.lua ns.SPAWN_MOBS (CMaNGOS); Forever's new creatures have none, then no level and the plain icon.
+---------------------------------------------------------------------------
+local MOB_ICON, OBJECT_ICON, ITEM_ICON = "Interface\\Icons\\INV_Sword_04", "Interface\\Icons\\INV_Misc_Gear_01", 134400
+local MAX_GIVER_ENTRIES = 3
+
+-- The quest's title in its level colour with the level, for headings inside a card.
+function ns.ColoredLevelTitle(questID)
+  local level = ns.ShownQuestLevel(questID)
+  if not level then return "|cff737880[?]|r " .. ns.QuestTitle(questID) end
+  return ns.QuestLevelColor(questID, level) .. "[" .. level .. "] " .. ns.QuestTitle(questID) .. "|r"
+end
+
+-- creatures (ids) -> lowest level, highest level, elite, model of the first known, first creature
+local function MobRange(creatures)
+  local lo, hi, elite, model, first
+  for _, c in ipairs(creatures or {}) do
+    c = ns.Num(c)
+    if c then
+      first = first or c
+      local m = ns.SPAWN_MOBS and ns.SPAWN_MOBS[c]
+      if m then
+        lo = lo and math.min(lo, m[1]) or m[1]
+        hi = hi and math.max(hi, m[2]) or m[2]
+        elite = elite or (m[4] or 0) >= 1
+        if not model and (m[3] or 0) > 0 then model, first = m[3], c end
+      end
+    end
+  end
+  return lo, hi, elite, model, first
+end
+ns.ObjectiveMobRange = MobRange -- (tests)
+
+local function MobLevelText(lo, hi, elite)
+  if not lo then return nil end
+  local t = lo == hi and L["Level %d"]:format(lo) or L["Level %d-%d"]:format(lo, hi)
+  if elite then t = t .. " " .. L["Elite"] end
+  return t
+end
+
+-- "Kobold Vermin: 3/10" or "3/15 Defias Looter slain" -> have, need, the text without the count
+local function Counts(text)
+  text = tostring(text or "")
+  local have, need = text:match("(%d+)%s*/%s*(%d+)")
+  local name = text:gsub("^%s*%d+%s*/%s*%d+%s*", ""):gsub("%s*:?%s*%d+%s*/%s*%d+%s*$", "")
+  name = name:match("^%s*(.-)%s*$")
+  if name == "" then name = text end
+  return tonumber(have), tonumber(need), name
+end
+ns.ObjectiveCounts = Counts -- (tests)
+
+-- One objective as an entry. creatures: the ids seen for it here (may be empty).
+local function ObjectiveEntry(questID, index, text, creatures)
+  local o = ns.ATT_OBJECTIVES and ns.ATT_OBJECTIVES[questID]
+  o = o and index and o[index]
+  local items = type(o) == "table" and o[2]
+  local item = type(items) == "table" and ns.Num(items[1]) or nil
+  if (not creatures or #creatures == 0) and type(o) == "table" and type(o[1]) == "table" then creatures = o[1] end
+  local have, need, name = Counts(text)
+  local lo, hi, elite, model, first = MobRange(creatures)
+  local pic
+  if item then pic = { icon = C_Item and ns.Value(C_Item.GetItemIconByID, item) or ITEM_ICON }
+  elseif first then pic = { model = model, creature = first, icon = MOB_ICON }
+  else pic = { icon = OBJECT_ICON } end
+  if (not text or text == "") then
+    name = item and ns.ItemName(item) or (first and ns.LocalNpcName(first)) or "?"
+  end
+  local r, g, b = QuestColor(questID)
+  return { entry = true, name = name, right = MobLevelText(lo, hi, elite), rightColor = hi and LevelRGB(hi) or nil, pic = pic,
+    bar = need and { have or 0, need } or nil, barColor = { r, g, b } }
+end
+
+-- Objective dot tooltip: the quest in its level colour, the objective as an entry, what to use here.
 function ns.ObjectivePinTooltip(pin)
+  pin = pin or {}
   local lines = {}
-  if pin.text then lines[#lines + 1] = { L["Objective"], pin.text } end
-  local creature = pin.creature and ns.LocalNpcName(pin.creature)
-  if creature then lines[#lines + 1] = { L["Creature"], creature } end
+  if pin.text or pin.creature then
+    lines[#lines + 1] = ObjectiveEntry(pin.questID, pin.index, pin.text, pin.creature and { pin.creature } or nil)
+  end
   if pin.needsItem then
     lines[#lines + 1] = { L[pin.dimmed and "Use %s here. First get it." or "Get %s here."]:format(ns.ItemName(pin.needsItem)) }
   end
   -- (1.2) no rewards here any more: the dot says what to do, the rewards are in the quest log
-  return Swatch(pin.questID) .. ns.QuestTitle(pin.questID), lines, L["Click: point the arrow here"]
+  return ns.LevelTitle(pin.questID), lines, L["Click: point the arrow here"]
 end
 
--- (1.3.5) A bundled dot (minimap, world map): how many spots, every objective it stands for once with its
--- quest in its colour and its number of spots, and the creatures there.
+-- (1.3.5) A bundled dot (minimap, world map): every objective it stands for once, by quest. (23.11.2026) no
+-- "n objective spots" any more: the first quest is the card's title, further quests a heading in their colour.
 function ns.ObjectiveBundleTooltip(pins)
   pins = pins or {}
-  local seen, list, spots, crSeen, creatures = {}, {}, {}, {}, {}
-  for _, p in ipairs(pins) do
-    local key = tostring(p.questID) .. ":" .. tostring(p.index)
-    if not seen[key] then seen[key] = true list[#list + 1] = p end
-    spots[p.questID or 0] = (spots[p.questID or 0] or 0) + 1
-    local name = p.creature and ns.LocalNpcName(p.creature)
-    if name and not crSeen[name] then crSeen[name] = true creatures[#creatures + 1] = name end
-  end
   if #pins <= 1 then return ns.ObjectivePinTooltip(pins[1]) end
-  table.sort(list, function(a, b)
-    if (a.questID or 0) ~= (b.questID or 0) then return (a.questID or 0) < (b.questID or 0) end
-    return (tonumber(a.index) or 0) < (tonumber(b.index) or 0)
-  end)
-  local lines, lastQuest = {}, nil
-  for _, p in ipairs(list) do
-    if p.questID ~= lastQuest then
-      lastQuest = p.questID
-      lines[#lines + 1] = { header = Swatch(p.questID) .. ns.QuestTitle(p.questID) .. " (" .. (spots[p.questID or 0] or 1) .. ")" }
-    end
-    if p.text then lines[#lines + 1] = { L["Objective"], p.text } end
+  local quests, byQuest = {}, {}
+  for _, p in ipairs(pins) do
+    local q = p.questID or 0
+    local e = byQuest[q]
+    if not e then e = { questID = q, objs = {}, order = {} } byQuest[q] = e quests[#quests + 1] = e end
+    local key = tostring(p.index)
+    local o = e.objs[key]
+    if not o then o = { index = p.index, text = p.text, creatures = {}, seen = {} } e.objs[key] = o e.order[#e.order + 1] = o end
+    local c = ns.Num(p.creature)
+    if c and not o.seen[c] then o.seen[c] = true o.creatures[#o.creatures + 1] = c end
+    if p.needsItem then o.needsItem, o.dimmed = p.needsItem, p.dimmed end
   end
-  if #creatures > 0 then lines[#lines + 1] = { L["Creature"], table.concat(creatures, ", ") } end
-  return L["%d objective spots"]:format(#pins), lines, L["Click: point the arrow here"]
+  table.sort(quests, function(a, b) return a.questID < b.questID end)
+  local lines = {}
+  for qi, e in ipairs(quests) do
+    if qi > 1 then lines[#lines + 1] = { header = Swatch(e.questID) .. ns.ColoredLevelTitle(e.questID) } end
+    table.sort(e.order, function(a, b) return (tonumber(a.index) or 0) < (tonumber(b.index) or 0) end)
+    for _, o in ipairs(e.order) do
+      lines[#lines + 1] = ObjectiveEntry(e.questID, o.index, o.text, o.creatures)
+      if o.needsItem then
+        lines[#lines + 1] = { L[o.dimmed and "Use %s here. First get it." or "Get %s here."]:format(ns.ItemName(o.needsItem)) }
+      end
+    end
+  end
+  return ns.LevelTitle(quests[1].questID), lines, L["Click: point the arrow here"]
+end
+
+-- A quest to take ("!"): what it asks you to kill or collect, as entries without a bar (at most
+-- MAX_GIVER_ENTRIES), from the objective data.
+function ns.GiverObjectiveEntries(questID)
+  local out = {}
+  local objs = ns.ATT_OBJECTIVES and ns.ATT_OBJECTIVES[questID]
+  if type(objs) ~= "table" then return out end
+  local idx = {}
+  for i in pairs(objs) do if type(i) == "number" then idx[#idx + 1] = i end end
+  table.sort(idx)
+  for _, i in ipairs(idx) do
+    if #out >= MAX_GIVER_ENTRIES then break end
+    local o = objs[i]
+    local items = type(o) == "table" and o[2]
+    local item = type(items) == "table" and ns.Num(items[1]) or nil
+    local creatures = {}
+    for _, c in ipairs(type(o) == "table" and type(o[1]) == "table" and o[1] or {}) do
+      if ns.Num(c) then creatures[#creatures + 1] = ns.Num(c) end
+    end
+    local name = item and ns.ItemName(item) or (creatures[1] and ns.LocalNpcName(creatures[1]))
+    if name and name ~= "" then
+      local e = ObjectiveEntry(questID, i, nil, creatures)
+      e.name, e.bar = name, nil
+      out[#out + 1] = e
+    end
+  end
+  return out
 end
 
 ---------------------------------------------------------------------------
@@ -917,26 +1066,126 @@ local function Pass(base, level)
   end
 end
 
+-- (23.11.2026, Daniel: minimap pins that jump a few steps on) Pass joins a spot to the first head near it, so one
+-- spot more or less at the edge of the list changes the bundles all along the chain. CellPass (the minimap, from
+-- the first thinning step on): every spot of a fixed world cell (of the same quest up to SAME_STEPS) is one marker at
+-- their middle, then markers on top of each other (closer than base) become one as in round 5. A marker only
+-- changes when the spots of its own cell change. Without anchors and f (they counted from where you stand).
+local cellOf, cellKeys = {}, {}
+-- (24.11.2026, Ruckler) the world map's thinning may pause between its steps (ns.ThinWorldObjectives with pause): it
+-- works in buffers of its own, and the minimap's (which may thin meanwhile) are put back for the pause
+local function NewBuffers()
+  return { { n = 0, x = {}, y = {}, q = {}, g = {}, f = {}, a = {}, order = {}, head = {}, mx = {}, my = {}, sx = {}, sy = {}, cnt = {}, nxt = {} },
+    {}, {}, {}, {} }
+end
+local function SwapBuffers(set)
+  local was = { T, grid, gridKeys, cellOf, cellKeys }
+  T, grid, gridKeys, cellOf, cellKeys = set[1], set[2], set[3], set[4], set[5]
+  return was
+end
+local function CellPass(base, level)
+  local cell = base * GROW ^ level
+  local mixed = level > SAME_STEPS
+  local inv, binv, base2 = 1 / cell, 1 / base, base * base
+  local X, Y, Q, G, head, MX, MY, SX, SY, CNT, NXT = T.x, T.y, T.q, T.g, T.head, T.mx, T.my, T.sx, T.sy, T.cnt, T.nxt
+  for i = 1, #cellKeys do cellOf[cellKeys[i]] = nil cellKeys[i] = nil end
+  for i = 1, #gridKeys do grid[gridKeys[i]] = nil gridKeys[i] = nil end
+  local order, n = T.order, T.n
+  for k = 1, n do
+    local i = order[k]
+    local x, y = X[i], Y[i]
+    head[i], MX[i], MY[i], SX[i], SY[i], CNT[i], NXT[i] = i, x, y, x, y, 1, false
+    -- a number per cell (and quest): cells of a few yards, world positions within +-20000 yards
+    local key = (floor(x * inv) * 16384 + floor(y * inv)) * 262144 + (mixed and 0 or (tonumber(Q[i]) or 0) % 262144)
+    local h = cellOf[key]
+    if not h then
+      cellOf[key] = i
+      cellKeys[#cellKeys + 1] = key
+    elseif G[h] == G[i] then
+      head[i] = h
+      local c = CNT[h] + 1
+      CNT[h], SX[h], SY[h] = c, SX[h] + x, SY[h] + y
+      MX[h], MY[h] = SX[h] / c, SY[h] / c
+    end
+  end
+  for k = 1, n do
+    local i = order[k]
+    if head[i] == i then
+      local x, y = MX[i], MY[i]
+      local cx, cy = floor(x * binv), floor(y * binv)
+      local join
+      for gx = cx - 1, cx + 1 do
+        for gy = cy - 1, cy + 1 do
+          local h = grid[gx * 1048576 + gy]
+          while h and not join do
+            if G[h] == G[i] and (MX[h] - x) ^ 2 + (MY[h] - y) ^ 2 <= base2 then join = h end
+            h = NXT[h]
+          end
+        end
+      end
+      if join then
+        head[i] = join
+        local c = CNT[join] + CNT[i]
+        CNT[join], SX[join], SY[join] = c, SX[join] + SX[i], SY[join] + SY[i]
+        MX[join], MY[join] = SX[join] / c, SY[join] / c
+      else
+        local key = cx * 1048576 + cy
+        local first = grid[key]
+        if not first then gridKeys[#gridKeys + 1] = key end
+        NXT[i] = first or false
+        grid[key] = i
+      end
+    end
+  end
+  for i = 1, n do local h = head[i] if head[h] ~= h then head[i] = head[h] end end -- members of a joined marker
+end
+
 -- Thins the points of the buffer (ns.ThinBuffer, filled by the caller). Returns the step used; T.head etc.
 -- tell the result. budget nil: only the dots on top of each other. inView(T, i) says whether a head counts
 -- for the budget (nil: all). prepare(T): called once before the first thinning step (order, anchors, f), so
 -- a list within its budget costs one pass as in round 5.
-function ns.ThinObjectivePoints(base, budget, inView, prepare)
+-- (23.11.2026) keep: the step of the last thinning (the minimap); tried first with prepare called before, and kept
+-- while the markers in view stay between KEEP_LOW and KEEP_HIGH times the budget (a step more or less for a few
+-- markers made every bundle new).
+local KEEP_LOW, KEEP_HIGH = 0.5, 1.5
+ns.THIN_KEEP_LOW, ns.THIN_KEEP_HIGH = KEEP_LOW, KEEP_HIGH -- (tests)
+local function Shown(inView)
+  local shown, head = 0, T.head
+  for i = 1, T.n do if head[i] == i and (not inView or inView(T, i)) then shown = shown + 1 end end
+  return shown
+end
+-- cells: CellPass from the first step on (the minimap). pause: (24.11.2026) called before every step after the first
+-- (the world map's thinning in slices; ns.ThinWorldObjectives swaps the buffers around it)
+function ns.ThinObjectivePoints(base, budget, inView, prepare, keep, cells, pause)
+  local step = cells and CellPass or Pass
+  if budget and keep and keep > 0 and keep <= SAME_STEPS + MIX_STEPS then
+    if prepare then prepare(T) end
+    step(base, keep)
+    local shown = Shown(inView)
+    if shown <= budget * KEEP_HIGH and shown >= budget * KEEP_LOW then
+      for i = 1, #gridKeys do grid[gridKeys[i]] = nil gridKeys[i] = nil end
+      return keep
+    end
+    for i = 1, T.n do T.order[i] = i end -- as without keep: prepare sorts again
+  end
   local level = 0
-  local head = T.head
   while true do
-    Pass(base, level)
+    if level > 0 and pause then pause() end
+    if level > 0 then step(base, level) else Pass(base, level) end
     if not budget then break end
-    local shown = 0
-    for i = 1, T.n do if head[i] == i and (not inView or inView(T, i)) then shown = shown + 1 end end
+    local shown = Shown(inView)
     if shown <= budget or level >= SAME_STEPS + MIX_STEPS then break end
-    if level == 0 and prepare then prepare(T) end
+    if level == 0 and prepare then
+      if pause then pause() end -- (24.11.2026) the sort of the world map's spots is a step of its own
+      prepare(T)
+    end
     -- the first step over the budget jumps by a guess from the area of a cell (the square of its size), rounded
     -- down so it seldom goes too far (fewer passes for 500 spots)
     local jump = level == 0 and math.floor(0.5 * math.log(shown / budget) / math.log(GROW)) or 1
     level = math.min(SAME_STEPS + MIX_STEPS, level + math.max(1, jump))
   end
   for i = 1, #gridKeys do grid[gridKeys[i]] = nil gridKeys[i] = nil end
+  for i = 1, #cellKeys do cellOf[cellKeys[i]] = nil cellKeys[i] = nil end
   return level
 end
 
@@ -948,7 +1197,7 @@ ns.WORLD_OBJECTIVE_BUDGET = WORLD_BUDGET
 local worldStats = { thinned = 0, level = 0, before = 0, after = 0 }
 function ns.WorldThinStats() return worldStats end
 -- pins: the display list of the world map; objective dots in it become fewer markers, everything else as it is.
-function ns.ThinWorldObjectives(pins, bucket, dotSize)
+local function ThinWorld(pins, bucket, dotSize, pause)
   worldStats.before, worldStats.after, worldStats.level, worldStats.thinned = 0, 0, 0, 0
   if ns.db.thinObjectives == false then return pins end
   bucket = bucket or 1
@@ -974,7 +1223,7 @@ function ns.ThinWorldObjectives(pins, bucket, dotSize)
     end)
   end
   local base = 0.8 * (dotSize or 12) / (CANVAS_W * bucket)
-  local level = ns.ThinObjectivePoints(base, WORLD_BUDGET * bucket * bucket, nil, Prepare)
+  local level = ns.ThinObjectivePoints(base, WORLD_BUDGET * bucket * bucket, nil, Prepare, nil, nil, pause)
   local members = {}
   for i = 1, n do
     local h = B.head[i]
@@ -1011,6 +1260,21 @@ function ns.ThinWorldObjectives(pins, bucket, dotSize)
   end
   worldStats.after, worldStats.level = heads, level
   worldStats.thinned = n - heads
+  return out
+end
+-- pause: (24.11.2026) pause(part) between the thinning's steps (the map's refresh in slices), in buffers of its own;
+-- the same markers as in one go. Never under a pcall (the pause yields).
+local worldBuffers
+function ns.ThinWorldObjectives(pins, bucket, dotSize, pause)
+  if not pause then return ThinWorld(pins, bucket, dotSize) end
+  worldBuffers = worldBuffers or NewBuffers()
+  local saved = SwapBuffers(worldBuffers)
+  local out = ThinWorld(pins, bucket, dotSize, function()
+    SwapBuffers(saved)
+    pause("thin")
+    saved = SwapBuffers(worldBuffers)
+  end)
+  SwapBuffers(saved)
   return out
 end
 
@@ -1133,6 +1397,7 @@ function ns.SymbolsOn() return ns.db.objectiveIcons ~= false end
 -- (1.17) Signature of a pin set: refreshes from events skip the rebuild when
 -- nothing visible changed (same map, same pins, same texts).
 local lastSig, precomputed
+local sameNow -- (24.11.2026) a request of our own that wants the pins worked out at once (ns.RefreshPins)
 -- (25.10., OFFEN "Karte zoomen (39 KB/s)": Daniel's /qd mem with the map open and zoomed, "map inner" 35 KB/s, about 110 KB per
 -- zoom step) the display list of each zoom step, kept while the pins stay the same (same map, same signature, same options):
 -- zooming back to a step seen before draws it from here instead of grouping all spots again. At most ZOOM_KEEP steps.
@@ -1175,9 +1440,11 @@ end
 -- count and two sums of them (the order of the pins does not matter, as before with the sorted keys).
 local keyA, keyB, keyCount = {}, {}, 0
 local SIG_M = 2147483647
-local function Signature(mapID, pins)
+-- pause: (24.11.2026, Ruckler) the map's refresh in slices pauses every 32 pins (a key is a long string.format)
+local function Signature(mapID, pins, pause)
   local s1, s2 = 0, 0
-  for _, p in ipairs(pins) do
+  for i, p in ipairs(pins) do
+    if pause and i % 32 == 0 then pause("signature") end
     local k = PinKey(p)
     local a = keyA[k]
     if not a then
@@ -1196,9 +1463,10 @@ end
 -- of that list is worked out once. Pin lists are never changed after they
 -- are built; every refresh builds a new one.
 local sigPins, sigMap, sigValue
-function ns.PinsSignature(mapID, pins)
+function ns.PinsSignature(mapID, pins, pause)
   if pins ~= sigPins or mapID ~= sigMap then
-    sigPins, sigMap, sigValue = pins, mapID, Signature(mapID, pins)
+    local v = Signature(mapID, pins, pause)
+    sigPins, sigMap, sigValue = pins, mapID, v
   end
   return sigValue
 end
@@ -1260,7 +1528,10 @@ function Setup()
   -- (1.3.5, Daniel 10.10.) "Show on map": the entrance's pin pulses for a few seconds (our own glow
   -- texture on our own pin; pooled pins hide it again for anything else)
   local function ApplyHighlight(self, pin)
-    local on = pin and (pin.kind == "dungeon" or pin.kind == "entrance") and ns.EntranceHighlighted and ns.EntranceHighlighted(pin.inst)
+    local on = pin and (pin.kind == "dungeon" or pin.kind == "entrance") and ns.EntranceHighlighted and ns.EntranceHighlighted(pin.inst, pin.insts)
+    -- (24.11.2026, Daniel with An Unsettling Discovery: three "?" side by side at Farrholde Keep, which one is mine?) the
+    -- "!" or "?" the arrow leads to glows the same way, as long as it is the target
+    if not on and pin and ns.IsArrowTargetPin(pin) then on = true end
     if on and not self.qdGlow and self.CreateTexture then
       local g = self:CreateTexture(nil, "BACKGROUND")
       g:SetPoint("CENTER", self, "CENTER", 0, 0)
@@ -1297,6 +1568,22 @@ function Setup()
     end
     self.qdWayAnchor = on or nil
   end
+  -- (24.11.2026) the arrow's target changes without a rebuild of the pins (a click, the next quest): the shown "!" and
+  -- "?" look again twice a second while the map is open, only when the target changed
+  local lastArrowKey
+  ns.NewTicker(0.5, function()
+    if not (WorldMapFrame and WorldMapFrame:IsShown() and provider) then lastArrowKey = nil return end
+    local key = ns.ArrowTargetPinKey()
+    if key == lastArrowKey then return end
+    lastArrowKey = key
+    local map = provider.GetMap and provider:GetMap()
+    if not (map and map.EnumeratePinsByTemplate) then return end
+    local ok, iter, state, start = pcall(map.EnumeratePinsByTemplate, map, QUEST_TEMPLATE)
+    if not ok or type(iter) ~= "function" then return end
+    for p in iter, state, start do
+      if type(p) == "table" and type(p.qdPin) == "table" then ApplyHighlight(p, p.qdPin) end
+    end
+  end)
   local Acquire
   -- (12.11.2026) the size depends on what the pin shows: set again once that is known (a pooled pin showed something else)
   function QuestPin:OnAcquired(pin)
@@ -1668,7 +1955,20 @@ function Setup()
   opts.removed = function() lastSig = nil end
   -- (23.10.) the map asks again (the game refreshes all its providers) and nothing changed: same map, pins, zoom steps
   -- (DonMap keeps them while all our pins are still on the canvas)
+  -- (24.11.2026, Ruckler, laptop: "map ?" 9 times in 9 s with the map open, avg 28 ms, max 76) the game asks its
+  -- providers again on its own (quest log, bags, the map's own refresh): the pins and their signature were worked out
+  -- in that frame each time. Now, where the refresh can run in slices (ns.MapSliced), such a request keeps the pins
+  -- and marks the map's part of the batched refresh: it works them out in slices and draws only when they changed (the
+  -- same pins, at most a moment later). Our own requests come with their pins (precomputed) or say so (sameNow:
+  -- options and commands, ns.RefreshPins); another map, zoom step or OpenMap state builds at once as before.
   opts.same = ns.Guard("map", function(prov, map, mapID)
+    if not (precomputed and precomputed.mapID == mapID) and lastSig and not sameNow and ns.MapSliced()
+        and ns.OpenMapEntrances() == lastOpenMap and ns.ClusterBucket(Canvas(map)) == objBucket
+        and ZoomKey(objBucket) == lastZKey then
+      stats.deferred = (stats.deferred or 0) + 1
+      if ns.QueueRefresh then ns.QueueRefresh("map") end
+      return true
+    end
     local pins, sig, pre = PinsOf(mapID)
     curMap, curPins, curSig = mapID, pins, sig
     if pre or not lastSig then return false end
@@ -1806,6 +2106,29 @@ end
 -- (1.2) A click on a pin points the arrow there and switches the arrow on if
 -- it was off (before, the click set the target of a hidden arrow).
 -- (Questdon review 4) pin: the clicked pin, so the target knows its quest and goes once the quest no longer needs it
+-- (24.11.2026, Daniel: "das Questziel von mir herausheben") the quest pin ("!" or "?", also a marker of several quests)
+-- the arrow leads to: same quest, and a "?" only while the quest is in the log, a "!" only while it is not.
+-- Objective dots stay as they are (the arrow's objective target is often a whole area).
+function ns.ArrowTargetPinKey()
+  local t = ns.ArrowTarget and ns.ArrowTarget()
+  local q = type(t) == "table" and ns.Num(t.questID)
+  if not q then return nil end
+  return q .. (ns.InQuestLog(q) and ":log" or ":new")
+end
+function ns.IsArrowTargetPin(pin)
+  if type(pin) ~= "table" then return false end
+  local t = ns.ArrowTarget and ns.ArrowTarget()
+  local q = type(t) == "table" and ns.Num(t.questID)
+  if not q then return false end
+  for _, m in ipairs(type(pin.group) == "table" and pin.group or { pin }) do
+    if type(m) == "table" and ns.Num(m.questID) == q then
+      if m.kind == "turnin" and ns.InQuestLog(q) then return true end
+      if m.kind == "available" and not ns.InQuestLog(q) then return true end
+    end
+  end
+  return false
+end
+
 function ns.PointArrowFromPin(mapID, x, y, label, kind, pin)
   if not (mapID and x and y and ns.SetArrowTarget) then return end
   ns.EnsureArrow()
@@ -1825,7 +2148,9 @@ function ns.RefreshPins()
   if ns.ForgetAvailable then ns.ForgetAvailable() end -- (24.10.) options, /qd, hiding a quest
   if not provider then Setup() end -- world map loaded later than expected
   if provider and provider:GetMap() and WorldMapFrame:IsShown() then
+    sameNow = true
     provider:RefreshAllData()
+    sameNow = nil
   end
   -- (1.21) options and /qd commands: the minimap pins follow
   if ns.RefreshMinimapPins then ns.RefreshMinimapPins(true) end
@@ -1837,6 +2162,61 @@ end
 -- (1.20) In combat the pins stay as they are (before, every quest log update
 -- in combat removed them all); the refresh after combat (PLAYER_REGEN_ENABLED)
 -- compares the signature and rebuilds only if something changed.
+-- (24.11.2026, Ruckler, laptop: "refresh map" avg 18.7 ms, max 35.6) where the game has the clock for it, the batched
+-- refresh's part runs in slices (mapJob, a coroutine, MAP_SLICE_MS a frame): quest lines and base pins, the objective
+-- dots, the signature, then the drawing with the pins worked out (one step: the map never shows half of them). Each
+-- step after a pause checks that the same map is still open and no fight began; a new refresh starts anew. Pauses
+-- only in RefreshIfChanged and BuildPins themselves, never under a pcall (tools/yieldcheck.lua).
+local MAP_SLICE_MS = 4
+local mapJob -- { co, t0 = the slice's start (ms), slices, part = the step being worked out }
+function ns.MapSliced()
+  return type(debugprofilestop) == "function" and C_Timer ~= nil and C_Timer.After ~= nil and type(coroutine) == "table"
+end
+-- stats.stepMs: the longest time of each step (ms, /qd diag and the tests)
+local function StepTime(j, now)
+  local sm = stats.stepMs
+  if not sm then sm = {} stats.stepMs = sm end
+  local d = now - (j.pt or j.t0)
+  if d > (sm[j.part] or 0) then sm[j.part] = d end
+end
+local function MapPause(part)
+  local j = mapJob
+  if not j or coroutine.running() ~= j.co then return end
+  local now = debugprofilestop()
+  StepTime(j, now)
+  if now - j.t0 >= MAP_SLICE_MS then
+    j.slices = j.slices + 1
+    coroutine.yield()
+    j.pt = j.t0
+  else
+    j.pt = now
+  end
+  j.part = part or j.part -- (24.11.2026) a pause without a step name (Questdon's own in the base) keeps the step
+end
+local function JobCanvas(map) return map.GetCanvasScale and ns.Value(map.GetCanvasScale, map) or nil end
+-- the display list of the current zoom step into the zoom cache, as the build would make it (it then draws from the
+-- cache): the grouped markers, a pause, the thinned dots with pauses between the steps. Symbols: left to the build.
+local function PrepareDisplay(mapID, pins, sig)
+  if ns.SymbolsOn() then return end
+  local map = provider:GetMap()
+  local bucket = ns.ClusterBucket(JobCanvas(map))
+  local zkey, key = ZoomKey(bucket), mapID .. "#" .. tostring(sig)
+  if zoomCacheSig == key and zoomCache[zkey] then return end
+  local grouped = ns.DisplayQuestPins(pins, ns.ClusterDistance())
+  MapPause("thin")
+  local display = ns.ThinWorldObjectives(grouped, bucket, ns.db.objectivePinSize or 12, MapPause)
+  local ts = ns.WorldThinStats()
+  local thinned = ts.before > ts.after or ts.before > ns.WORLD_OBJECTIVE_BUDGET
+  if zoomCacheSig ~= key then zoomCache, zoomCacheSig, zoomCacheN = {}, key, 0 end
+  if zoomCacheN >= ZOOM_KEEP then zoomCache, zoomCacheN = {}, 0 end
+  zoomCache[zkey] = { display, nil, thinned }
+  zoomCacheN = zoomCacheN + 1
+  stats.prepared = (stats.prepared or 0) + 1
+end
+local function MapStill(mapID)
+  return provider and provider:GetMap() and WorldMapFrame:IsShown() and not provider:Off() and not InCombatLockdown()
+    and ns.Num(provider:GetMap():GetMapID()) == mapID
+end
 local function RefreshIfChanged()
   if not provider then Setup() end
   if not (provider and provider:GetMap() and WorldMapFrame:IsShown()) then return end
@@ -1845,17 +2225,62 @@ local function RefreshIfChanged()
   local mapID = ns.Num(provider:GetMap():GetMapID())
   if mapID then
     if ns.HarvestQuestLines then ns.HarvestQuestLines(mapID) end
-    local pins = ns.PinsForMap(mapID)
-    local sig = ns.PinsSignature(mapID, pins)
+    local inJob = mapJob ~= nil and coroutine.running() == mapJob.co
+    local pins
+    if inJob then
+      MapPause("base")
+      if not MapStill(mapID) then return end
+      pins = BuildPins(mapID, MapPause)
+      MapPause("signature")
+      if not MapStill(mapID) then return end
+    else
+      pins = ns.PinsForMap(mapID)
+    end
+    local sig = ns.PinsSignature(mapID, pins, inJob and MapPause or nil)
+    if inJob and not MapStill(mapID) then return end
     if lastSig and sig == lastSig and ZoomKey(objBucket) == lastZKey then stats.skipped = stats.skipped + 1 return end
+    if inJob then
+      MapPause("display")
+      if not MapStill(mapID) then return end
+      PrepareDisplay(mapID, pins, sig)
+      MapPause("draw")
+      if not MapStill(mapID) then return end
+    end
     precomputed = { mapID = mapID, pins = pins, sig = sig }
   end
   provider:RefreshAllData()
 end
+-- one slice of the refresh on the way (a timer of the next frame runs the next one)
+local function MapJobStep()
+  local j = mapJob
+  if not j then return end
+  j.t0 = debugprofilestop()
+  local ok, err = coroutine.resume(j.co)
+  if mapJob ~= j then return end -- another refresh started meanwhile
+  if debugprofilestop() - j.t0 >= 8 and type(rawget(_G, "DonMonitorDB")) == "table" then ns.slowDetail = "map " .. tostring(j.part) end
+  if not ok then mapJob = nil error(err, 0) end
+  if coroutine.status(j.co) ~= "dead" then ns.After(0, MapJobStep) return end
+  StepTime(j, debugprofilestop())
+  mapJob = nil
+  stats.sliced = (stats.sliced or 0) + 1
+  stats.slices = (stats.slices or 0) + j.slices
+end
+-- the batched refresh's part: in slices where it can (the map open), else at once as before
+local function RefreshPart()
+  if not (ns.MapSliced() and provider and provider:GetMap() and WorldMapFrame:IsShown()) then
+    mapJob = nil
+    return RefreshIfChanged()
+  end
+  local j = { slices = 0, part = "lines" }
+  j.co = coroutine.create(RefreshIfChanged)
+  mapJob = j
+  MapJobStep()
+end
+ns.MapJob = function() return mapJob end -- (tests)
 ns.RefreshPinsIfChanged = RefreshIfChanged
 
 -- (1.23) Event path: one batched refresh for all quest displays (Core.lua).
-ns.RegisterRefresh("map", RefreshIfChanged)
+ns.RegisterRefresh("map", RefreshPart)
 local function Queue() ns.QueueRefresh("map") end
 
 -- (1.23) Learning (accept, turn-in) and other modules: the same batched

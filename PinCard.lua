@@ -183,6 +183,149 @@ local function Height(fs, text, width)
 end
 local function SetColor(fs, c, a) Call(fs, "SetTextColor", c[1], c[2], c[3], a or 1) end
 
+---------------------------------------------------------------------------
+-- (23.11.2026, Daniel with the objective card: "den fortschrittsbalken? ... vll noch was mit einem kleinen bild? wie
+-- dungeonkarte?") An entry row: a small picture on the left (the creature's model as a portrait, else an item's
+-- icon or an atlas), the name and on the right its level; below a progress bar "3/15" or one short line.
+-- Lines give it as { entry = true, name, right, rightColor, pic = { model, creature, icon, atlas }, bar = { have,
+-- need }, barColor, sub }.
+---------------------------------------------------------------------------
+local PIC, PIC_GAP, BAR_H, BAR_MIN = 26, 7, 6, 90
+local DONE = { 0.35, 0.80, 0.40 }
+local function BarText(bar) return ("%d/%d"):format(bar[1] or 0, bar[2] or 0) end
+-- (23.11.2026, Daniel: "fressen die bewegten bilder nicht zu viel leistung?") the portrait stands still: its first
+-- frame frozen, so the game does not animate it; models exist only while the card is shown
+local function ModelLoaded(self)
+  pcall(self.SetPortraitZoom, self, 1)
+  if self.FreezeAnimation then pcall(self.FreezeAnimation, self, 0, 0, 0) end
+  if self.cover then self.cover:Show() end
+end
+local function Entry(f, r)
+  if r.right then return end
+  r.right = Font(f, "GameFontNormalSmall")
+  Call(r.right, "SetJustifyH", "RIGHT")
+  Call(r.right, "SetWordWrap", false)
+  r.sub = Font(f, "GameFontHighlightSmall")
+  r.picBg = f:CreateTexture(nil, "ARTWORK", nil, 1)
+  r.picBg:SetTexture(WHITE)
+  r.pic = f:CreateTexture(nil, "ARTWORK", nil, 2)
+  r.barBg = f:CreateTexture(nil, "ARTWORK", nil, 1)
+  r.barBg:SetTexture(WHITE)
+  r.bar = f:CreateTexture(nil, "ARTWORK", nil, 2)
+  r.bar:SetTexture(WHITE)
+  r.barText = Font(f, "GameFontHighlightSmall")
+  Call(r.barText, "SetJustifyH", "RIGHT")
+  local ok, m = pcall(CreateFrame, "PlayerModel", nil, f)
+  if ok and m then
+    r.model = m
+    m.cover = m:CreateTexture(nil, "BACKGROUND")
+    m.cover:SetAllPoints()
+    m.cover:SetColorTexture(0.05, 0.06, 0.09, 1)
+    m.cover:Hide()
+    if m.SetScript then m:SetScript("OnModelLoaded", ModelLoaded) end
+    if m.EnableMouse then m:EnableMouse(false) end
+    m:Hide()
+  end
+end
+local function HideEntry(r)
+  r.right:Hide() r.sub:Hide() r.pic:Hide() r.picBg:Hide() r.barBg:Hide() r.bar:Hide() r.barText:Hide()
+  if r.model then r.model:Hide() end
+end
+-- the picture: the model when there is one (its cover shows once loaded), the icon or atlas under it meanwhile
+local function Picture(r, pic, x, y)
+  local gold = B("gold") or { 0.86, 0.71, 0.42 }
+  r.picBg:ClearAllPoints()
+  r.picBg:SetPoint("TOPLEFT", r.picBg:GetParent(), "TOPLEFT", x - 1, y + 1)
+  r.picBg:SetSize(PIC + 2, PIC + 2)
+  r.picBg:SetVertexColor(gold[1], gold[2], gold[3], 0.35)
+  r.picBg:Show()
+  r.pic:ClearAllPoints()
+  r.pic:SetPoint("TOPLEFT", r.pic:GetParent(), "TOPLEFT", x, y)
+  r.pic:SetSize(PIC, PIC)
+  Call(r.pic, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
+  local shown = false
+  if pic.icon then shown = r.pic:SetTexture(pic.icon) ~= false
+  elseif pic.atlas and r.pic.SetAtlas then shown = pcall(r.pic.SetAtlas, r.pic, pic.atlas, false) Call(r.pic, "SetTexCoord", 0, 1, 0, 1) end
+  if not shown then r.pic:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
+  r.pic:Show()
+  local m = r.model
+  if not m then return end
+  local want = pic.model or (pic.creature and -pic.creature) or nil
+  if want ~= m._want then
+    m._want = want
+    m.cover:Hide()
+    pcall(m.ClearModel, m)
+    if want and want > 0 then pcall(m.SetDisplayInfo, m, want)
+    elseif want then pcall(m.SetCreature, m, -want) end
+  end
+  if want then
+    m:ClearAllPoints()
+    m:SetPoint("TOPLEFT", m:GetParent(), "TOPLEFT", x, y)
+    m:SetSize(PIC, PIC)
+    m:Show()
+  else
+    m:Hide()
+  end
+end
+-- lays out entry l at y; returns its height
+local function LayoutEntry(f, r, l, left, y, avail, P, S)
+  local tx, tw = left + PIC + PIC_GAP, avail - PIC - PIC_GAP
+  Picture(r, l.pic or {}, left, y)
+  local rw = 0
+  if l.right then
+    r.right:SetText(l.right)
+    SetColor(r.right, l.rightColor or S)
+    rw = Width(r.right, l.right)
+    r.right:ClearAllPoints()
+    r.right:SetPoint("TOPRIGHT", f, "TOPLEFT", tx + tw, y - 1)
+    r.right:SetWidth(rw + 2)
+    r.right:Show()
+  end
+  r.value:SetText(l.name or "")
+  SetColor(r.value, l.nameColor or P)
+  r.value:SetWidth(math.max(20, tw - (rw > 0 and rw + 8 or 0)))
+  r.value:SetPoint("TOPLEFT", f, "TOPLEFT", tx, y - 1)
+  r.value:Show()
+  local h1 = Height(r.value, l.name, tw - rw - 8) + 3
+  local h2 = 0
+  if l.bar then
+    local have, need = tonumber(l.bar[1]) or 0, math.max(1, tonumber(l.bar[2]) or 1)
+    local text = BarText(l.bar)
+    r.barText:SetText(text)
+    local bw = Width(r.barText, text)
+    local c = have >= need and DONE or l.barColor or B("gold") or { 0.86, 0.71, 0.42 }
+    SetColor(r.barText, have >= need and DONE or S)
+    r.barText:ClearAllPoints()
+    r.barText:SetPoint("TOPRIGHT", f, "TOPLEFT", tx + tw, y - h1 + 2)
+    r.barText:SetWidth(bw + 2)
+    r.barText:Show()
+    local full = math.max(20, tw - bw - 8)
+    r.barBg:ClearAllPoints()
+    r.barBg:SetPoint("TOPLEFT", f, "TOPLEFT", tx, y - h1 - 1)
+    r.barBg:SetSize(full, BAR_H)
+    r.barBg:SetVertexColor(0, 0, 0, 0.45)
+    r.barBg:Show()
+    local part = math.min(1, have / need)
+    if part > 0 then
+      r.bar:ClearAllPoints()
+      r.bar:SetPoint("TOPLEFT", r.barBg, "TOPLEFT", 0, 0)
+      r.bar:SetSize(math.max(1, full * part), BAR_H)
+      r.bar:SetVertexColor(c[1], c[2], c[3], 0.95)
+      r.bar:Show()
+    end
+    h2 = math.max(BAR_H + 2, Height(r.barText, text, bw))
+  elseif l.sub then
+    r.sub:SetText(l.sub)
+    SetColor(r.sub, S)
+    r.sub:ClearAllPoints()
+    r.sub:SetPoint("TOPLEFT", f, "TOPLEFT", tx, y - h1)
+    r.sub:SetWidth(tw)
+    r.sub:Show()
+    h2 = Height(r.sub, l.sub, tw)
+  end
+  return math.max(PIC + 1, h1 + h2) + GAP
+end
+
 -- The title as the builders make it: an optional texture escape (dungeon icon, dot swatch), an optional level
 -- tag "|cffxxxxxx[6]|r " and the title. -> badge text, badge colour (r, g, b) or nil, title
 local function SplitTitle(title)
@@ -244,8 +387,11 @@ function ns.PinCard(owner, title, lines, hint, kind, color, atlas)
     f.badge:Hide() f.badgeText:Hide()
   end
   f.title:SetText(text)
-  SetColor(f.title, P)
-  shownRows[#shownRows + 1] = { kind = "title", left = title, r = P[1], g = P[2], b = P[3], badge = badge }
+  -- (23.11.2026, Daniel: "den questnamen im pin anhand der farbzuweisung von blizzard") a quest's title in the
+  -- colour of its level, like the game's quest list; a dungeon keeps the plain title
+  local tc = (badge and badgeColor and kind ~= "dungeon") and badgeColor or P
+  SetColor(f.title, tc)
+  shownRows[#shownRows + 1] = { kind = "title", left = title, r = tc[1], g = tc[2], b = tc[3], badge = badge }
 
   -- the lines: plain text, key/value, sub-heading
   local list = {}
@@ -253,7 +399,8 @@ function ns.PinCard(owner, title, lines, hint, kind, color, atlas)
     for _, l in ipairs(lines) do
       if #list >= MAX_LINES then break end
       if type(l) == "table" then
-        if l.header ~= nil then list[#list + 1] = { header = tostring(l.header) }
+        if l.entry then list[#list + 1] = l -- (23.11.2026) picture, name, level; progress bar or a short line
+        elseif l.header ~= nil then list[#list + 1] = { header = tostring(l.header) }
         elseif l[2] ~= nil then
           local c = l[3]
           if type(c) == "string" then c = (c == "textHint" and H) or C(c) end
@@ -278,7 +425,15 @@ function ns.PinCard(owner, title, lines, hint, kind, color, atlas)
   end
   for i, l in ipairs(list) do
     local r = Row(f, i)
-    if l.label then
+    if l.entry then
+      Entry(f, r)
+      r.value:SetText(l.name or "")
+      r.right:SetText(l.right or "")
+      local w = PIC + PIC_GAP + Width(r.value, l.name) + (l.right and (10 + Width(r.right, l.right)) or 0)
+      if l.sub then r.sub:SetText(l.sub) w = math.max(w, PIC + PIC_GAP + Width(r.sub, l.sub)) end
+      if l.bar then w = math.max(w, PIC + PIC_GAP + BAR_MIN + 6 + Width(r.barText, BarText(l.bar))) end
+      inner = math.max(inner, w)
+    elseif l.label then
       r.value:SetText(l.value)
       inner = math.max(inner, labelW + 10 + Width(r.value, l.value))
     else
@@ -327,7 +482,14 @@ function ns.PinCard(owner, title, lines, hint, kind, color, atlas)
   for i, l in ipairs(list) do
     local r = Row(f, i)
     r.label:ClearAllPoints() r.value:ClearAllPoints()
-    if l.label then
+    if r.right then HideEntry(r) end
+    if l.entry then
+      r.label:Hide()
+      if i > 1 then y = y - 3 end
+      y = y - LayoutEntry(f, r, l, left, y, avail, P, S)
+      shownRows[#shownRows + 1] = { kind = "entry", left = l.name, right = l.right, bar = l.bar and BarText(l.bar) or nil,
+        sub = l.sub, pic = l.pic }
+    elseif l.label then
       SetColor(r.label, S)
       SetColor(r.value, l.color)
       r.label:SetWidth(labelW)
@@ -351,7 +513,10 @@ function ns.PinCard(owner, title, lines, hint, kind, color, atlas)
       shownRows[#shownRows + 1] = { kind = l.header and "header" or "line", left = l.header or l.text, r = c[1], g = c[2], b = c[3] }
     end
   end
-  for i = #list + 1, #f.rows do f.rows[i].label:Hide() f.rows[i].value:Hide() end
+  for i = #list + 1, #f.rows do
+    f.rows[i].label:Hide() f.rows[i].value:Hide()
+    if f.rows[i].right then HideEntry(f.rows[i]) end
+  end
   if hint then
     y = y - (#list > 0 and 3 or 6)
     SetColor(f.hint, H)

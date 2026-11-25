@@ -326,6 +326,39 @@ end
 local function Breath() if ns.ShareBreath then ns.ShareBreath() end end
 -- (22.11.2026, second report) the part being built, named in the engine's slow log when a slice was slow in it
 local function Part(name) if ns.SharePart then ns.SharePart(name) end end
+-- (24.11.2026, laptop: "[orders]" up to 19 ms in one slice) a long list of numbers sorted with pauses: runs of SORT_RUN
+-- by the game's sort, then merged two by two (a pause every 256 values). The same order as table.sort (the keys are
+-- unique); outside the share send's coroutine Breath does nothing. Returns the sorted list (keys or a second table).
+local SORT_RUN = 128
+local function BreathSort(keys)
+  local n = #keys
+  if n <= SORT_RUN then table.sort(keys) return keys end
+  local run = {}
+  for s0 = 1, n, SORT_RUN do
+    local e = math.min(s0 + SORT_RUN - 1, n)
+    for i = #run, 1, -1 do run[i] = nil end
+    for i = s0, e do run[i - s0 + 1] = keys[i] end
+    table.sort(run)
+    for i = s0, e do keys[i] = run[i - s0 + 1] end
+    Breath()
+  end
+  local src, dst, width, moved = keys, {}, SORT_RUN, 0
+  while width < n do
+    for lo = 1, n, 2 * width do
+      local mid, hi = math.min(lo + width, n + 1), math.min(lo + 2 * width, n + 1)
+      local i, j = lo, mid
+      for k = lo, hi - 1 do
+        if j >= hi or (i < mid and src[i] <= src[j]) then dst[k] = src[i] i = i + 1 else dst[k] = src[j] j = j + 1 end
+        moved = moved + 1
+        if moved % 256 == 0 then Breath() end
+      end
+    end
+    src, dst = dst, src
+    width = width * 2
+  end
+  return src
+end
+ns.ExportBreathSort = BreathSort -- (tests)
 function ns.ExportRecords(all)
   local records = {}
   Part("quests")
@@ -475,13 +508,26 @@ function ns.ExportRecords(all)
   Part("orders")
   -- (23.10.) objective orders the game showed other than the data's, seen for sure: "Y quest 2,1" (QuestData.lua)
   local orders = type(ns.db.objOrder) == "table" and ns.db.objOrder or {}
+  -- (24.11.2026, laptop: "[orders]" up to 19 ms in one slice) the keys first (no pause with pairs() open), then the
+  -- lines with a pause every 64; a value that went meanwhile is left out
   local orderKeys = {}
   for q, v in pairs(orders) do if Int(q) and q > 0 and type(v) == "string" and v:match("^%d+[,%d]*$") then orderKeys[#orderKeys + 1] = q end end
-  table.sort(orderKeys)
-  for _, q in ipairs(orderKeys) do records[#records + 1] = ("Y %d %s"):format(q, orders[q]) end
+  Breath()
+  orderKeys = BreathSort(orderKeys)
+  for i, q in ipairs(orderKeys) do
+    if i % 64 == 0 then Breath() end
+    local v = orders[q]
+    if type(v) == "string" and v:match("^%d+[,%d]*$") then records[#records + 1] = ("Y %d %s"):format(q, v) end
+  end
+  Breath()
+  Part("levels")
   -- (07.11.2026) the levels the game showed (quest log, server: DonData Engine/Levels.lua): "Z quest level"
   local levels = type(ns.db.questLevels) == "table" and ns.db.questLevels or {}
-  for _, q in ipairs(SortedKeys(levels)) do
+  local levelKeys = {}
+  for q in pairs(levels) do if Int(q) and q > 0 then levelKeys[#levelKeys + 1] = q end end
+  Breath()
+  for i, q in ipairs(BreathSort(levelKeys)) do
+    if i % 64 == 0 then Breath() end
     local lv = levels[q]
     if Int(lv) and lv > 0 and lv <= 100 then records[#records + 1] = ("Z %d %d"):format(q, lv) end
   end

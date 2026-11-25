@@ -1,5 +1,22 @@
 # Changes
 
+## 1.11.0
+
+- **New pin cards:** the quest name shows in the game's difficulty colour with a small badge. Each objective gets its own entry with a small picture of the mob or item, its level in difficulty colour and a progress bar like 3/15 in the colour of its spots. The "!" cards show up to three objectives, and the "n objective spots" line is gone.
+- **Quest colours like the game:** the list, the pins and the level tags take their colour from the game's own rating of each quest, so a quest looks the same everywhere. The "Grey quests" group follows the same rating, so a green quest no longer lands among the grey ones.
+- **The arrow's target glows on the map:** the "!" or "?" of the quest the arrow leads to gets a pulsing golden ring, also in a group marker and on the continent map.
+- **Hide a quest item:** right-click the "Starts a quest" line of an item to hide the line and its button for good. Options > Hidden quest items > Show again brings them all back.
+- **Link a quest in chat:** with the chat line open, Shift+left-click on a quest in Questdon's list puts the quest link into the chat. Without an open chat line it opens the quest log as before.
+- **One ring per dungeon entrance:** dungeons that share an entrance, such as Blackrock Depths and Spire, show one ring with a small picture, name and level for each.
+- **Pictures for the new dungeons:** Krol'dok Stronghold, The Drowned City, Blackmaw Hold, Alcaz Prison, The Shaper's Terrace and Manor Mistmantle now have a picture too.
+- **Calmer minimap pins:** the pins no longer jump around while you walk. Close spots are bundled in fixed cells, so a marker stays where it is.
+- **Fewer wrong event quests:** an event quest remembered from the last time the event ran no longer stays on the map for good. Event quests show only while the game lists them or the giver offered them this session.
+- **Fixed:** Questdon no longer offers to destroy a quest item that a later step of its quest chain still needs, such as the Top Piece of Lord Valthalak's Amulet. An item counts as unneeded only once the whole chain after its quest is over for your character.
+- **Options in one window:** the options button, the gear, the minimap button and `/qd options` open only Questdon's own window with its pages and a search. The game's AddOns list keeps just a button to it.
+- **List headers in the game's look:** in the Blizzard look the headers of a group use the game's own bar, with plus and minus on the right.
+- **Smoother play:** fixed more short stutters. The quest list, the map, the minimap, the arrow and the sharing with other players now do their work in small steps spread over several frames.
+- **Fixed:** the game's hidden quest list no longer catches clicks. The `/way` window stays open when a line is wrong, keeps it and shows an error with an example.
+
 ## 1.10.5
 
 - **Smoother play:** fixed short stutters that came once a second. The quest list rebuilt itself every second to refresh the distances; now it does almost nothing while you stand still, and while you walk, ride or fly it only updates what changed. On a flight path it updates every 5 seconds.

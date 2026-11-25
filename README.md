@@ -124,8 +124,8 @@ Beide Optionen (Seite "Komfort", Abschnitt "Anvisieren und Wegpunkte", aus) setz
 - Aktualisierungen nach Questereignissen werden gebündelt (höchstens alle 0,5 Sekunden), Weltkarte, Minimap, Namensplaketten, Fenster, EP-Leiste und Pfeil teilen sich die gelesenen Daten.
 
 ## Optionen
-Esc > Optionen > Reiter "AddOns" > Questdon (oder `/qd`, oder über das AddOn-Menü an der Minimap). Abhängige Optionen sind eingerückt und grau, solange die übergeordnete aus ist.
-- Startseite: Status (Version, Questdatenbank, Questie), Knöpfe zu den Unterseiten und Werkzeuge: Positionen zurücksetzen, Pfeil testen, EP-Sitzung zurücksetzen, gelernte Daten exportieren, Diagnose, Dungeonquests, gelernte Questdaten löschen.
+`/qd`, das Zahnrad in der Questliste und das AddOn-Menü an der Minimap öffnen immer Questdons eigenes Optionsfenster, egal welcher Fensterstil eingestellt ist. Unter Esc > Optionen > Reiter "AddOns" > Questdon steht nur der Knopf "Optionen / Öffnen" dorthin. Abhängige Optionen sind eingerückt und grau, solange die übergeordnete aus ist.
+- Reiter "Hilfe": Status (Version, Questdatenbank, Questie) und Werkzeuge: Positionen zurücksetzen, Pfeil testen, EP-Sitzung zurücksetzen, gelernte Daten exportieren, Diagnose, Dungeonquests, gelernte Questdaten löschen.
 - **Quests und Automatik**: Annehmen und abgeben, Belohnungen, Questketten und Gruppe (Hinweis, Teilen, Questfortschritt), Hinweis beim Betreten eines Dungeons, Questinfos in Gegner- und NPC-Tooltips.
 - **Karte**: Verfügbare Quests (alle Stufenoptionen, Eventquests ausblenden, nur bestätigte Quests, sie gelten für Weltkarte, Minimap, Namensplaketten und Questliste), Questgegner und Questziele (Größe der Zielpunkte 8 bis 24), Minimap und Namensplaketten, Lernen.
 - **Darstellung**: die Questliste (Kompass, graue Quests ausblenden), für Richtungspfeil und EP-Leiste jeweils Fenster anzeigen, Fenster sperren, Größe (0,6 bis 1,6), Hintergrund-Deckkraft (Standard 0,82), Im Kampf abdunkeln (sanft auf 40 %) und Position zurücksetzen. Dazu Text, Breite (200 bis 1600) und Höhe (6 bis 40) der EP-Leiste.

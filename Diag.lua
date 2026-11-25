@@ -258,12 +258,14 @@ function ns.BuildDiag()
       Template("UIPanelScrollFrameTemplate"), Template("UIPanelCloseButton"))
   end)
   -- (16.11.2026, Blizzard look as in Luredon 1.7.0) option blizzLook, which kit built the quest book (and why the Kit when
-  -- the option is on), the dialogs, where the options open
+  -- the option is on), the dialogs, the look of Questdon's options window (24.11.2026: always that window, DonCore Options 8)
   Probe(out, "book look", function()
     local _, blizz = ns.LookKit and ns.LookKit()
+    local Opt = LibStub("DonCore-1.0"):Get("Options", 8)
+    local function OptionsWindowLook() return Opt and Opt.Look() or "window not opened yet" end
     return ("option %s, game's kit %s, quest book %s, dialogs %s, options %s"):format(tostring(ns.db.blizzLook),
       blizz and "ready" or "no", tostring(ns.QuestBookLook and ns.QuestBookLook() or "?"),
-      tostring(ns.DialogLook and ns.DialogLook() or "?"), tostring(ns.OptionsLook and ns.OptionsLook() or "?"))
+      tostring(ns.DialogLook and ns.DialogLook() or "?"), tostring(OptionsWindowLook()))
   end)
   Probe(out, "style kit", function()
     local st = ns.Style or {}

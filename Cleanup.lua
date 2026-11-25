@@ -10,7 +10,12 @@ local LAST_BAG = NUM_BAG_SLOTS or 4
 ---------------------------------------------------------------------------
 -- Blizzard's answer if it gives a readable one, else the quest level against
 -- the green range.
+-- (24.11.2026, Daniel's picture: "Grey quests (4)" with three quests whose level tag was green) the game's own
+-- difficulty of the quest decides first, the same answer that colours the level tag (ns.QuestContentKey), so the
+-- group and the colour never disagree.
 local function IsGrey(info)
+  local key = ns.QuestContentKey and ns.QuestContentKey(info.questID)
+  if key then return key == "trivial" end
   local trivial = ns.Value(C_QuestLog.IsQuestTrivial, info.questID)
   if type(trivial) == "boolean" then return trivial end
   local level, range = ns.PlayerLevel(), ns.QuestTrivialRange and ns.QuestTrivialRange() or 8 -- (1.26)
@@ -114,6 +119,36 @@ local function QuestsOf(itemID)
   return out, firm
 end
 
+-- (25.11.2026, CurseForge: "Top piece of Lord Valthalak's Amulet marked for destroy") a quest item often travels on
+-- through its chain: the data named only the quest that hands it out (The Challenge, done), not the later step that
+-- uses it up (The Right Piece of Lord Valthalak's Amulet). So an item is only an orphan when the chain after its
+-- quests is over for this character as well: a follow-up (any depth) in the log, or not done and still reachable,
+-- keeps it. Costs a few items that really are left over at the end of a long chain; destroying a needed one costs more.
+local CHAIN_DEPTH = 30
+local function ChainGoesOn(list)
+  if not ns.FollowUpQuests then return false end
+  local seen, todo, n = {}, {}, 0
+  for _, id in ipairs(list) do seen[id] = true todo[#todo + 1] = id end
+  local i = 1
+  while i <= #todo and n < 400 do
+    local id = todo[i]
+    i = i + 1
+    for _, f in ipairs(ns.FollowUpQuests(id) or {}) do
+      if type(f) == "number" and not seen[f] then
+        seen[f], n = true, n + 1
+        if ns.InQuestLog(f) then return true, f end
+        if not ns.IsQuestDone(f) then
+          if ns.QuestReachable(f) then return true, f end
+        elseif #todo < CHAIN_DEPTH * 10 then
+          todo[#todo + 1] = f -- done: the chain may go on behind it
+        end
+      end
+    end
+  end
+  return false
+end
+ns.QuestItemChainGoesOn = ChainGoesOn -- (tests)
+
 -- Third result: false when only guesses back an "orphan" verdict.
 local function ItemStatus(itemID)
   local list, firm = QuestsOf(itemID)
@@ -122,6 +157,10 @@ local function ItemStatus(itemID)
   for _, id in ipairs(list) do
     if ns.InQuestLog(id) then return "needed", id, firm end
     if not ns.IsQuestDone(id) and ns.QuestReachable(id) then ahead = true end
+  end
+  if not ahead then
+    local goesOn, nextID = ChainGoesOn(list)
+    if goesOn then return ns.InQuestLog(nextID) and "needed" or "ahead", nextID, firm end
   end
   return ahead and "ahead" or "orphan", list[1], firm
 end
@@ -331,7 +370,8 @@ end
 -- (1.0) The list is built from the bags, the log and (the expensive part) item
 -- tooltips. It is kept until something it depends on happens, or 15 seconds
 -- pass, so the panel's regular refreshes cost nothing. Callers only read it.
-local function BuildOrphans()
+-- pause: (24.11.2026) the build in slices (ns.OrphanQuestItemsSoon), after each slot (outside every pcall)
+local function BuildOrphans(pause)
   ns.MemCount("orphan scan") -- (23.10.) /qd mem: how often the bags are scanned
   local list = {}
   if not (C_Container and C_Container.GetContainerItemQuestInfo) then return list end
@@ -364,6 +404,13 @@ local function BuildOrphans()
           orphan = ns.IsQuestDone(starter)
           forQuest = starter
           sure = true
+          -- (25.11.2026) unless the data or the chain still has a use for it (status read only for that case)
+          if orphan then
+            status = ItemStatus(itemID)
+            if status == "needed" or status == "ahead" then orphan = false end
+            local goesOn = ChainGoesOn({ starter })
+            if goesOn then orphan = false end
+          end
         else
           local owner, firm
           status, owner, firm = ItemStatus(itemID)
@@ -390,13 +437,19 @@ local function BuildOrphans()
         end
         if orphan then list[#list + 1] = { itemID = itemID, link = info.hyperlink, sure = sure and true or false, quest = forQuest and QuestName(forQuest) or nil } end
       end
+      if pause then pause() end
     end
   end
   return list
 end
 
 local orphanCache, orphanCacheAt
-function ns.InvalidateOrphans() orphanCache = nil end
+-- (24.11.2026) orphanLast: the last list built, kept while a new one is built in slices; orphanGen: each invalidation
+local orphanLast, orphanGen = nil, 0
+function ns.InvalidateOrphans()
+  orphanCache, orphanGen = nil, orphanGen + 1
+  if ns.SliceJobDrop then ns.SliceJobDrop("orphans") end
+end
 for _, event in ipairs({ "BAG_UPDATE_DELAYED", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED",
     "GET_ITEM_INFO_RECEIVED", "ITEM_DATA_LOAD_RESULT", "PLAYER_ENTERING_WORLD" }) do
   ns.On(event, ns.InvalidateOrphans)
@@ -412,5 +465,39 @@ function ns.OrphanQuestItems()
   local now = GetTime and GetTime() or 0
   if orphanCache and orphanCacheAt and now - orphanCacheAt < 15 then return orphanCache end
   orphanCache, orphanCacheAt = BuildOrphans(), now
+  orphanLast = orphanCache
   return orphanCache
+end
+-- (24.11.2026, Ruckler Runde 4, DonMonitor report from the laptop: "ticker Tracker.lua [signature]" 9x avg 11.6 ms,
+-- "refresh tracker [signature]" about 10 ms) the quest list's signature and its bottom rows read the orphans each
+-- pass: after a bag or quest event and every 15 seconds that scanned all bags (item tooltips) in the list's frame.
+-- For the list (not for the destroy click, it reads the bags at once): where the game has the clock for it the scan
+-- runs in slices of its own (ns.SliceJob "orphans", a pause after each slot) and the list shows the last result
+-- meanwhile; a list that differs asks the quest list for a refresh. The first scan and every caller without the
+-- clock: at once as before.
+local function SameOrphans(a, b)
+  if a == b then return true end
+  if not (a and b) or #a ~= #b then return false end
+  for i = 1, #a do if a[i].itemID ~= b[i].itemID or a[i].sure ~= b[i].sure then return false end end
+  return true
+end
+local Direct = ns.OrphanQuestItems
+function ns.OrphanQuestItemsSoon()
+  -- (another addon or a test that put its own function in place: that one)
+  if ns.OrphanQuestItems ~= Direct or not (ns.SliceCan and ns.SliceCan()) then return ns.OrphanQuestItems() end
+  local now = GetTime and GetTime() or 0
+  if orphanCache and orphanCacheAt and now - orphanCacheAt < 15 then return orphanCache end
+  if orphanLast and ns.SliceJob then
+    if ns.SliceJobOn("orphans") then return orphanLast end
+    local gen = orphanGen
+    if ns.SliceJob("orphans", BuildOrphans, function(list)
+      local was = orphanLast
+      orphanLast = list
+      if gen == orphanGen then orphanCache, orphanCacheAt = list, GetTime and GetTime() or 0 end
+      if not SameOrphans(was, list) and ns.QueueRefresh then ns.QueueRefresh("tracker") end
+    end) then
+      return orphanLast
+    end
+  end
+  return ns.OrphanQuestItems()
 end

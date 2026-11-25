@@ -46,10 +46,9 @@ local QUEST_SIZE, DOT_SIZE = 14, 9
 local BUNDLE_PX = 0.8 * DOT_SIZE
 ns.MinimapBundleScale = function(n) return ns.BundleScale(n) end -- (tests; the sizes are in MapPins.lua)
 -- (1.3.5, Daniel 10.10., a quest field: about 40 dots on the minimap) At most MINIMAP_BUDGET objective markers
--- in view: above it the bundling distance grows (ns.ThinObjectivePoints). The nearest spot of each objective
--- (the ANCHORS nearest objectives) stays a single dot, and near you dots join less willingly than far ones
--- (half the distance next to you, the full one at the edge of the view), so far spots are bundled first.
-local MINIMAP_BUDGET, ANCHORS = 16, 8
+-- in view: above it the bundling distance grows (ns.ThinObjectivePoints). (23.11.2026) No longer counted from where
+-- you stand (the nearest spot of each objective a single dot, near ones joining less): see Prepare below.
+local MINIMAP_BUDGET = 16
 ns.MINIMAP_OBJECTIVE_BUDGET = MINIMAP_BUDGET
 -- (1.3.4) Daniel 08.10., Zephras Isle: on the minimap a Questdon "!" stood on
 -- top of the game's own "!". The game puts a blip on every quest giver near
@@ -534,6 +533,49 @@ local baseH, baseN
 local function ForgetBase() baseList = nil end
 -- (25.10., review round 8: hiding a quest stayed on the minimap up to a minute) ns.ForgetAvailable lets the base go too
 ns.ForgetMinimapBase = ForgetBase
+-- (23.11.2026) A thinned marker stands for the spots of its world cell (ns.ThinObjectivePoints cells): the list
+-- reaches a whole cell beyond the farthest view edge before the next list (REBUILD_MOVE), else a cell cut at the
+-- list's edge moved its marker at each new list. At most MAX_REACH view radii.
+local MAX_REACH = 3
+local thinKept
+local function Reach(radius)
+  local reach = radius * NEAR_REACH
+  local t = thinKept
+  if t and t.level and t.level > 0 and t.base then
+    local cell = t.base * (ns.THIN_GROW or 1.5) ^ t.level
+    reach = math.max(reach, math.min(radius * MAX_REACH, radius * (1 + REBUILD_MOVE) + cell))
+  end
+  return reach
+end
+-- (24.11.2026, Ruckler, laptop: "refresh minimap" up to 28 ms, "minimap ?" 24.7 ms walking) A build from the batched
+-- refresh or after a move runs in slices (mjob, a coroutine, MJ_MS a frame): the base pins, the dots near you, the
+-- signature, the display list and the placing each go on in the next frame once the slice's time is used up. The old
+-- pins stay on the minimap until the new ones are placed in one step (no frame without pins). A direct build (options,
+-- /qd, another map) drops the one on the way and builds at once, as every build where the game has no clock for it
+-- (tests). Pause only in Rebuild and MinimapPins themselves, never under a pcall (tools/yieldcheck.lua).
+local MJ_MS = 4
+local mjob -- { co, t0 = the slice's start (ms), slices, part = the step being built, moved }
+-- stats.stepMs: the longest time of each step (ms, /qd diag and the tests)
+local function StepTime(j, now)
+  local sm = stats.stepMs
+  if not sm then sm = {} stats.stepMs = sm end
+  local d = now - (j.pt or j.t0)
+  if d > (sm[j.part] or 0) then sm[j.part] = d end
+end
+local function Pause(part)
+  local j = mjob
+  if not j or coroutine.running() ~= j.co then return end
+  local now = debugprofilestop()
+  StepTime(j, now)
+  if now - j.t0 >= MJ_MS then
+    j.slices = j.slices + 1
+    coroutine.yield()
+    j.pt = j.t0
+  else
+    j.pt = now
+  end
+  j.part = part or j.part -- (24.11.2026) a pause without a step name (Questdon's own in the base) keeps the step
+end
 local function MinimapPins(mapID, moved)
   local now = ns.Num(ns.Value(GetTime)) or 0
   local gen, level = ns.LogGen and ns.LogGen(), ns.PlayerLevel and ns.PlayerLevel()
@@ -545,10 +587,13 @@ local function MinimapPins(mapID, moved)
     base = baseList
     if not moved then stats.baseKept = (stats.baseKept or 0) + 1 end
   else
-    base = ns.PinsForMapBase(mapID)
+    -- (24.11.2026, Ruckler Runde 4, laptop: "refresh minimap [minimap base]" avg 13.6, max 26 ms) the base in slices
+    -- too: the engine pauses in the available quests where it can (the pause does nothing outside the job)
+    base = ns.PinsForMapBase(mapID, Pause)
     if not moved and h == nil and ns.QuestLogState then h, n = ns.QuestLogState() end
     baseMap, baseGen, baseLevel, baseAt, baseList, baseH, baseN = mapID, gen, level, now, base, h, n
   end
+  Pause("near")
   local was = nearAt
   nearAt = nil
   if not ns.db.objectivePins then return base, base end
@@ -566,7 +611,7 @@ local function MinimapPins(mapID, moved)
   end
   local pins = {}
   for i, p in ipairs(base) do pins[i] = p end
-  for _, o in ipairs(ns.ObjectivePointsNear(mapID, pc, pn, pw, radius * NEAR_REACH, ns.db.minimapTrackedOnly)) do
+  for _, o in ipairs(ns.ObjectivePointsNear(mapID, pc, pn, pw, Reach(radius), ns.db.minimapTrackedOnly, Pause)) do
     o.kind = "objective"
     pins[#pins + 1] = o
   end
@@ -580,31 +625,30 @@ end
 local bundledFor, bundledK -- the entries list and the scale the bundles were made for
 -- (18.10., /qd mem) the lists, the distance table and the two budget functions are kept (new ones each bundling
 -- before); member lists come from a pool (the buttons give them up before every bundling, see Update)
-local objs, dist, seenKey = {}, {}, {}
+local objs = {}
 local membersPool, membersUsed = {}, 0
-local bAt, bRadius, bN
+local bAt, bRadius -- thinKept (above): { c = continent, base = bundling distance, level } of the last thinning
 local function InView(B, i)
   return B.g[i] == bAt.c and (B.mx[i] - bAt.n) ^ 2 + (B.my[i] - bAt.w) ^ 2 <= bRadius * bRadius
 end
--- nearest first; the same distance: the list's own order (the same pins give the same list)
-local function ByDist(a, b) local da, db = dist[a], dist[b] if da ~= db then return da < db end return a < b end
--- over the budget: nearest first, the nearest spot of each objective an anchor, near spots join less
+-- (23.11.2026, Daniel with three pictures a few steps apart: "irgendwas läuft mit unseren pins falsch") The spots were
+-- taken nearest first, the nearest spot of each objective a single dot (anchor) and near spots joining less: all of it
+-- counted from where the list was made, so every new list (each REBUILD_MOVE walked) gave other bundles, and often
+-- another thinning step. No marker stayed (test: 28, 13, 31 markers, none in the same place). Now the order is the
+-- world's (north, west, then quest, the same for a spot wherever you stand), no anchors, every spot as willing, and
+-- the last step is kept while it fits (ns.ThinObjectivePoints keep): a marker changes when its own spots change.
+local pB
+local function ByPlace(a, b)
+  local B = pB
+  if B.x[a] ~= B.x[b] then return B.x[a] < B.x[b] end
+  if B.y[a] ~= B.y[b] then return B.y[a] < B.y[b] end
+  if B.q[a] ~= B.q[b] then return B.q[a] < B.q[b] end
+  return a < b
+end
 local function Prepare(B)
-  local at, radius, n = bAt, bRadius, bN
-  for i = 1, n do
-    local e = objs[i]
-    dist[i] = e.c == at.c and math.sqrt((e.n - at.n) ^ 2 + (e.w - at.w) ^ 2) or math.huge
-    B.f[i] = 0.5 + 0.5 * math.min(1, dist[i] / radius)
-  end
-  table.sort(B.order, ByDist)
-  for k in pairs(seenKey) do seenKey[k] = nil end
-  local anchors = 0
-  for k2 = 1, n do
-    local i = B.order[k2]
-    if anchors >= ANCHORS or dist[i] > radius then break end
-    local key = B.q[i] * 64 + (tonumber(objs[i].pin.index) or 0)
-    if not seenKey[key] then seenKey[key] = true B.a[i] = true anchors = anchors + 1 end
-  end
+  pB = B
+  table.sort(B.order, ByPlace)
+  pB = nil
 end
 local function Members(first)
   membersUsed = membersUsed + 1
@@ -628,12 +672,14 @@ local function Bundle(k, radius)
   local budget = ns.db.thinObjectives ~= false and at and radius and MINIMAP_BUDGET or nil
   local inView, prepare
   if budget then
-    bAt, bRadius, bN = at, radius, n
+    bAt, bRadius = at, radius
     inView, prepare = InView, Prepare
   end
   -- (17.10.) symbols are larger than dots: spots join from twice the distance
   local px = ns.SymbolsOn and ns.SymbolsOn() and BUNDLE_PX * 2 or BUNDLE_PX
-  local level = ns.ThinObjectivePoints(px / k, budget, inView, prepare)
+  local keep = budget and thinKept and thinKept.c == at.c and thinKept.base == px / k and thinKept.level or nil
+  local level = ns.ThinObjectivePoints(px / k, budget, inView, prepare, keep, true)
+  if budget then thinKept = thinKept or {} thinKept.c, thinKept.base, thinKept.level = at.c, px / k, level end
   local shown, heads = 0, 0
   for i = 1, n do
     local h = T.head[i]
@@ -697,6 +743,7 @@ local function Leave(pin)
 end
 
 local function Rebuild(force, moved)
+  if mjob and coroutine.running() ~= mjob.co then mjob = nil end -- a direct build: the one in slices goes
   if force then ForgetBase() end
   if not Enabled() or not curMap then
     HideAll()
@@ -704,20 +751,19 @@ local function Rebuild(force, moved)
     if src then src:SetPoints(entries, "none") end
     return
   end
-  local pins, base = MinimapPins(curMap, moved)
-  local sig = ns.PinsSignature(curMap, pins)
+  local map = curMap
+  local pins, base = MinimapPins(map, moved)
+  Pause("signature")
+  if curMap ~= map or not Enabled() then return end -- (in slices) another map or the option went off meanwhile
+  local sig = ns.PinsSignature(map, pins)
   if not force and lastSig and sig == lastSig then stats.skipped = stats.skipped + 1 return end
-  lastSig = sig
-  -- (17.10., /qd mem) the entry tables of the last build are used again (a new one per pin at each build before)
-  if src then src:Release() end
-  for _, e in ipairs(entries) do
-    e.pin, e.head, e.members = nil, nil, nil
-    entryPool[#entryPool + 1] = e
-  end
-  entries = {}
+  Pause("display")
+  if curMap ~= map or not Enabled() then return end
+  -- the new entries first (the old ones stay placed until the step below); (17.10., /qd mem) from the pool
+  local fresh = {}
   local near = 0
   for _, pin in ipairs(Display(pins, base)) do
-    local c, n, w = ns.WorldPos(curMap, pin.x, pin.y)
+    local c, n, w = ns.WorldPos(map, pin.x, pin.y)
     if c then
       local e = entryPool[#entryPool]
       if e then entryPool[#entryPool] = nil else e = {} end
@@ -728,14 +774,59 @@ local function Rebuild(force, moved)
       e.leave, e.hide = leave, leave
       e.range = pin.kind == "dungeon" and DUNGEON_YARDS or nil
       if game then near = near + 1 end -- the game's own blip marks this giver
-      entries[#entries + 1] = e
+      fresh[#fresh + 1] = e
     end
   end
   for i = #display, 1, -1 do display[i] = nil end
+  Pause("place")
+  if curMap ~= map or not Enabled() then
+    for _, e in ipairs(fresh) do e.pin = nil entryPool[#entryPool + 1] = e end
+    return
+  end
+  lastSig = sig
+  if src then src:Release() end
+  for _, e in ipairs(entries) do
+    e.pin, e.head, e.members = nil, nil, nil
+    entryPool[#entryPool + 1] = e
+  end
+  entries = fresh
   stats.nearGame = near
   stats.builds = stats.builds + 1
-  if src then src:SetPoints(entries, curMap .. "#" .. sig) end
+  if src then src:SetPoints(entries, map .. "#" .. sig) end
+  return true
 end
+
+-- one slice of the build on the way; at its end the pins are placed in that frame (Update), as after a direct build
+local Update
+local function JobStep()
+  local j = mjob
+  if not j then return end
+  j.t0 = debugprofilestop()
+  local ok, built = coroutine.resume(j.co)
+  if mjob ~= j then return end -- a direct build came meanwhile
+  local ms = debugprofilestop() - j.t0
+  if ms >= 8 and type(rawget(_G, "DonMonitorDB")) == "table" then ns.slowDetail = "minimap " .. tostring(j.part) end
+  if not ok then mjob = nil error(built, 0) end
+  if coroutine.status(j.co) ~= "dead" then ns.After(0, JobStep) return end
+  StepTime(j, debugprofilestop())
+  mjob = nil
+  stats.sliced = (stats.sliced or 0) + 1
+  stats.slices = (stats.slices or 0) + j.slices
+  if built or not j.moved then Update() end
+end
+-- In slices where the game has the clock for it: true (the build is on the way), false (build directly as before).
+-- moved: asked from View (DonMap is placing right now): the first slice in the next frame, and none anew while one is
+-- on the way (the dots stay until it is done); a refresh starts anew (the log changed since the one on the way began).
+local function Sliced(moved)
+  if not (type(debugprofilestop) == "function" and C_Timer and C_Timer.After and type(coroutine) == "table") then return false end
+  if mjob and moved then return true end
+  local j = { slices = 0, part = "base", moved = moved }
+  j.co = coroutine.create(function() return Rebuild(false, moved) end)
+  mjob = j
+  if moved then ns.After(0, JobStep) else JobStep() end
+  return true
+end
+ns.MinimapJob = function() return mjob end -- (tests)
 
 ---------------------------------------------------------------------------
 -- Positions (DonMap M3: DonMap places the buttons; here what it needs)
@@ -763,7 +854,7 @@ local function View()
   if nearAt and (nearAt.c ~= pc or radius > nearAt.r * 1.05
       or (pn - nearAt.n) ^ 2 + (pw - nearAt.w) ^ 2 > (REBUILD_MOVE * nearAt.r) ^ 2) then
     stats.moved = (stats.moved or 0) + 1
-    Rebuild(false, true)
+    if not Sliced(true) then Rebuild(false, true) end
   end
   local shape = MinimapShape()
   return pc, pn, pw, radius, size / 2, facing, shape
@@ -796,7 +887,7 @@ local function Release(b, e)
   b.pin, b.members = nil, nil
 end
 
-local function Update()
+function Update()
   if not src then return end
   local n, placed = src:Refresh("minimap")
   if placed then stats.updates = stats.updates + 1 end
@@ -846,7 +937,7 @@ end
 -- (10.11.2026, Daniel: "die blizzard marker blitzen immer kurz auf, wenn man steht") a rebuild gives every button back
 -- (src:Release); place them in the same frame, not at the next tick of the clock (up to 0.1 s without pins, the
 -- game's own "!" and "?" under them showed through)
-ns.RegisterRefresh("minimap", function() if Enabled() then Rebuild(false) Update() end end)
+ns.RegisterRefresh("minimap", function() if Enabled() and not Sliced(false) then Rebuild(false) Update() end end)
 local function Queue()
   if Enabled() then ns.QueueRefresh("minimap") end
 end

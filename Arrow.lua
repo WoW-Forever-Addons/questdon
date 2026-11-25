@@ -100,8 +100,14 @@ local function QuestPoints(questID)
   -- place where an item must be used are exact spots: the arrow leads there
   -- and says "Arrived".
   if m then pts[1] = { mapID = m, x = x, y = y, kind = "objective", source = "blizzard", area = ns.AnyAreaObjective(questID) } end
+  -- (24.11.2026, Ruckler Runde 4) whether an objective is done in an area: asked once per objective, not per point
+  -- (quest 866: 2469 points of one objective)
+  local areaOf = {}
   for _, p in ipairs(ns.AllObjectivePoints(questID)) do
-    p.area = not p.useSpot and ns.IsAreaObjective(questID, p.index)
+    local idx = p.index
+    local a = areaOf[idx or "nil"]
+    if a == nil then a = ns.IsAreaObjective(questID, idx) and true or false areaOf[idx or "nil"] = a end
+    p.area = not p.useSpot and a
     pts[#pts + 1] = p
   end
   if #pts > 0 then return pts end
@@ -192,10 +198,14 @@ local function CachedPoints(questID)
     local bags = points == false or #points == 0
     for _, p in ipairs(points or {}) do if p.useSpot or p.needsItem then bags = true break end end
     -- (review 4) each point's world position once, not every second (3700 conversions a tick with 28 quests)
+    -- (24.11.2026, Ruckler Runde 4) DonData's points carry their world position (StaticTargets: _wc, _wn, _ww, made
+    -- with the map corners of ns.WorldPosGen() = _wg): taken as they are while that is the same; else (other points,
+    -- an engine without WorldPosGen) worked out here as before
+    local gen = ns.WorldPosGen and ns.WorldPosGen()
     for _, p in ipairs(points or {}) do
-      if p.mapID and p.x and p.y then
+      if p.mapID and p.x and p.y and not (gen and p._wc and p._wg == gen) then
         local c, n, w = ns.WorldPos(p.mapID, p.x, p.y)
-        if c then p._wc, p._wn, p._ww = c, n, w end
+        if c then p._wc, p._wn, p._ww, p._wg = c, n, w, gen end
       end
     end
     nearBags[questID] = bags or nil
@@ -407,7 +417,7 @@ local function LogSignature()
 end
 local nextCache, nextAt, nextSig = nil, -10, nil
 local nextPickAt -- (22.11.2026) when the "next" quest last changed
-local function NextAuto()
+local function NextAuto(pause)
   if ns.db.arrowNext == false then return nil end
   local sig = LogSignature()
   if nextDismissed and nextDismissed == sig then return nil end
@@ -423,8 +433,8 @@ local function NextAuto()
   -- another one was the nearest every few seconds.
   local was = sig == nextSig and type(nextCache) == "table" and nextCache.questID or nil
   local wasP, wasD, wasPts, wasFin
-  nextSig, nextAt = sig, now
-  nextCache = nil
+  -- (24.11.2026) nextSig, nextAt and nextCache are set at the end: a direct update while this one runs in slices
+  -- (ns.UpdateArrowTarget drops it) works the next quest out again instead of taking an empty one
   local best, bestD, bestID
   -- (24.10., reviewer c: "blank compass on the card when every objective is more than 400 yards away") the nearest open
   -- objective of a quest in the log at any distance: used only when no turn-in and nothing close by was found
@@ -436,7 +446,10 @@ local function NextAuto()
     if id and not ns.IsQuestFailed(id) and not hidden[id] then
       local points, special = CachedPoints(id)
       if points and special ~= "autocomplete" then
-        local p, d = Nearest(points)
+        local p, d
+        local measured, tp, td = false, nil, nil
+        if ns.TrackerQuestPoint then measured, tp, td = ns.TrackerQuestPoint(id) end
+        if measured then p, d = tp, td else p, d = Nearest(points) end
         if p and d then
           local finished = p.kind == "turnin" or p.kind == "guess"
           if id == was then wasP, wasD, wasPts, wasFin = p, d, points, finished end
@@ -445,7 +458,9 @@ local function NextAuto()
         end
       end
     end
+    if pause then pause() end
   end
+  nextSig, nextAt, nextCache = sig, now, nil
   local first = best ~= nil
   if not best then best, bestD, bestID, bestPts = far, farD, farID, farPts end
   if not best then return nil end
@@ -469,16 +484,15 @@ local function NextAuto()
 end
 function ns.DismissNextTarget() nextDismissed = LogSignature() end
 
-local function BuildAuto()
-  local prev = auto
-  auto = nil
+-- (24.11.2026, Ruckler Runde 4) the new target is made apart and set at the end (in slices the old one stays meanwhile)
+local function MakeAuto(prev, pause)
+  local auto
   if not (ns.ArrowRuns and ns.ArrowRuns() and C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID) then return end
   local questID = ns.Num(ns.Value(C_SuperTrack.GetSuperTrackedQuestID))
-  if not questID or questID == 0 or not ns.InQuestLog(questID) then auto = NextAuto() return end
+  if not questID or questID == 0 or not ns.InQuestLog(questID) then return NextAuto(pause) end
   local points, special = CachedPoints(questID)
   if special == "autocomplete" then
-    auto = { label = L["%s: complete it from the quest log"]:format(ns.QuestTitle(questID)), questID = questID }
-    return
+    return { label = L["%s: complete it from the quest log"]:format(ns.QuestTitle(questID)), questID = questID }
   end
   points = points or {}
   local p = Nearest(points)
@@ -510,10 +524,11 @@ local function BuildAuto()
       auto.points, auto.LabelFor = list, LabelFor
     end
   end
+  return auto
 end
+local function BuildAuto(pause) auto = MakeAuto(auto, pause) end
 
-function ns.UpdateArrowTarget()
-  BuildAuto()
+local function AfterBuild()
   -- a new target sits on the nearest spot: pick again at the next update (a group of spots far away), not after
   -- AREA_CHECK
   if auto and auto.points then area.checkAt = nil end
@@ -523,6 +538,26 @@ function ns.UpdateArrowTarget()
     if ns.QueueRefresh then ns.QueueRefresh("panel") end
   end
 end
+function ns.UpdateArrowTarget()
+  if ns.SliceJobDrop then ns.SliceJobDrop("arrow") end -- a direct update drops the one in slices
+  BuildAuto()
+  AfterBuild()
+end
+-- (24.11.2026, Ruckler Runde 4, DonMonitor report from the laptop: "ticker Arrow.lua" 2x 21 ms, "refresh arrow" 40 ms)
+-- with nothing tracked the arrow looks through every quest of the log for the next one (NextAuto: the places of each
+-- quest, worked out again after a change of its state, and the nearest of them). The 5 s ticker and the batched refresh
+-- do that in slices where the game has the clock for it (ns.SliceJob "arrow", a pause after each quest; the old target
+-- stays until the new one is made); NextAuto takes the nearest point the quest list measured within the last second
+-- and a half (ns.TrackerQuestPoint) instead of looking for it again. Every other caller: at once as before.
+-- A new quest made in slices: the quest list's card follows at once (it would at its next pass)
+local function UpdateSoon()
+  local was = auto and auto.questID
+  if not (ns.SliceJob and ns.SliceJob("arrow", BuildAuto, function()
+    AfterBuild()
+    if (auto and auto.questID) ~= was and ns.QueueRefresh then ns.QueueRefresh("tracker") end
+  end)) then ns.UpdateArrowTarget() end
+end
+ns.UpdateArrowTargetSoon = UpdateSoon
 
 -- (1.2) The quest you track (super-tracked) when a target was clicked: picking
 -- another quest in the log or the tracker afterwards drops the clicked target,
@@ -787,12 +822,12 @@ function ns.ToggleArrow()
 end
 
 -- (1.23) Batched with the other quest displays (Core.lua, 0.5 s).
-ns.RegisterRefresh("arrow", function() ns.UpdateArrowTarget() end)
+ns.RegisterRefresh("arrow", function() UpdateSoon() end)
 local function Queue() ns.QueueRefresh("arrow") end
 
 ns.OnInit(function()
   Create()
-  ns.NewTicker(5, ns.UpdateArrowTarget) -- nearest point changes while you move
+  ns.NewTicker(5, function() UpdateSoon() end) -- nearest point changes while you move
 end)
 ns.On("SUPER_TRACKING_CHANGED", Queue)
 ns.On("QUEST_LOG_UPDATE", Queue)

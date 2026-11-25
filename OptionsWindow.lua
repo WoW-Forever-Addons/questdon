@@ -64,7 +64,7 @@ local TABS = {
   { key = "comfort", title = "Comfort", pic = "opt_comfort",
     text = "Small helpers: sell junk and repair at a merchant, fast loot, a button for quest items, and the journal.",
     main = { "sellJunk", "autoRepair", "fastLoot", "trackerItemButtons", "questItemButton" },
-    more = { "useGuildRepair", "journalShots", "journalMoments", "journalLevelShot" } },
+    more = { "useGuildRepair", "button:starters", "journalShots", "journalMoments", "journalLevelShot" } },
   { key = "share", title = "Sharing and data", pic = "opt_share",
     text = "What Questdon learns while you play and shares with other Questdon players (only quest and map numbers, never names).",
     top = { "Only collect and share data" }, -- (25.10.) Setup.lua ns.SetDataOnly
@@ -123,10 +123,9 @@ local QD = NewWindow({
   changed = function(key) if ns.OptionChanged then ns.OptionChanged(key, true) end end, -- true: DonCore runs a donCommon item itself
   T = function(s) return L[s] end,
   status = function() return ns.OptionStatus and ns.OptionStatus() or {} end, help = function() return ns.HELP end,
-  buttonKey = function(section) return (section == "XP bar") and "button:xp" or "button:arrow" end,
-  -- (16.11.2026, DonCore Options 6) with the option blizzLook the options are the game's own settings pages: every cog
-  -- and /qd options ends there (the pages are built in full at login, Options.lua Build)
-  redirect = function() return ns.OpenGameOptions and ns.OpenGameOptions() or false end,
+  -- (24.11.2026) by the header the button stands under (Options.lua ns.OptionButtonKey): "Hidden quest items" under "Loot
+  -- and items" took the arrow's key before and showed in place of the arrow's "Reset position"
+  buttonKey = function(section) return ns.OptionButtonKey and ns.OptionButtonKey(section) end,
 })
 if Opt then Opt.onError = function(where, err) if ns.RecordError then ns.RecordError("options " .. tostring(where), err) end end end
 ns.NewOptionsWindow = NewWindow

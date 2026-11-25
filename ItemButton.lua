@@ -67,6 +67,13 @@ end
 -- data does not know cannot be checked and is offered), and not again in this session once its
 -- offer was closed without taking it. It comes after the tracked quest's own item.
 local declined = {} -- [questID] = true: offer closed without taking it (this session)
+-- (23.11.2026, Daniel with a picture, a Craftsman's Writ on top of the quest list: "option rechtklick zum ausblenden",
+-- chose "row and button, for good") a right-click on the row "Starts a quest" hides that item (ns.db.hiddenStarters,
+-- per character); the options bring them all back (ns.ShowHiddenStarters)
+local function StarterHidden(itemID)
+  local h = ns.db and ns.db.hiddenStarters
+  return type(h) == "table" and h[itemID] == true
+end
 local offerShown    -- questID of the quest dialog that is open
 local function StarterAllowed(qid)
   if declined[qid] then return false end
@@ -82,7 +89,7 @@ local function StarterItem()
       local qid = q and ns.Num(q.questID)
       if qid and not ns.True(q.isActive) and not ns.IsQuestDone(qid) and not ns.InQuestLog(qid) and StarterAllowed(qid) then
         local info = C_Container.GetContainerItemInfo(bag, slot)
-        if info and ns.Num(info.itemID) then return info.itemID, qid end
+        if info and ns.Num(info.itemID) and not StarterHidden(info.itemID) then return info.itemID, qid end
       end
     end
   end
@@ -196,6 +203,26 @@ ns.On("QUEST_FINISHED", function()
   end)
 end)
 function ns.StarterDeclined(questID) return declined[questID] == true end -- (tests)
+function ns.HideStarter(itemID)
+  itemID = ns.Num(itemID)
+  if not itemID then return end
+  ns.db.hiddenStarters = type(ns.db.hiddenStarters) == "table" and ns.db.hiddenStarters or {}
+  ns.db.hiddenStarters[itemID] = true
+  listStale = true
+  ns.QueueRefresh("itembutton")
+  if ns.UpdateTracker then ns.UpdateTracker(true) end
+end
+function ns.HiddenStarterCount()
+  local n = 0
+  for _, v in pairs(type(ns.db.hiddenStarters) == "table" and ns.db.hiddenStarters or {}) do if v == true then n = n + 1 end end
+  return n
+end
+function ns.ShowHiddenStarters()
+  ns.db.hiddenStarters = nil
+  listStale = true
+  ns.QueueRefresh("itembutton")
+  if ns.UpdateTracker then ns.UpdateTracker(true) end
+end
 
 ---------------------------------------------------------------------------
 -- Button (secure, so attributes only change out of combat)

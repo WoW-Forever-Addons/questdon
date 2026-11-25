@@ -37,15 +37,20 @@ local function Rock(m)
   rockCache[m] = c
   return c
 end
-local function Seed(m)
+-- breath: (24.11.2026, Ruckler) the share send's pause (ns.ShareBreath) every 512 cells of a long shipped map; the
+-- cache takes the map only once it is whole
+local function Seed(m, breath)
   local c = seedCache[m]
   if c ~= nil then return c or nil end
   local s = ns.PATH_WALKED and ns.PATH_WALKED[m]
   if type(s) ~= "string" then seedCache[m] = false return nil end
   c = {}
+  local k = 0
   for i = 1, #s - 2, 3 do
     local n = tonumber(s:sub(i, i + 2), 36)
     if n then c[n] = true end
+    k = k + 1
+    if breath and k % 512 == 0 then breath() end
   end
   seedCache[m] = c
   return c
@@ -536,15 +541,17 @@ function ns.WalkRecords(all)
     -- (22.11.2026, Ruckler: "share" avg 125 ms) the share send builds these in slices (Exchange.lua ns.ShareBreath);
     -- a map that went meanwhile has no cells
     if ns.ShareBreath then ns.ShareBreath() end
-    local seed = Seed(m)
+    local seed = Seed(m, ns.ShareBreath)
     local blocks = {}
     -- (22.11.2026, second DonMonitor report: the slices avg 11.7 ms, max 20) a much walked map has thousands of cells:
     -- its cells first as a list (no pause with pairs() open: you walk on meanwhile), then with a pause every 256
     local cells, nc = {}, 0
     for c in pairs(type(walked[m]) == "table" and walked[m] or blocks) do nc = nc + 1 cells[nc] = c end
+    -- (24.11.2026, laptop: "timer Exchange.lua:1235 [paths]" 6 slices of about 10 ms each minute) a cell asks the
+    -- data build's facts (ns.KnownWalkCell, a binary search): 256 of them were more than a slice there, now 32
     for ci = 1, nc do
       local c = cells[ci]
-      if ci % 256 == 0 and ns.ShareBreath then ns.ShareBreath() end
+      if ci % 32 == 0 and ns.ShareBreath then ns.ShareBreath() end
       if type(c) == "number" and c >= 0 and c < N * N and not (seed and seed[c]) and not (known and known(m, c)) then
         local i, j = c % N, math.floor(c / N)
         local b = math.floor(i / BLOCK) + math.floor(j / BLOCK) * (N / BLOCK)
@@ -556,7 +563,8 @@ function ns.WalkRecords(all)
     local keys = {}
     for b in pairs(blocks) do keys[#keys + 1] = b end
     table.sort(keys)
-    for _, b in ipairs(keys) do
+    for bi, b in ipairs(keys) do
+      if bi % 16 == 0 and ns.ShareBreath then ns.ShareBreath() end
       local digits = {}
       for d = 0, 24 do
         local v = 0

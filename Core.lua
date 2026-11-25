@@ -297,3 +297,50 @@ SlashCmdList.QUESTDON = ns.Guard("slash", function(msg)
     ns.Print(ns.HELP)
   end
 end)
+
+-- (24.11.2026, Ruckler Runde 4, DonMonitor report from the laptop after round 3: "ticker Tracker.lua [nearby]" up to
+-- 31 ms, "refresh minimap [minimap base]" up to 26 ms, "ticker Arrow.lua" 21 ms) one small runner for work in slices:
+-- body(pause) runs in a coroutine; pause() (the engine calls it every few entries, Questdon between its steps) gives
+-- the frame back once the slice used SLICE_MS, the next slice runs in the next frame (ns.After 0). At its end
+-- done(result) runs in the frame of the last slice. A job of the same name started anew drops the one on the way.
+-- Where the game has no clock for it (tests) ns.SliceJob returns false and the caller works directly as before.
+-- pause only outside every pcall (tools/yieldcheck.lua); a pause called outside its job does nothing.
+local SJ = { MS = 4, jobs = {}, stats = { started = 0, done = 0, slices = 0 } }
+ns.SliceJobs = SJ -- (tests, /qd diag)
+function ns.SliceCan()
+  return type(debugprofilestop) == "function" and C_Timer ~= nil and C_Timer.After ~= nil and type(coroutine) == "table"
+end
+local function SliceStep(j)
+  if SJ.jobs[j.name] ~= j then return end -- dropped meanwhile
+  j.t0 = debugprofilestop()
+  local ok, r = coroutine.resume(j.co, j.pause)
+  if SJ.jobs[j.name] ~= j then return end
+  if debugprofilestop() - j.t0 >= 8 and type(rawget(_G, "DonMonitorDB")) == "table" then ns.slowDetail = j.name end
+  if not ok then SJ.jobs[j.name] = nil error(r, 0) end
+  if coroutine.status(j.co) ~= "dead" then ns.After(0, j.step) return end
+  SJ.jobs[j.name] = nil
+  SJ.stats.done = SJ.stats.done + 1
+  if j.done then j.done(r) end
+end
+-- name: one job of a name at a time (also the slow log's detail); first: "now" runs the first slice in this frame,
+-- else in the next one
+function ns.SliceJob(name, body, done, first)
+  if not ns.SliceCan() then return false end
+  local j = { name = name, slices = 0, done = done }
+  j.co = coroutine.create(body)
+  j.pause = function()
+    if coroutine.running() ~= j.co then return end
+    if debugprofilestop() - j.t0 >= SJ.MS then
+      j.slices = j.slices + 1
+      SJ.stats.slices = SJ.stats.slices + 1
+      coroutine.yield()
+    end
+  end
+  j.step = function() SliceStep(j) end
+  SJ.jobs[name] = j
+  SJ.stats.started = SJ.stats.started + 1
+  if first == "now" then SliceStep(j) else ns.After(0, j.step) end
+  return true
+end
+function ns.SliceJobOn(name) return SJ.jobs[name] ~= nil end
+function ns.SliceJobDrop(name) SJ.jobs[name] = nil end

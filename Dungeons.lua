@@ -337,9 +337,9 @@ function ns.DungeonEntrancePins(mapID)
   for inst in pairs(D) do
     for _, p in ipairs(ns.DungeonEntrances(inst)) do
       local isMark = mark and mark.inst == inst and mark.mapID == p[1] and math.abs(mark.x - p[2]) < 1e-6 and math.abs(mark.y - p[3]) < 1e-6
-      if p[1] == mapID and not isMark then
+      if p[1] == mapID then
         list[#list + 1] = { kind = "dungeon", inst = inst, name = ns.DungeonName(inst), x = p[2], y = p[3],
-          source = p[4], confirmed = p[5], mine = p[6] }
+          source = p[4], confirmed = p[5], mine = p[6], isMark = isMark or nil }
       end
     end
   end
@@ -347,41 +347,90 @@ function ns.DungeonEntrancePins(mapID)
     if a.inst ~= b.inst then return a.inst < b.inst end
     return a.x < b.x
   end)
-  -- (1.3.6) dungeons sharing one way in (Blackrock Mountain: three; the Scarab Gate: two) side by side,
-  -- SPREAD apart on the map, so each keeps its own pin and tooltip
-  local SPREAD = 0.012
+  -- (23.11.2026, Daniel with Blackrock Mountain on Searing Gorge and the Burning Steppes: "Ein Ring je
+  -- Eingang") dungeons sharing one way in (Blackrock Mountain, the Scarab Gate) get ONE pin there: the
+  -- lowest dungeon leads (click, right-click), the tooltip lists them all (ns.DungeonPinTooltip). Was
+  -- (1.3.6) one pin each, side by side. While one of them is marked, the mark's pin stands for the way in.
   local groups, order = {}, {}
   for _, p in ipairs(list) do
     local k = math.floor(p.x * 200 + 0.5) .. ":" .. math.floor(p.y * 200 + 0.5)
     if not groups[k] then groups[k] = {} order[#order + 1] = k end
     table.insert(groups[k], p)
   end
+  local function Low(inst) return ns.DungeonLevelRange(inst) or 999 end
+  local out = {}
   for _, k in ipairs(order) do
     local g = groups[k]
     if #g > 1 then
-      for i, p in ipairs(g) do p.x = p.x + (i - (#g + 1) / 2) * SPREAD end
+      table.sort(g, function(a, b)
+        local la, lb = Low(a.inst), Low(b.inst)
+        if la ~= lb then return la < lb end
+        return a.inst < b.inst
+      end)
+      local lead, insts, names = g[1], {}, {}
+      for i, p in ipairs(g) do insts[i] = p.inst names[i] = p.name or "?" end
+      lead.insts = insts
+      lead.name = ns.SharedEntranceName(insts) or table.concat(names, " / ")
+      for _, p in ipairs(g) do lead.confirmed = lead.confirmed or p.confirmed lead.mine = lead.mine or p.mine end
+      local marked = false
+      for _, p in ipairs(g) do marked = marked or p.isMark end
+      if not marked then out[#out + 1] = lead end
+    elseif not g[1].isMark then
+      out[#out + 1] = g[1]
     end
   end
+  list = out
   return list
 end
 
-function ns.DungeonPinTooltip(pin)
-  local inst = pin and pin.inst
-  local lines = {}
-  local lo, hi = ns.DungeonLevelRange(inst)
-  if lo then lines[#lines + 1] = L["Level %d-%d"]:format(lo, hi or lo) end
+-- The client's own name of the place several dungeons share (AreaTable: Blackrock Mountain 25, Gates of
+-- Ahn'Qiraj 3478), in the game's language; nil without it.
+local SHARED_AREAS = { [228] = 25, [229] = 25, [742] = 25, [743] = 3478, [744] = 3478 }
+function ns.SharedEntranceName(insts)
+  local area = insts and insts[1] and SHARED_AREAS[insts[1]]
+  local get = area and C_Map and C_Map.GetAreaInfo
+  if not get then return nil end
+  local ok, name = pcall(get, area)
+  return ok and Str(name) or nil
+end
+
+local function FitColored(inst)
+  local fit, color = ns.DungeonFitText(inst)
+  if not fit then return nil end
+  local c = ns.Style and ns.Style.COLORS and ns.Style.COLORS[color]
+  return (c and c.hex) and ("|c" .. c.hex .. fit .. "|r") or fit
+end
+
+local function QuestLine(inst)
   local total, done, ready = ns.DungeonQuestCounts(inst)
   local q = L["%d of %d quests done"]:format(done, total)
   if ready > 0 then q = q .. "  ·  " .. L["%d ready"]:format(ready) end
-  lines[#lines + 1] = q
-  local fit, color = ns.DungeonFitText(inst)
-  if fit then
-    local c = ns.Style and ns.Style.COLORS and ns.Style.COLORS[color]
-    lines[#lines + 1] = (c and c.hex) and ("|c" .. c.hex .. fit .. "|r") or fit
+  return q
+end
+
+function ns.DungeonPinTooltip(pin)
+  -- (23.11.2026) one pin for a shared way in: each dungeon a heading with its level, then its quests.
+  -- Daniel 23.11. with the Blackrock Mountain tooltip: "diese kleinen bilderchen und wie das aufgebaut ist,
+  -- hätte ich gerne bei jedem instanzeingang": a single dungeon the same way (picture, name, level; quests, fit)
+  local insts = pin and pin.insts and #pin.insts > 1 and pin.insts or (pin and pin.inst and { pin.inst })
+  if insts then
+    local lines = {}
+    for _, inst in ipairs(insts) do
+      local lo, hi = ns.DungeonLevelRange(inst)
+      local head = ns.DungeonIconTag(inst) .. "|cffffd100" .. (ns.DungeonName(inst) or "?") .. "|r"
+      if lo then head = head .. "  " .. L["Level %d-%d"]:format(lo, hi or lo) end
+      lines[#lines + 1] = head
+      local q = QuestLine(inst)
+      local fit = FitColored(inst)
+      if fit then q = q .. "  ·  " .. fit end
+      lines[#lines + 1] = q
+    end
+    -- (1.3.6, Daniel 10.10.: "tooltips must not be overloaded") whether the game confirmed an entrance stays
+    -- out of the tooltip: /qd dungeonlevels reports it
+    return ns.DungeonIconTag(pin.inst) .. (pin.name or ns.DungeonName(pin.inst) or "?"), lines,
+      L["Click: dungeon journal, right-click: arrow"]
   end
-  -- (1.3.6, Daniel 10.10.: "tooltips must not be overloaded") whether the game confirmed an entrance stays
-  -- out of the tooltip: /qd dungeonlevels reports it
-  return ns.DungeonIconTag(inst) .. (pin and pin.name or ns.DungeonName(inst)), lines, L["Click: dungeon journal, right-click: arrow"]
+  return "?", {}, L["Click: dungeon journal, right-click: arrow"]
 end
 
 -- Click on a pin: the quest book on the Dungeons tab with this dungeon. The book is an own frame
@@ -409,112 +458,29 @@ end
 -- level). A path the client does not have (GetFileIDFromPath) or a texture that does not take it
 -- (ns.DungeonIconFailed) counts as none.
 ---------------------------------------------------------------------------
-local LFG_ICON = "Interface\\LFGFrame\\LFGIcon-"
-local KNOWN_ICON = { [63] = "Deadmines", [226] = "RagefireChasm", [240] = "WailingCaverns", [64] = "ShadowFangKeep",
-  [227] = "BlackfathomDeeps", [238] = "StormwindStockades", [231] = "Gnomeregan", [234] = "RazorfenKraul",
-  [316] = "ScarletMonastery", [233] = "RazorfenDowns", [239] = "Uldaman", [241] = "ZulFarak", [232] = "Maraudon",
-  [237] = "SunkenTemple", [228] = "BlackrockDepths", [229] = "BlackrockSpire", [230] = "DireMaul", [236] = "Stratholme" }
--- (1.3.5 round 8, Daniel 10.10.: Hall of Thanes showed "13", Ruins of Lordaeron "15") The new Forever
--- dungeons and the raids have no journal or finder art in the client: then a fitting icon of the client's
--- own icon set (Interface\Icons, 1.x era names), the first of a few the client has (source "icon"). Without
--- any of them the badge keeps the level: a general dungeon icon would say less than the number.
-local ICONS = "Interface\\Icons\\"
-local ICON_CANDIDATES = {
-  [3065] = { "INV_Misc_Head_Dwarf_01", "Spell_Nature_StoneSkinTotem", "INV_Hammer_04" },          -- Hall of Thanes: dwarves, titan stone
-  [2999] = { "Spell_Shadow_RaiseDead", "INV_Misc_Bone_HumanSkull_01", "Spell_Shadow_AnimateDead" }, -- Ruins of Lordaeron: the undead
-  [2959] = { "Spell_Arcane_Blink", "Spell_Holy_MagicalSentry", "Spell_Nature_WispSplode" },        -- City of Dalaran: arcane, violet
-  [2998] = { "Trade_Mining", "INV_Pick_02", "INV_Misc_Shovel_01" },                                -- Excavation Site: digging
-  [742] = { "INV_Misc_Head_Dragon_Black", "INV_Misc_Head_Dragon_01" },                             -- Blackwing Lair: Nefarian
-  [760] = { "INV_Misc_Head_Dragon_01", "INV_Misc_Head_Dragon_Black" },                             -- Onyxia's Lair: Onyxia
-  [743] = { "INV_Misc_AhnQirajTrinket_01", "INV_Qiraj_JewelBlessed", "Spell_Nature_InsectSwarm" },  -- Ruins of Ahn'Qiraj
-  [744] = { "INV_Misc_AhnQirajTrinket_03", "INV_Qiraj_JewelEncased", "Spell_Nature_InsectSwarm" },  -- Temple of Ahn'Qiraj
-  [754] = { "INV_Trinket_Naxxramas03", "Spell_Shadow_RaiseDead", "Spell_Shadow_AnimateDead" },      -- Naxxramas: the Scourge
-}
-ns.DUNGEON_ICON_CANDIDATES = ICON_CANDIDATES -- (tests)
-local MAX_LFG_ID = 3000
+-- (23.11.2026) The chain itself (journal, Dungeon Finder, known LFG paths, icons of the client's icon set, every path checked)
+-- is DonCore's Art module now, shared with Guildon Groups (Daniel: "Gleiches fertig aus dem DonCore-Kit, nie je Addon
+-- nachbauen"). Questdon gives it the journal ID of the entrance scan, the game map and both names, and keeps its own
+-- session state: the pictures a texture refused (ns.DungeonIconFailed) and the counts for /qd dungeonlevels.
+local Art = LibStub("DonCore-1.0"):Get("Art", 2)
+ns.DUNGEON_ICON_CANDIDATES = Art and Art.ICON_CANDIDATES or {} -- (tests)
 local icons, iconFailed = {}, {}
-local lfgIcons -- { byMap = {}, byName = {} } from the Dungeon Finder, read once
 local iconStats = { journal = 0, lfg = 0, known = 0, icon = 0, none = 0, failed = 0 }
 function ns.DungeonIconStats() return iconStats end
-
-local function PathExists(path)
-  if type(path) == "number" then return path > 0 end
-  if type(path) ~= "string" or path == "" then return false end
-  if type(GetFileIDFromPath) == "function" then
-    local ok, id = pcall(GetFileIDFromPath, path)
-    if ok then return ns.Num(id) ~= nil and id > 0 end
-  end
-  return true -- the client cannot tell: the texture shows whether it takes it
-end
-
-local function LfgPath(tex)
-  if type(tex) == "number" then return tex end
-  tex = Str(tex)
-  if not tex then return nil end
-  if tex:find("\\", 1, true) or tex:find("/", 1, true) then return tex end
-  return LFG_ICON .. tex
-end
-
-local function ScanLfg()
-  if lfgIcons then return lfgIcons end
-  lfgIcons = { byMap = {}, byName = {} }
-  if type(GetLFGDungeonInfo) ~= "function" then return lfgIcons end
-  for id = 1, MAX_LFG_ID do
-    local r = { pcall(GetLFGDungeonInfo, id) }
-    if r[1] and Str(r[2]) then
-      local tex = LfgPath(r[12])
-      local m = ns.Num(r[23])
-      if tex then
-        if m and not lfgIcons.byMap[m] then lfgIcons.byMap[m] = tex end
-        local low = r[2]:lower()
-        if not lfgIcons.byName[low] then lfgIcons.byName[low] = tex end
-      end
-    end
-  end
-  return lfgIcons
-end
-
-local function JournalIcon(inst)
-  if type(EJ_GetInstanceInfo) ~= "function" then return nil end
-  local e = ScanEntrances()[inst]
-  local jid = e and e[4]
-  local api = C_EncounterJournal
-  if not jid and GAME_MAP[inst] and type(api) == "table" and type(api.GetInstanceForGameMap) == "function" then
-    local ok, id = pcall(api.GetInstanceForGameMap, GAME_MAP[inst])
-    jid = ok and ns.Num(id) or nil
-  end
-  if not jid then return nil end
-  local ok, _, _, _, button = pcall(EJ_GetInstanceInfo, jid)
-  if not ok then return nil end
-  if type(button) == "number" and ns.Usable(button) and button > 0 then return button end
-  return Str(button)
-end
 
 -- The picture of a dungeon: texture (file ID or path), source ("journal", "lfg", "known", "icon"), or nil.
 function ns.DungeonIcon(inst)
   if not inst or iconFailed[inst] then return nil end
   local c = icons[inst]
   if c ~= nil then if c then return c[1], c[2] end return nil end
-  local tex, source = JournalIcon(inst), "journal"
-  if not (tex and PathExists(tex)) then
-    tex, source = nil, "lfg"
-    local lfg = ScanLfg()
-    local cand = GAME_MAP[inst] and lfg.byMap[GAME_MAP[inst]]
-    if not cand then
-      for _, n in ipairs({ Str(ns.DungeonName(inst)), D[inst] and Str(D[inst][NAME_EN]) }) do
-        local low = n:lower()
-        cand = lfg.byName[low] or lfg.byName[(low:gsub("^the%s+", ""))]
-        if cand then break end
-      end
+  local tex, source
+  if Art then
+    local e = ScanEntrances()[inst]
+    local names = {}
+    for _, n in ipairs({ Str(ns.DungeonName(inst)) or false, D[inst] and Str(D[inst][NAME_EN]) or false }) do
+      if n then names[#names + 1] = n end
     end
-    if cand and PathExists(cand) then tex = cand end
-  end
-  if not tex and KNOWN_ICON[inst] and PathExists(LFG_ICON .. KNOWN_ICON[inst]) then tex, source = LFG_ICON .. KNOWN_ICON[inst], "known" end
-  if not tex and ICON_CANDIDATES[inst] then
-    -- (round 8) only a path the client says it has (GetFileIDFromPath); without that check none is taken
-    for _, name in ipairs(ICON_CANDIDATES[inst]) do
-      if type(GetFileIDFromPath) == "function" and PathExists(ICONS .. name) then tex, source = ICONS .. name, "icon" break end
-    end
+    tex, source = Art.DungeonIcon(inst, names, GAME_MAP[inst], e and e[4])
   end
   icons[inst] = tex and { tex, source } or false
   iconStats[tex and source or "none"] = iconStats[tex and source or "none"] + 1
@@ -525,7 +491,7 @@ end
 function ns.DungeonIconFailed(inst)
   if inst and not iconFailed[inst] then iconFailed[inst] = true iconStats.failed = iconStats.failed + 1 end
 end
-function ns.ResetDungeonIcons() icons, iconFailed, lfgIcons = {}, {}, nil end -- (tests)
+function ns.ResetDungeonIcons() icons, iconFailed = {}, {} if Art then Art.ResetIcons() end end -- (tests)
 -- (round 8) For /qd dungeonlevels: where the picture of inst comes from ("journal", "lfg", "known", "icon",
 -- "failed": the texture did not take it, "none") and the texture.
 function ns.DungeonIconSource(inst)
@@ -551,8 +517,11 @@ end
 ---------------------------------------------------------------------------
 local HIGHLIGHT_SECS = 6
 local highlight -- { inst, untilT }
-function ns.EntranceHighlighted(inst)
-  return highlight ~= nil and highlight.inst == inst and Now() < highlight.untilT
+function ns.EntranceHighlighted(inst, insts)
+  if not (highlight ~= nil and Now() < highlight.untilT) then return false end
+  if highlight.inst == inst then return true end
+  for _, i in ipairs(insts or {}) do if i == highlight.inst then return true end end
+  return false
 end
 function ns.ShowEntranceOnMap(inst)
   local m = ns.DungeonEntrance(inst)

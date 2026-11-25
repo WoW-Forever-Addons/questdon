@@ -53,6 +53,22 @@ local function Link(questID)
   return link and link:find("|Hquest:", 1, true) and link or nil
 end
 
+-- (25.11.2026, Daniel: "wenn ich den chat auf habe und aus questdonslist shift linksklick auf ne quest mache, soll sie
+-- in den chat verlinkt werden") the quest's link into the open chat line; on clients without quest links the plain
+-- title, as Blizzard's own quest log does there. True when it went in; false without an open chat line.
+function ns.QuestToChat(questID)
+  local CFU = rawget(_G, "ChatFrameUtil")
+  local getActive = (CFU and CFU.GetActiveWindow) or rawget(_G, "ChatEdit_GetActiveWindow")
+  local insert = (CFU and CFU.InsertLink) or rawget(_G, "ChatEdit_InsertLink")
+  if not (questID and type(getActive) == "function" and type(insert) == "function") then return false end
+  local ok, box = pcall(getActive)
+  if not (ok and box) then return false end
+  local text = Link(questID) or Text(ns.QuestTitle and ns.QuestTitle(questID))
+    or (ns.DataQuestName and Text(ns.DataQuestName(questID)))
+  if not text then return false end
+  return pcall(insert, text) and true or false
+end
+
 -- (13.11.2026, Daniel to "[What Comes Around...] is ready to turn in. Still open: Fallen 0/1, Laena 0/1, Nermeen 0/1"
 -- after looting a head in a dungeon: "wir sind aber in ner ini. da sollte eher die erfolgsmeldung kommen -
 -- abgeschlossen") inside an instance nobody can turn in and the others loot a moment later: the line says

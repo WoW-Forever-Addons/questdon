@@ -608,7 +608,6 @@ L["Opens the world map at the entrance and lets its pin pulse for a moment."] = 
 L["The world map cannot be opened in combat."] = "No se puede abrir el mapa del mundo en combate."
 L["The world map could not be opened."] = "No se pudo abrir el mapa del mundo."
 -- (1.3.5) bundled minimap dots
-L["%d objective spots"] = "%d lugares de objetivos"
 L["Symbols instead of dots"] = "Símbolos en lugar de puntos"
 L["Quest mobs, loot, named mobs, objects to click, places to reach and the places to use a quest item get their own symbol in the quest's colour, on the world map and the minimap. Spots close together become one symbol."] = "Los enemigos de misión, el botín, los enemigos con nombre, los objetos en los que hacer clic, los lugares a los que llegar y los lugares donde usar un objeto de misión tienen su propio símbolo en el color de la misión, en el mapa del mundo y en el minimapa. Los lugares cercanos entre sí se convierten en un solo símbolo."
 L["Hide the game's quest markers on the world map"] = "Ocultar los marcadores de misión del juego en el mapa del mundo"
@@ -880,6 +879,12 @@ L["Shift-click: also the arrow"] = "Mayús-clic: también la flecha"
 L["%d waypoints set."] = "%d puntos de ruta colocados."
 L["Waypoints"] = "Puntos de ruta"
 L["One waypoint per line: [zone or #map] x y [text]"] = "Un punto de ruta por línea: [zona o #mapa] x y [texto]"
+-- (24.11.2026, Fenstercheck) the /way window: errors with an example
+L["Line not understood: %s"] = "Línea no entendida: %s"
+L["Nothing to set."] = "Nada que colocar."
+L["#1413 62.7 36.3 your text"] = "#1413 62.7 36.3 tu texto"
+L["Example: #1413 62.7 36.3 your text"] = "Ejemplo: #1413 62.7 36.3 tu texto"
+L["(62.7, 36.3 with a comma works too)"] = "(62.7, 36.3 con coma también vale)"
 L["Remove all"] = "Quitar todos"
 L["Set waypoints"] = "Colocar puntos"
 L["Waypoint pin size"] = "Tamaño de los puntos de ruta"
@@ -941,3 +946,7 @@ L["Quest giver outside the dungeon"] = "Asignador de misiones fuera de la mazmor
 L["No quest of this dungeon in your log."] = "No tienes ninguna misión de esta mazmorra en el registro."
 L["The quest giver stands outside the dungeon: pick it up there before you go in next time."] = "El asignador de misiones está fuera de la mazmorra: acepta la misión allí la próxima vez antes de entrar."
 L["The quest giver stands in this dungeon."] = "El asignador de misiones está en esta mazmorra."
+-- (23.11.2026) hide a quest starter item
+L["Right-click: hide this item (Options: Hidden quest items)"] = "Clic derecho: ocultar este objeto (Opciones: Objetos de misión ocultos)"
+L["Hidden quest items"] = "Objetos de misión ocultos"
+L["Items that start a quest and that you hid with a right-click on their row in the quest list come back (row and button)."] = "Los objetos que inician una misión y que ocultaste con clic derecho en su fila de la lista de misiones vuelven (fila y botón)."

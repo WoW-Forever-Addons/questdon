@@ -83,6 +83,29 @@ end
 -- MarkDirty, so Blizzard's next tracker update reads our values and runs tainted. Only SetAlpha (a C method, no Lua
 -- field) is used; the invisible part keeps its height.
 local QUEST_PARTS = { "QuestObjectiveTracker", "CampaignQuestObjectiveTracker" }
+-- (24.11.2026, Fenstercheck b7 12-23 s, Daniel: a click next to our list opened a quest of Blizzard's list, "Das muss
+-- weg") alpha 0 hides only the look: the blocks, lines and item buttons inside Blizzard's tracker keep their own mouse
+-- (EnableMouse(false) on the tracker reaches only the tracker itself, not its children, and new blocks come later).
+-- The hidden part is now also made tiny (SetScale, a C method like SetAlpha: no Lua field of Blizzard's is written,
+-- so its updates do not read our values and stay untainted; never in a fight, ApplyBlizzTracker waits for its end).
+-- At 0.001 of its size it has no place left where a click could land; shown again it gets its own scale back.
+-- (In a do block: the file is at Lua's limit of 200 locals.)
+do
+  local SMALL, kept = 0.001, {}
+  function ns.BlizzShrink(f, on)
+    if type(f) ~= "table" or type(f.SetScale) ~= "function" then return end
+    local s = ns.Num(ns.Value(f.GetScale, f))
+    if on then
+      if kept[f] ~= nil and s and s <= SMALL * 2 then return end
+      if kept[f] == nil then kept[f] = (s and s > SMALL * 2) and s or 1 end
+      pcall(f.SetScale, f, SMALL)
+    elseif kept[f] ~= nil then
+      pcall(f.SetScale, f, kept[f])
+      kept[f] = nil
+    end
+  end
+  function ns.BlizzShrunk(f) return kept[f] ~= nil end -- (tests)
+end
 local recipeFlag -- nil: ask the game again (TRACKED_RECIPE_UPDATE, entering the world)
 local partsHidden = false
 local function TrackedList(get, recraft)
@@ -105,8 +128,10 @@ local function ApplyQuestParts(hide)
       if hide then
         local a = ns.Num(ns.Value(m.GetAlpha, m))
         if not a or a > 0 then pcall(m.SetAlpha, m, 0) end
+        ns.BlizzShrink(m, true)
       else
         pcall(m.SetAlpha, m, 1)
+        ns.BlizzShrink(m, false)
       end
     end
   end
@@ -129,10 +154,12 @@ local function ApplyBlizzTracker()
       if type(f.EnableMouse) == "function" then pcall(f.EnableMouse, f, false) end
       blizzHidden = f
     end
+    ns.BlizzShrink(f, true)
   elseif blizzHidden then
     local h = blizzHidden
     blizzHidden = nil
     pcall(h.SetAlpha, h, 1)
+    ns.BlizzShrink(h, false)
     if type(h.EnableMouse) == "function" then pcall(h.EnableMouse, h, blizzMouse ~= false) end
   end
 end
@@ -211,8 +238,68 @@ ns.TrackerPass = TK -- (Build is at Lua's limit of 60 upvalues: it reaches this 
 -- BUDGET quests a pass, taking turns (riding among many quests nearly all were due every second); in between only the
 -- distance to the kept point is measured (one call). So the yards of a quest can for a few seconds be those to a
 -- spawn that is no longer its nearest. A log that changed (not just read again after ENTRY_SECS) and every caller but
--- the ticker look for all of them as before.
+-- the ticker look for all of them as before. (24.11.2026: after a log change and in the refresh part only the quests
+-- whose state changed, Entries "sure"; between the passes one quest a beat, TK.Slice)
 TK.KEEP_FRAC, TK.KEEP_SECS, TK.BUDGET, TK.turn = 0.1, 15, 4, 0
+TK.PHASE, TK.beat = 0.05, 0 -- (24.11.2026) the list's ticker: its start after the others, its beat (ns.OnInit below)
+-- (24.11.2026) is the player still near where the entry's point was found (KEEP_FRAC of its distance, at least
+-- MOVE_YARDS)? A quest without a point here: yes (asked again by its age only)
+function TK.Near(e, pn, pw)
+  if not e.mDist then return true end
+  local dn, dw = pn - e.mn, pw - e.mw
+  local step = e.mDist * TK.KEEP_FRAC
+  if step < TK.MOVE_YARDS then step = TK.MOVE_YARDS end
+  return dn * dn + dw * dw < step * step
+end
+-- one quest's nearest point looked for: the point, its distance, where and when it was found; (24.11.2026) also the
+-- quest's state stamp (for the keep after a log change, Entries) and whether the point depends on the bags (Arrow.lua
+-- works such quests out again after a bag change)
+TK.bagGen = 0
+function TK.Search(e, pc, pn, pw, now)
+  -- (24.11.2026, Ruckler Runde 4) how long it took (TK.SearchFree): the game's precise seconds, not debugprofilestop
+  -- (DonMonitor's step marks count its calls)
+  local f = TK.clock and rawget(_G, "GetTimePreciseSec")
+  if type(f) ~= "function" then f = nil end
+  local t0 = f and f()
+  e.target, e.dist, e.due = nil, nil, nil
+  local p = pc and ns.QuestNearestPoint and ns.MemPart("tracker nearest", ns.QuestNearestPoint, e.questID)
+  if p then
+    e.target = p -- (16.10.) the arrow's kept point (read only; it carries its world position)
+    e.dist = ns.MemPart("tracker distance", ns.DistanceFrom, pc, pn, pw, p)
+  end
+  e.mc, e.mn, e.mw, e.mAt, e.mDist = pc, pn, pw, now, e.dist
+  if ns.QuestStampFill then e.mSt = ns.QuestStampFill(e.questID, type(e.mSt) == "table" and e.mSt or {}) end
+  e.mBag, e.mBagDep = TK.bagGen, (not p or p.useSpot or p.needsItem) and true or false
+  TK.searchAt, TK.searchSlow = now, f and (f() - t0) * 1000 >= TK.SEARCH_SLOW or false
+end
+-- (24.11.2026, Ruckler Runde 4, DonMonitor report from the laptop: "[nearest]" up to 97 ms) where the game has the
+-- clock for it (ns.SliceCan) Questdon's list looks for at most one nearest point a frame (GetTime is the frame's time),
+-- and after a search of SEARCH_SLOW ms or more the next one waits SEARCH_REST seconds. A quest whose turn it is but
+-- whose frame is taken keeps its old point (the distance to it measured again) and is marked due: TK.CatchUp looks for
+-- the due ones one a frame, then the next pass of the ticker draws them (TK.redo). Without the clock (tests) every
+-- search runs at once as before.
+TK.SEARCH_SLOW, TK.SEARCH_REST = 8, 0.05
+TK.stats.deferred, TK.stats.caught = 0, 0
+function TK.SearchFree(now)
+  TK.clock = ns.SliceCan()
+  if not TK.clock then return true end
+  local at = TK.searchAt
+  if at == nil or now < at then return true end
+  if now == at then return false end
+  return not TK.searchSlow or now - at >= TK.SEARCH_REST
+end
+function TK.CatchSoon()
+  if TK.catchQueued then return end
+  TK.catchQueued = true
+  ns.After(0, TK.CatchUp)
+end
+function TK.SearchOrDefer(e, pc, pn, pw, now)
+  if TK.SearchFree(now) then return TK.Search(e, pc, pn, pw, now) end
+  TK.stats.deferred = TK.stats.deferred + 1
+  e.due = true
+  e.dist = e.target and pc and ns.DistanceFrom(pc, pn, pw, e.target) or nil
+  TK.CatchSoon()
+end
 -- the yards of a row are written again when they leave their step: 10 yards near, 25 from 300, 50 from 1000 (riding,
 -- every row's text changed every second)
 function TK.YardStep(d)
@@ -274,8 +361,10 @@ local function Entries()
   local now = ns.Num(ns.Value(GetTime)) or 0
   local gen, level = ns.LogGen and ns.LogGen(), ns.PlayerLevel and ns.PlayerLevel()
   local tick, reread = TK.pass, false
-  TK.pass = false
+  local refresh = TK.refresh
+  TK.pass, TK.refresh = false, false
   local same = gen == entryGen and level == entryLevel and not QD_TEST_FRESH_LOG -- (22.11.2026) read again, nothing new
+  local levelSame = level == entryLevel
   if not (ns.InScope and ns.InScope()) or QD_TEST_FRESH_LOG or gen ~= entryGen or level ~= entryLevel
       or not entryAt or now - entryAt > ENTRY_SECS or now < entryAt then
     reread = true
@@ -295,6 +384,7 @@ local function Entries()
     end
     for i = #list, n + 1, -1 do list[i] = nil end
     for id, e in pairs(entryByID) do if e.read ~= entryRead then entryByID[id] = nil end end
+    if TK.dps then TK.Mark("log") end -- (24.11.2026) DonMonitor's slow log: reading the log apart from the searches
   end
   local pc, pn, pw
   if ns.PlayerWorld then pc, pn, pw = ns.PlayerWorld() end
@@ -317,22 +407,33 @@ local function Entries()
     local st = TK.stats
     local count = #entryList
     local some = tick and (same or not reread) and pc -- the ticker's pass with the log as it was
-    local left, first = TK.BUDGET, some and TK.turn % (count > 0 and count or 1) or 0
+    -- (24.11.2026, Ruckler, DonMonitor report from the laptop: "refresh tracker [entries]" 22 to 33 ms after a log
+    -- change, "ticker [entries]" 23.6 ms in a group) after a log change every quest's nearest point was looked for
+    -- again (thousands of spawn points), though mostly one quest changed. Now the ticker's pass after a log change and
+    -- the refresh part (events: log, XP, bags, group) keep a quest's point when its state stamp (DonData's
+    -- QuestStampSame: complete, failed, objectives done, the game's point, learned places) is what it was when the
+    -- point was found, the player is near where it was found (KEEP_FRAC) and it is younger than KEEP_SECS; after a
+    -- bag change not for a quest whose point depends on the bags (no point, an item to use or still to get). Quests
+    -- that changed are looked for at once, without BUDGET. A forced update, a new level and every other caller look
+    -- for all of them as before.
+    local sure = not some and pc and (refresh or tick) and levelSame and not QD_TEST_FRESH_LOG
+      and ns.QuestStampSame and true or false
+    -- (24.11.2026) the nearest points the 0.2 s ticker looked for since the last pass count against BUDGET (TK.Slice)
+    local left, first = math.max(0, TK.BUDGET - TK.sliceN), some and TK.turn % (count > 0 and count or 1) or 0
+    TK.sliceN = 0
     for k = 1, count do
       -- (22.11.2026, second report) the ticker's pass keeps a quest's point while the player is close to where it was
       -- found (TK.KEEP_FRAC above); the quests due take turns, starting after the last one looked for
       local i = (first + k - 1) % count + 1
       local e = entryList[i]
-      local keep = some and e.mc == pc and e.mAt and now >= e.mAt
-      if keep and left > 0 and now - e.mAt < TK.KEEP_SECS + i % 5 then
-        if e.mDist then -- (a quest without a point here is asked again by its age only)
-          local dn, dw = pn - e.mn, pw - e.mw
-          local step = e.mDist * TK.KEEP_FRAC
-          if step < TK.MOVE_YARDS then step = TK.MOVE_YARDS end
-          keep = dn * dn + dw * dw < step * step
-        end
-      elseif keep and left > 0 then
+      local keep = (some or sure) and e.mc == pc and e.mAt and now >= e.mAt
+      if keep and (sure or left > 0) and now - e.mAt < TK.KEEP_SECS + i % 5 then
+        keep = TK.Near(e, pn, pw)
+      elseif keep and (sure or left > 0) then
         keep = false -- too old
+      end
+      if keep and sure then
+        keep = (e.mBag == TK.bagGen or not e.mBagDep) and ns.QuestStampSame(e.questID, e.mSt) or false
       end
       if not keep and some then left = left - 1 TK.turn = i end
       if keep then
@@ -340,15 +441,10 @@ local function Entries()
         if e.target then e.dist = ns.DistanceFrom(pc, pn, pw, e.target) end
       else
         st.nearest = st.nearest + 1
-        e.target, e.dist = nil, nil
-        local p = pc and ns.QuestNearestPoint and ns.MemPart("tracker nearest", ns.QuestNearestPoint, e.questID)
-        if p then
-          e.target = p -- (16.10.) the arrow's kept point (read only; it carries its world position)
-          e.dist = ns.MemPart("tracker distance", ns.DistanceFrom, pc, pn, pw, p)
-        end
-        e.mc, e.mn, e.mw, e.mAt, e.mDist = pc, pn, pw, now, e.dist
+        TK.SearchOrDefer(e, pc, pn, pw, now)
       end
     end
+    if TK.dps then TK.Mark("nearest") end
   end
   if ns.TimingSeen then ns.SafeCall("timing", ns.TimingSeen, entryList, now) end -- (18.10.) play times: seconds in each objective area
   entryDistAt = (ns.InScope and ns.InScope() and not QD_TEST_FRESH_LOG) and now or nil -- (21.11.2026) when measured
@@ -361,6 +457,7 @@ function TK.Kept() return entryList end -- (tests) the kept entries as they are,
 -- good: the play times get their second and the item buttons their distances (ns.TrackerQuestDistance) as from a pass.
 function TK.Still()
   local now = ns.Num(ns.Value(GetTime)) or 0
+  if TK.redo then TK.redo = nil return false end -- (24.11.2026) due points found or the quests around worked out anew
   if QD_TEST_FRESH_LOG or not (ns.InScope and ns.InScope()) then return false end
   if not TK.at or now < TK.at or now - TK.at >= TK.STILL_SECS then return false end
   if not entryAt or now < entryAt or now - entryAt > ENTRY_SECS then return false end
@@ -380,6 +477,71 @@ function TK.Still()
   if ns.TimingSeen then ns.SafeCall("timing", ns.TimingSeen, entryList, now) end
   entryDistAt = now
   return true
+end
+-- (24.11.2026, Ruckler, DonMonitor report from the laptop: Questdon 8 to 12 ms in a frame nearly every second, most
+-- of it without one call of 8 ms) moving, the 1 s pass looked for up to BUDGET nearest points in one frame (each
+-- through all spawn points of its quest). Now the 0.2 s ticker looks for one due quest in each of its other four
+-- beats (TK.Slice, the same rules as the pass: moved KEEP_FRAC of the distance, older than KEEP_SECS, another map),
+-- so the pass mostly finds nothing due. Only while moving (standing, the pass works as before), not on a taxi, only
+-- with the log, the level and the place of the last pass (else the pass does it), at most one quest a beat.
+TK.stats.sliced, TK.sliceN = 0, 0
+function TK.Slice()
+  if TK.sliceN >= TK.BUDGET then return end -- (the pass's BUDGET a second at most, as before)
+  local count = #entryList
+  if count == 0 or not TK.at or not TK.c or not ns.QuestNearestPoint or not ns.PlayerWorld then return end
+  if QD_TEST_FRESH_LOG or not (ns.InScope and ns.InScope()) or DB().tracker == false then return end
+  if not panel or not panel:IsShown() then return end
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  if not entryAt or now < entryAt or now - entryAt > ENTRY_SECS or now < TK.at then return end
+  if (ns.LogGen and ns.LogGen()) ~= entryGen or (ns.PlayerLevel and ns.PlayerLevel()) ~= entryLevel then return end
+  local pc, pn, pw = ns.PlayerWorld()
+  if not pc or pc ~= TK.c then return end
+  local dn, dw = pn - TK.n, pw - TK.w
+  if dn * dn + dw * dw < TK.MOVE_YARDS * TK.MOVE_YARDS then return end
+  if ns.True(ns.Value(rawget(_G, "UnitOnTaxi"), "player")) then return end
+  if not TK.SearchFree(now) or TK.catchQueued then return end -- (24.11.2026) one search a frame; the due ones first
+  local first = TK.turn % count
+  for k = 1, count do
+    local i = (first + k - 1) % count + 1
+    local e = entryList[i]
+    if e.mc ~= pc or not e.mAt or now < e.mAt or now - e.mAt >= TK.KEEP_SECS + i % 5 or not TK.Near(e, pn, pw) then
+      TK.turn = i
+      TK.stats.sliced, TK.sliceN = TK.stats.sliced + 1, TK.sliceN + 1
+      TK.Search(e, pc, pn, pw, now)
+      return e
+    end
+  end
+end
+-- (24.11.2026, Ruckler Runde 4) the quests marked due (TK.SearchOrDefer), one a frame; the last one asks the next pass
+-- of the ticker to run (TK.redo) instead of a refresh of its own (riding, a refresh would mark others due again)
+function TK.CatchUp()
+  TK.catchQueued = false
+  local now = ns.Num(ns.Value(GetTime)) or 0
+  local due
+  for _, e in ipairs(entryList) do if e.due then due = e break end end
+  if not due then return end
+  if not TK.SearchFree(now) then TK.CatchSoon() return end
+  local pc, pn, pw
+  if ns.PlayerWorld then pc, pn, pw = ns.PlayerWorld() end
+  if pc then
+    TK.stats.caught = TK.stats.caught + 1
+    TK.Search(due, pc, pn, pw, now)
+  else
+    due.due = nil
+  end
+  for _, e in ipairs(entryList) do if e.due then TK.CatchSoon() return end end
+  TK.redo = true
+end
+-- (24.11.2026, Ruckler Runde 4) the same for the arrow's next quest (Arrow.lua NextAuto): true, the point, its distance
+-- (nil, nil: no point); false when the list did not measure it or it is due (TK.SearchOrDefer)
+function ns.TrackerQuestPoint(questID)
+  local ok, d = ns.TrackerQuestDistance(questID)
+  if not ok then return false end
+  local e = entryByID[questID]
+  if e.due or (ns.LogGen and ns.LogGen()) ~= entryGen then return false end -- the log changed since: look again
+  if e.mBagDep and e.mBag ~= TK.bagGen then return false end -- a point that depends on the bags, after a bag change
+  if ns.QuestStampSame and not ns.QuestStampSame(questID, e.mSt) then return false end
+  return true, e.target, d
 end
 -- (21.11.2026, Ruckler) the distance the list measured within the last second and a half: true, dist (dist nil: no
 -- point); false when it did not (the item buttons measure it themselves then)
@@ -488,9 +650,10 @@ local YELLOW = K.yellow or { 1, 0.84, 0.31 }
 local CARD = K.card or { 0.09, 0.12, 0.17 }
 
 -- the colour of a quest's level: Blizzard's quest difficulty colours (Kit.QuestDifficulty), as in the quest book
-local function LevelRGB(level)
+-- (23.11.2026) questID given: the colour the game gives that quest, like Blizzard's quest list (ns.QuestContentKey)
+local function LevelRGB(level, questID)
   if not (Kit and tonumber(level)) then return HINT end
-  local st = Kit.STATUS[Kit.QuestDifficulty(level)]
+  local st = Kit.STATUS[questID and ns.QuestContentKey and ns.QuestContentKey(questID) or Kit.QuestDifficulty(level)]
   return st and st.fg or HINT
 end
 ns.TrackerLevelRGB = LevelRGB
@@ -540,6 +703,8 @@ end
 -- a click with Shift on a quest of the list: left the game's quest log, right the quest book. True when it was one.
 local function ShiftClick(questID, button)
   if not (questID and IsShiftKeyDown and IsShiftKeyDown()) then return false end
+  -- (25.11.2026, Daniel) left with an open chat line: the quest's link into the chat instead
+  if button ~= "RightButton" and ns.QuestToChat and ns.QuestToChat(questID) then return true end
   if button == "RightButton" or not ns.OpenGameQuestLog(questID) then ns.QuestBookOpenQuest(questID) end
   return true
 end
@@ -1180,7 +1345,7 @@ local COMPLETE_TEXT = { 0.62, 0.92, 0.62 }
 -- (12.11.2026) the part in front: the dot and "[level]" in its colour
 local function GameLead(e)
   local lv = e.level and e.level > 0 and e.level or nil
-  local c = LevelRGB(lv)
+  local c = LevelRGB(lv, e.questID)
   return ColorDot(e.questID) .. ("|cff%02x%02x%02x[%s]|r"):format(math.floor((c[1] or 1) * 255 + 0.5), math.floor((c[2] or 1) * 255 + 0.5),
     math.floor((c[3] or 1) * 255 + 0.5), lv and tostring(lv) or "?")
 end
@@ -1212,7 +1377,7 @@ local function DonRow(row, e)
   row:SetText(title, tc)
   row:SetSub(sub, sc)
   local lv = e.level and e.level > 0 and e.level or nil
-  row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", LevelRGB(lv), true) -- (Daniel 02.11.2026) the level in its colour, no box, as on the card
+  row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", LevelRGB(lv, e.questID), true) -- (Daniel 02.11.2026) the level in its colour, no box, as on the card
   row:SetMark(MarkRGB(e.questID))
   return row
 end
@@ -1439,9 +1604,50 @@ ns.On("QUEST_LOG_UPDATE", function()
   local h, n = ns.QuestLogState()
   if h ~= availH or n ~= availN then availH, availN, availGen = h, n, availGen + 1 end
 end)
+-- (24.11.2026, Ruckler Runde 4, DonMonitor report from the laptop: "ticker Tracker.lua [nearby]" 4x avg 16, max 31 ms)
+-- the step worked the map's available quests out in the pass every AVAIL_SECS. Where the game has the clock for it
+-- (ns.SliceJob) that runs in slices of its own after the pass ("tracker nearby", the engine pauses every few quests
+-- where it can, Questdon between the list and the world positions); meanwhile the pass counts with the list it has
+-- (none yet on a new map), the new one is used from the next pass on (TK.redo). Without the clock: at once as before.
+TK.EMPTY = {}
+-- the world position of each available quest once per list (W[i] a kept target, W.n the list's length)
+function TK.WorldOf(mapID, list, W, pause)
+  for i, a in ipairs(list) do
+    local t = W[i]
+    if not t then t = {} W[i] = t end
+    t.mapID, t.x, t.y, t._wc, t._wn, t._ww = mapID, a.x, a.y, nil, nil, nil
+    if a.x and a.y and ns.WorldPos then
+      local c, wn, ww = ns.WorldPos(mapID, a.x, a.y)
+      if c then t._wc, t._wn, t._ww = c, wn, ww end
+    end
+    if pause and i % 32 == 0 then pause() end
+  end
+  W.n = #list
+  return W
+end
+TK.stats.availSliced = 0
 local function AvailableHere(mapID)
   local now = ns.Num(ns.Value(GetTime)) or 0
   if availMap ~= mapID or availSeen ~= availGen or not availAt or now - availAt > AVAIL_SECS or now < availAt then
+    local job, gen = TK.availJob, availGen
+    if job and job.map == mapID and job.gen == gen and ns.SliceJobOn("tracker nearby") then
+      return availMap == mapID and availList or TK.EMPTY
+    end
+    local started = ns.SliceJob and ns.SliceJob("tracker nearby", function(pause)
+      local list = ns.AvailableQuestsOnMap(mapID, pause) or {}
+      pause()
+      return { list, TK.WorldOf(mapID, list, { n = -1 }, pause) }
+    end, function(r)
+      TK.availJob = nil
+      availMap, availAt, availSeen = mapID, ns.Num(ns.Value(GetTime)) or 0, gen
+      availList, TK.world = r[1], r[2]
+      TK.stats.availSliced = TK.stats.availSliced + 1
+      TK.redo = true
+    end)
+    if started then
+      TK.availJob = { map = mapID, gen = gen }
+      return availMap == mapID and availList or TK.EMPTY
+    end
     availMap, availAt, availSeen = mapID, now, availGen
     availList = ns.AvailableQuestsOnMap(mapID) or {}
     TK.world.n = -1 -- (22.11.2026) their world positions with them
@@ -1460,18 +1666,7 @@ local function NewNearby()
   -- target never fit). A kept target per quest of the list now, with its world position worked out once per list
   -- (AvailableHere; the engine's distance takes _wc, _wn, _ww as it does for the quests' points).
   local W = TK.world
-  if W.n ~= #list then
-    for i, a in ipairs(list) do
-      local t = W[i]
-      if not t then t = {} W[i] = t end
-      t.mapID, t.x, t.y, t._wc, t._wn, t._ww = mapID, a.x, a.y, nil, nil, nil
-      if a.x and a.y and ns.WorldPos then
-        local c, wn, ww = ns.WorldPos(mapID, a.x, a.y)
-        if c then t._wc, t._wn, t._ww = c, wn, ww end
-      end
-    end
-    W.n = #list
-  end
+  if W.n ~= #list then TK.WorldOf(mapID, list, W) end
   for i, a in ipairs(list) do
     if not a.dimmed and a.x and a.y then
       local d = ns.DistanceFrom(pc, pn, pw, W[i])
@@ -1541,7 +1736,7 @@ local function ProgChanged()
 end
 local function ExtrasSig()
   local n, max if ns.QuestLogCount then n, max = ns.QuestLogCount() end
-  local orphans = ns.OrphanQuestItems and ns.OrphanQuestItems() or NIL
+  local orphans = ns.OrphanQuestItemsSoon and ns.OrphanQuestItemsSoon() or NIL -- (24.11.2026) in slices
   local first = FirstSure(orphans)
   Put(n) Put(max) Put(#orphans) Put(first and first.itemID) Put(destroyID)
   if ns.db.partyProgress and ns.PartyMemberCount and ns.PartyMemberCount() > 0 and ns.PartyOverview then
@@ -1563,7 +1758,7 @@ local function Extras()
     Style.Row(panel):SetText(L["Quests in log"], hint):SetGapBefore(6)
       :SetValue(ns.Fraction(n, max), n >= max and "critical" or (n >= max - 3 and "warning") or hint)
   end
-  local orphans = ns.OrphanQuestItems and ns.OrphanQuestItems() or {}
+  local orphans = ns.OrphanQuestItemsSoon and ns.OrphanQuestItemsSoon() or {}
   if #orphans > 0 then
     local first = FirstSure(orphans)
     local confirm = first and destroyID == first.itemID and destroyUntil and GetTime() < destroyUntil
@@ -1956,7 +2151,7 @@ local function PickRow(id, missed, ind)
   local hint = giver and L["Quest giver: %s"]:format(giver) or (missed and L["Quest giver outside the dungeon"] or nil)
   local row = Style.Row(panel):SetGapBefore(Game() and GAME_GAP or QUEST_GAP):SetIndent(ind)
   if Game() then
-    local c = missed and GAME_DONE or LevelRGB(lv)
+    local c = missed and GAME_DONE or LevelRGB(lv, id)
     local lead = ("|cff%02x%02x%02x[%s]|r"):format(math.floor((c[1] or 1) * 255 + 0.5), math.floor((c[2] or 1) * 255 + 0.5),
       math.floor((c[3] or 1) * 255 + 0.5), lv and tostring(lv) or "?")
     if row.SetLead then row:SetLead(lead) row:SetText(title, missed and GAME_DONE or GAME_GOLD)
@@ -1964,7 +2159,7 @@ local function PickRow(id, missed, ind)
   else
     row:SetText(title, missed and HINT or CREAM)
     row:SetSub(hint, HINT)
-    row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", missed and HINT or LevelRGB(lv), true)
+    row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", missed and HINT or LevelRGB(lv, id), true)
   end
   row.pickQuest, row.pickMissed = id, missed -- (tests)
   local m = ns.QuestStart(id)
@@ -2080,13 +2275,17 @@ local function Build()
   for _, e in ipairs(list) do if e.questID == focusID then focus = e end end
   -- rebuild only when something we show changed (distances in steps of 10 yards)
   sigN, progSigN = 0, 0
+  if P.dps then P.Mark("focus") end
   Put(Mode()) Put(ns.db.trackerSortLevel) Put(focusID) Put(ns.GuideActive()) Put(Limit()) Put(scrollSkip) Put(panel._width)
   Put(ns.db.trackerGreyOpen) Put(ns.db.trackerHideGrey) Put(ns.db.trackerHiddenOpen) Put(ns.db.xpBar)
   -- (12.11.2026) the item buttons: an item in the bags that starts a quest has a row of its own
   local starter, starterQuest
   if ns.db.trackerItemButtons and ns.ListStarterItem then starter, starterQuest = ns.ListStarterItem() end
   Put(starter) Put(starterQuest)
+  -- (24.11.2026, Ruckler Runde 4) the slow log names the part of the signature: before it, the item rows, the extras
+  if P.dps then P.Mark("sig items") end
   ExtrasSig()
+  if P.dps then P.Mark("sig extras") end
   local hid = Hidden()
   local FoldS = ns.TrackerFold
   local fq = ns.TrackerFoldedQuests()
@@ -2229,8 +2428,11 @@ local function Build()
     local srow = Style.Row(panel):SetText(title and L["Starts a quest: %s"]:format(title) or L["Starts a quest"], { 0.96, 0.78, 0.26 })
       :SetGapBefore(4)
       :SetTooltip(function()
-        return ns.ItemName(starter), { title and L["Starts a quest: %s"]:format(title) or L["Starts a quest"] }, L["Click the quest button"]
+        return ns.ItemName(starter), { title and L["Starts a quest: %s"]:format(title) or L["Starts a quest"] },
+          L["Click the quest button"] .. "\n" .. L["Right-click: hide this item (Options: Hidden quest items)"]
       end)
+      -- (23.11.2026, Daniel: "option rechtklick zum ausblenden") row and button go for this item (ItemButton.lua)
+      :SetOnClick(function(_, button) if button == "RightButton" and ns.HideStarter then ns.HideStarter(starter) end end)
     ns.TrackerItemSpot(srow, nil, starter)
   end
   -- (12.11.2026, Daniel at level 27 in Northshire, the quests around him not in "Nearby": "nearby low leavel quest zeigt
@@ -2414,7 +2616,7 @@ local function Build()
         -- (02.11.2026) a Don row without the second line: badge, map colour, title; the objectives follow below
         row:SetText((e.title or "") .. ns.GroupTag(e.questID), e.complete and COMPLETE_TEXT or CREAM)
         local lv = e.level and e.level > 0 and e.level or nil
-        row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", LevelRGB(lv), true) -- (Daniel 02.11.2026) the level in its colour, no box, as on the card
+        row:SetBadge("[" .. (lv and tostring(lv) or "?") .. "]", LevelRGB(lv, e.questID), true) -- (Daniel 02.11.2026) the level in its colour, no box, as on the card
         row:SetMark(MarkRGB(e.questID))
       end
       ns.TrackerItemSpot(row, e.questID)
@@ -2877,19 +3079,37 @@ local function Create()
   ns.UpdateTracker(true)
 end
 
-ns.RegisterRefresh("tracker", function() ns.UpdateTracker() end)
+-- (24.11.2026) the refresh part keeps the nearest points of the quests whose state did not change (Entries, "sure")
+ns.RegisterRefresh("tracker", function()
+  TK.refresh = true
+  ns.UpdateTracker()
+  TK.refresh = false
+end)
 local function Queue() ns.QueueRefresh("tracker") end
 
 ns.OnInit(function()
   -- (17.11.2026) the gamepad test module is gone: its saved switch with it
   if ns.db then ns.db.gamepad, ns.db.gamepadOffV1117 = nil, nil end
   Create()
-  ns.NewTicker(1, function() ns.TrackerTick() end)       -- distances (22.11.2026: only when something moved)
-  ns.NewTicker(0.2, function()
-    ns.SafeCall("trackerNeedles", TurnNeedles)
-    ns.SafeCall("trackerButtons", FadeButtons)
-    -- (12.11.2026) the item buttons follow the list: moved, folded, faded, closed (they hang on UIParent, not on it)
-    if ns.SyncListItems then ns.SafeCall("trackerItems", ns.SyncListItems) end
+  -- (24.11.2026, Ruckler, DonMonitor report from the laptop: Questdon 8 to 12 ms in a frame nearly every second, few
+  -- single calls of 8 ms) one 0.2 s ticker for the list in five beats instead of a 1 s and a 0.2 s ticker that met in
+  -- one frame every now and then: the first beat is the 1 s pass (distances, 22.11.2026: only when something moved)
+  -- with the needles, the other four the needles, the buttons' fading, the item buttons and one nearest point
+  -- (TK.Slice). It starts TK.PHASE seconds after the others: Questdon's other tickers of 1 s and 0.5 s are all made in
+  -- this same frame at login, and the pass now falls between them (0.25 s after them) instead of on top of them.
+  ns.After(TK.PHASE, function()
+    ns.NewTicker(0.2, function()
+      TK.beat = TK.beat % 5 + 1
+      ns.SafeCall("trackerNeedles", TurnNeedles)
+      if TK.beat == 1 then
+        ns.TrackerTick() -- (last: its slow step, ns.slowDetail, is read when the ticker's call ends)
+        return
+      end
+      ns.SafeCall("trackerButtons", FadeButtons)
+      -- (12.11.2026) the item buttons follow the list: moved, folded, faded, closed (they hang on UIParent, not on it)
+      if ns.SyncListItems then ns.SafeCall("trackerItems", ns.SyncListItems) end
+      ns.SafeCall("trackerSlice", TK.Slice)
+    end)
   end)
   -- (31.10.2026, LEISTUNG_PRUEFUNG B9) no own 0.5 s ticker for Blizzard's tracker any more: ns.UpdateTracker applies it
   -- on every refresh (quest log, zone, bags, group ...) and with the distances every second, which also catches the
@@ -2901,7 +3121,7 @@ ns.On("SUPER_TRACKING_CHANGED", Queue)
 ns.On("ZONE_CHANGED_NEW_AREA", Queue)
 ns.On("PLAYER_ENTERING_WORLD", Queue)
 ns.On("PLAYER_XP_UPDATE", Queue)
-ns.On("BAG_UPDATE_DELAYED", Queue) -- (1.3.8) quest items without quest
+ns.On("BAG_UPDATE_DELAYED", function() TK.bagGen = TK.bagGen + 1 Queue() end) -- (1.3.8) quest items without quest; (24.11.2026) the kept points that depend on the bags
 ns.On("GROUP_ROSTER_UPDATE", Queue) -- (1.3.8) group progress
 ns.On("PLAYER_REGEN_ENABLED", function() ApplyBlizzTracker() end)
 -- (15.11.2026) a recipe tracked or untracked: Blizzard's frame back with its recipes, or hidden again

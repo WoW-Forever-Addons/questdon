@@ -52,13 +52,14 @@ local PAGES = {
     { key = "minimapPinScale", kind = "slider", name = "Minimap pin size", tip = "Size of all Questdon pins on the minimap. 100 % is the normal size.", min = 0.25, max = 2, step = 0.05, parent = "minimapPins", onChange = RefreshPins },
     { key = "wayPinScale", kind = "slider", name = "Waypoint pin size", tip = "Size of the /way waypoint pins on the world map and the minimap, on top of the two pin sizes. 100 % is the normal size.", min = 0.5, max = 3, step = 0.1, onChange = RefreshPins },
     { key = "minimapPins", name = "Show the pins on the minimap too", tip = "The same pins as on the world map (available quests, quest mobs and objectives, learned turn-ins) for the zone you are in, also on the minimap. The options above apply there too. A quest giver with several quests is one pin. Mouse over for details, click to point the arrow there.", onChange = RefreshPins },
+    -- (07.11.2026, Discord tP: too many marks on the minimap) the minimap's own "tracked only"; the world map stays
+    -- (24.11.2026, Fenstercheck b7 143 s, Daniel: it stood under "Dungeon entrances") under its parent, the minimap pins
+    { key = "minimapTrackedOnly", name = "Only tracked quests on the minimap", tip = "Quest mobs and objectives on the minimap only for the quest picked in the quest list and the quests watched in the quest log. The world map keeps its own setting. The ! of quests to pick up stay.", parent = "minimapPins", onChange = RefreshPins },
     { key = "minimapButton", name = "Minimap button", tip = "A Questdon button on the edge of the minimap. Left click: quest book. Right click: a menu with the most used switches and all options. Mouse over: quests here, dungeon quests and your quest log. Drag it around the minimap.", onChange = function() if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end end },
     { key = "nameplateIcons", name = "Quest mob pins on nameplates", tip = "A pin in the quest's colour above the nameplate of mobs of your open objectives. Quest givers and turn-ins keep the game's own ! and ?. Nameplates must be switched on in the game.", onChange = function() if ns.RefreshNameplates then ns.RefreshNameplates() end end },
     -- (1.3.5) dungeon entrances
     { header = "Dungeon entrances" },
     { key = "dungeonPins", name = "Dungeon entrances on the map", tip = "The entrance of every dungeon and raid Questdon knows, on the world map. Mouse over: level range and your quests there. Click: the dungeon in the quest book. Right-click: the arrow leads you there.", onChange = RefreshPins },
-    -- (07.11.2026, Discord tP: too many marks on the minimap) the minimap's own "tracked only"; the world map stays
-    { key = "minimapTrackedOnly", name = "Only tracked quests on the minimap", tip = "Quest mobs and objectives on the minimap only for the quest picked in the quest list and the quests watched in the quest log. The world map keeps its own setting. The ! of quests to pick up stay.", parent = "minimapPins", onChange = RefreshPins },
     -- (30.10.2026, Daniel 27.10.) inns, auction houses, flight masters and banks
     { header = "Towns" },
     { key = "servicePins", name = "Inns, auction houses, flight masters and banks on the map", tip = "Their symbols on the world map, for your faction and the neutral towns. Mouse over: what it is. Click: the arrow leads you there.", onChange = function() if ns.RefreshServicePins then ns.RefreshServicePins() end end },
@@ -182,6 +183,7 @@ local PAGES = {
     { key = "fastLoot", name = "Fast loot", tip = "Loots everything instantly when auto loot applies. Items that bind on pickup and quest items are left to the game's own auto loot." },
     -- (12.11.2026, Daniel) a button for each quest's usable item beside its row; the single button below stays as an option
     { key = "trackerItemButtons", name = "Item buttons in the quest list", tip = "Shows a button beside each quest in the quest list whose item you can use; a click uses it. In a fight the buttons stay as they are. The key binding (Key Bindings > AddOns) uses the item of your tracked quest.", onChange = function() RefreshItemButton() if ns.UpdateTracker then ns.UpdateTracker(true) end end },
+    { kind = "button", name = "Hidden quest items", button = "Show again", tip = "Items that start a quest and that you hid with a right-click on their row in the quest list come back (row and button).", onClick = function() if ns.ShowHiddenStarters then ns.ShowHiddenStarters() end end },
     { key = "questItemButton", name = "Quest item button", tip = "Shows a button for the usable item of your tracked quest. Shift-drag to move. Key binding under Key Bindings > AddOns.", onChange = RefreshItemButton },
     { header = "Targeting and waypoints" },
     { key = "targetButton", name = "Target button", tip = "Shows a button that targets a mob of your tracked quest with one click. Questdon learns the mob names from nameplates and your target, so a mob must have been seen once. Shift-drag to move. Key binding under Key Bindings > AddOns.", onChange = RefreshTargetButton },
@@ -348,25 +350,20 @@ for _, t in ipairs(TOOLS) do t[3] = ns.Guard("tool", t[3]) end
 -- (01.11.2026, STYLEKIT_PLAN.md "Schritt 3") that page is DonCore's (Settings minor 2): status plus "Options / Open",
 -- the same for every Don addon. ownWindow: Questdon registers its tabs itself (OptionsWindow.lua), Settings adds none.
 ns.OPTION_PAGES, ns.OPTION_TOOLS, ns.OptionStatus = PAGES, TOOLS, Status
--- (16.11.2026, DonCore Settings 3) with the option blizzLook the options are the game's own settings pages, built in
--- full at login (only where the client has the templates: without them the windows are Don's and so are the options)
-local fullPages = false
+-- (24.11.2026, Daniel: "Bei den Optionen immer nur das Optionsfenster des jeweiligen Addons aufmachen") no full pages
+-- in the game's settings any more (DonCore Settings 7, Options 8): the cog, /qd options and the minimap menu open
+-- Questdon's own window, whatever the window style; the game's AddOns list keeps the short page with "Options / Open"
+
+-- the page buttons (kind "button" without a key) by the header they stand under, as the tabs name them
+-- (24.11.2026: "Hidden quest items" under "Loot and items" took the key of the arrow's reset button before)
+local BUTTON_KEYS = { ["Direction arrow"] = "button:arrow", ["XP bar"] = "button:xp", ["Loot and items"] = "button:starters" }
+function ns.OptionButtonKey(section) return BUTTON_KEYS[section] end
+
 local function Build()
   local spec = { name = "Questdon", status = Status, pages = {}, ownWindow = true }
-  if ns.db and ns.db.blizzLook and ns.LookKit and select(2, ns.LookKit()) then
-    spec.pages, spec.tools, spec.fullPages, fullPages = PAGES, TOOLS, true, true
-  end
   category = ns.BuildSettings(spec)
   ns.settingsCategory = category ~= nil
 end
--- true when the game's settings were opened at Questdon (option blizzLook, pages built in full at login, not in combat)
-function ns.OpenGameOptions()
-  if not (ns.db and ns.db.blizzLook and fullPages and category and Settings and Settings.OpenToCategory) then return false end
-  if InCombatLockdown() then ns.Print(L["Options cannot be opened in combat."]) return true end
-  Settings.OpenToCategory(category:GetID())
-  return true
-end
-function ns.OptionsLook() return fullPages and "game settings" or "don window" end
 
 -- (17.10.) an option changed outside the settings (the setup window): its own onChange as if clicked there
 -- (20.11.2026) fromWindow: the call comes from DonCore's options window, which runs the onChange of a DonCore item
@@ -381,8 +378,9 @@ function ns.OptionChanged(key, fromWindow)
 end
 
 function ns.OpenOptions(tab)
-  if ns.OpenGameOptions and ns.OpenGameOptions() then return end -- (16.11.2026) the game's look: the game's settings
-  if ns.OpenOptionsWindow then ns.OpenOptionsWindow(tab) else ns.Print(ns.HELP) end
+  if ns.OpenOptionsWindow and ns.OpenOptionsWindow(tab) then return end
+  -- without DonCore's Options module: Blizzard's page (the old full one), else the commands
+  if category and Settings and Settings.OpenToCategory then Settings.OpenToCategory(category:GetID()) else ns.Print(ns.HELP) end
 end
 
 ns.OnInit(Build)

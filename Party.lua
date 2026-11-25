@@ -257,12 +257,18 @@ local function Changed()
   ns.partyGen = ns.partyGen + 1
   Stale()
   if gameCache and next(gameCache) then wipe(gameCache) end
+  -- (24.11.2026, Ruckler, laptop in a group: "timer ?" 21 ms right after a turn-in) the map and the quest list ran in
+  -- one timer's frame, both whole; now they are parts of the batched refresh (Core.lua ns.QueueRefresh, the same half
+  -- second), which gives the costly parts frames of their own and runs a part marked twice once
+  if ns.QueueRefresh then ns.QueueRefresh("map", "tracker") end
   if refreshQueued then return end
   refreshQueued = true
   ns.After(0.5, function()
     refreshQueued = false
-    if ns.RefreshPinsIfChanged then ns.RefreshPinsIfChanged() end
-    if ns.UpdateTracker then ns.UpdateTracker() end -- (12.11.2026) the group line of the quest card (signature: partyGen)
+    if not ns.QueueRefresh then
+      if ns.RefreshPinsIfChanged then ns.RefreshPinsIfChanged() end
+      if ns.UpdateTracker then ns.UpdateTracker() end -- (12.11.2026) the group line of the quest card (signature: partyGen)
+    end
     if ns.RefreshPartyQuestTooltip then ns.RefreshPartyQuestTooltip() end
   end)
 end

@@ -312,25 +312,30 @@ function ns.WayLines(text)
 end
 
 local USAGE = "/way [zone] 45.2 61.8 [text], /way clear"
--- Sets the waypoints of a text (one or many lines). Returns how many were set and how many lines were not understood.
+-- Sets the waypoints of a text (one or many lines). Returns how many were set, how many lines were not understood
+-- and (24.11.2026, Fenstercheck) those lines with why: { { line = text, why = text }, ... } for the window.
 function ns.SetWays(text)
-  local set, bad, last = 0, 0, nil
+  local set, bad, last, failed = 0, 0, nil, {}
   for _, line in ipairs(ns.WayLines(text)) do
     local zone, x, y, label = ns.ParseWay(line)
     local mapID = x and Here()
+    local why = not x and L["Line not understood: %s"]:format(line) or nil
     if x and zone then
       mapID = ns.WayZone(zone)
-      if not mapID then ns.Print(L["Zone not found: %s"]:format(zone)) end
+      if not mapID then why = L["Zone not found: %s"]:format(zone) ns.Print(why) end
     end
     local w = mapID and Add(mapID, x / 100, y / 100, label)
-    if w then set, last = set + 1, w else bad = bad + 1 end
+    if w then set, last = set + 1, w else
+      bad = bad + 1
+      failed[#failed + 1] = { line = line, why = why or L["Line not understood: %s"]:format(line) }
+    end
   end
   if set > 0 then
     lead = set == 1 and last or Nearest()
     Point(lead)
     RefreshViews()
   end
-  return set, bad
+  return set, bad, failed
 end
 
 function ns.WayCommand(msg)
@@ -364,13 +369,20 @@ function ns.OpenWayBox()
   end
   if not box then ns.BuildWayBox(Kit, "QuestdonWayBox") end
   box:SetTitle(ns.Style.Wordmark("Quest", "don") .. ": " .. L["Waypoints"], nil)
-  box.hint:SetText(L["One waypoint per line: [zone or #map] x y [text]"])
+  box:SetHint(nil)
   box:SetButtons({
     { text = L["Remove all"], onClick = function() ns.ClearWays("window") end },
+    -- (24.11.2026, Fenstercheck b1 176-205 s: "/way 55.44 Boo" gave only "0 waypoints set") a line not understood keeps
+    -- the window open: those lines stay in the box, the hint above names the first one and shows an example; only
+    -- when every line was set the box empties and closes
     { text = L["Set waypoints"], kind = "primary", onClick = function(d)
-      local set = ns.SetWays(d.text:GetText())
-      ns.Print(L["%d waypoints set."]:format(set))
-      if set > 0 then d.text:SetText("") d:Hide() end
+      local set, _, failed = ns.SetWays(d.text:GetText())
+      if set > 1 then ns.Print(L["%d waypoints set."]:format(set)) end -- as the chat line: one shows as its marker
+      if set > 0 and #failed == 0 then d.text:SetText("") d:SetHint(nil) d:Hide() return end
+      local keep = {}
+      for i, f in ipairs(failed) do keep[i] = f.line end
+      d.text:SetText(table.concat(keep, "\n"))
+      d:SetHint(failed[1] and failed[1].why or L["Nothing to set."])
     end },
   })
   box:Show()
@@ -389,13 +401,29 @@ function ns.BuildWayBox(Kit, name)
     self.hint:ClearAllPoints()
     self.hint:SetPoint("TOPLEFT", self.body, "TOPLEFT", 0, 0)
     if self.hint.SetWidth then self.hint:SetWidth(w) end
+    -- (24.11.2026) an error takes two lines: the text box starts below what the hint needs
+    local ok, hh = pcall(self.hint.GetStringHeight, self.hint)
+    local top = math.max(22, (ok and ns.Num(hh) or 0) + 8)
     self.text:ClearAllPoints()
-    self.text:SetPoint("TOPLEFT", self.body, "TOPLEFT", 0, -22)
-    self.text:Layout(w, math.max(40, h - 22))
+    self.text:SetPoint("TOPLEFT", self.body, "TOPLEFT", 0, -top)
+    self.text:Layout(w, math.max(40, h - top))
   end })
   box.hint = box.body:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   if box.hint.SetJustifyH then box.hint:SetJustifyH("LEFT") end
-  box.text = Kit.TextBox(box.body, { maxLetters = 20000, placeholder = "/way #1413 62.7, 36.3 Text" })
+  -- (24.11.2026, Fenstercheck b1 s0176: the example had a comma the hint above did not name) the example in the box
+  -- is written the way the hint says, the hint names the comma
+  box.text = Kit.TextBox(box.body, { maxLetters = 20000, placeholder = L["#1413 62.7 36.3 your text"] })
+  -- the hint above the box: nil the usage, else an error in red with the example below it
+  function box:SetHint(err)
+    local use = L["One waypoint per line: [zone or #map] x y [text]"] .. " " .. L["(62.7, 36.3 with a comma works too)"]
+    if err then
+      self.hint:SetText("|cffff4040" .. err .. "|r\n" .. L["Example: #1413 62.7 36.3 your text"] .. " " .. L["(62.7, 36.3 with a comma works too)"])
+    else
+      self.hint:SetText(use)
+    end
+    self.hintError = err
+    if self.Layout and self.nButtons then self:Layout() end
+  end
   if not box.blizz and type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "QuestdonWayBox" end
   return box
 end
