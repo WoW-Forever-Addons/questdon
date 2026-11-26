@@ -1,5 +1,10 @@
 # Changes
 
+## 1.11.1
+
+- **"?" above guild members:** on the world map Questdon's "?" now lies above the game's "!" and above guild member pins, so a member standing on a turn-in no longer hides it.
+- **Wrong quest point from the game:** with DonData 1.7.0 a quest point the game places in a zone where the quest has nothing (A Taste of Home in Silverpine Forest) is no longer used for the arrow, the route or a map pin.
+
 ## 1.11.0
 
 - **New pin cards:** the quest name shows in the game's difficulty colour with a small badge. Each objective gets its own entry with a small picture of the mob or item, its level in difficulty colour and a progress bar like 3/15 in the colour of its spots. The "!" cards show up to three objectives, and the "n objective spots" line is gone.

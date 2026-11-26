@@ -176,11 +176,21 @@ function ns.RaiseTurnInPins()
   local pools = WorldMapFrame and WorldMapFrame.pinPools
   local offer = type(pools) == "table" and pools.QuestOfferPinTemplate
   local ours = type(pools) == "table" and pools[QUEST_TEMPLATE]
-  if not (type(offer) == "table" and type(offer.activeObjects) == "table"
-          and type(ours) == "table" and type(ours.activeObjects) == "table") then return 0 end
+  if not (type(ours) == "table" and type(ours.activeObjects) == "table") then return 0 end
   local top
-  for pin in pairs(offer.activeObjects) do
-    local lv = type(pin) == "table" and ns.Num(ns.Value(pin.GetFrameLevel, pin))
+  if type(offer) == "table" and type(offer.activeObjects) == "table" then
+    for pin in pairs(offer.activeObjects) do
+      local lv = type(pin) == "table" and ns.Num(ns.Value(pin.GetFrameLevel, pin))
+      if lv and (not top or lv > top) then top = lv end
+    end
+  end
+  -- (26.11.2026, Daniel with a picture: a guild member's pin, level 57, over the "?": "questdon soll sein ? über den pin
+  -- auf der minimap und weltmap setzen") also above DonMap's pins (Guildon's members lie above our "!" so they can be
+  -- hovered, 05.11.); DonMap does not count a pin marked donMapOver, so the two do not climb in turn (DonMapAPI 7)
+  local dm = DonMapAPI and (DonMapAPI.version or 0) >= 7 and DonMapAPI.WorldPinsTop
+  if dm then
+    local ok, lv = pcall(dm)
+    lv = ok and ns.Num(lv)
     if lv and (not top or lv > top) then top = lv end
   end
   if not top then return 0 end
@@ -188,6 +198,7 @@ function ns.RaiseTurnInPins()
   for pin in pairs(ours.activeObjects) do
     local p = type(pin) == "table" and pin.qdPin
     if type(p) == "table" and p.kind == "turnin" and pin.SetFrameLevel then
+      if dm then pin.donMapOver = true end
       local lv = ns.Num(ns.Value(pin.GetFrameLevel, pin))
       if lv and lv <= top and pcall(pin.SetFrameLevel, pin, top + 1) then
         pin.qdLevelWas = pin.qdLevelWas or lv
@@ -1588,6 +1599,7 @@ function Setup()
   -- (12.11.2026) the size depends on what the pin shows: set again once that is known (a pooled pin showed something else)
   function QuestPin:OnAcquired(pin)
     self.qdPin = nil
+    self.donMapOver = nil -- (26.11.2026) counts for DonMap's top sources again until raised as a "?"
     -- (19.11.2026) raised above the game's "!" for a turn-in (ns.RaiseTurnInPins): back to its own level
     if self.qdLevelWas then
       if self.SetFrameLevel then pcall(self.SetFrameLevel, self, self.qdLevelWas) end
